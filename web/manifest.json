@@ -1,6 +1,6 @@
 {
-    "name": "lemonade_mobile",
-    "short_name": "lemonade_mobile",
+    "name": "Lemonade Mobile",
+    "short_name": "Lemonade Mobile",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
