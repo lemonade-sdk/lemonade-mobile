@@ -1,5 +1,5 @@
 # Lemonade Chat
-### Lemonade Open Source Project - maintained by [Geramy Loveless](https://github.com/Geramy)
+### A Lemonade Open Source Project - maintained by [Geramy Loveless](https://github.com/Geramy)
 
 #### A polished chat interface for Lemonade AI servers with syntax highlighting and multi-server support.
 
