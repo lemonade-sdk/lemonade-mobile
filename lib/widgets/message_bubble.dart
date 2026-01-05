@@ -70,14 +70,40 @@ class MessageBubble extends StatelessWidget {
                   ),
                   code: TextStyle(
                     color: isUser
-                        ? theme.colorScheme.onPrimary
-                        : theme.colorScheme.onSurface,
+                        ? (isDark ? const Color(0xFF2D7D9A) : const Color(0xFF005CC5))
+                        : (isDark ? const Color(0xFF4F8F4F) : const Color(0xFF22863A)),
                     fontFamily: 'monospace',
                     fontSize: 14,
+                    backgroundColor: isUser
+                        ? (isDark ? const Color(0x1AFFFFFF) : const Color(0x1A000000))
+                        : (isDark ? const Color(0x0F2D3748) : const Color(0x0FF6F8FA)),
                   ),
                   codeblockDecoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
+                    color: isDark ? const Color(0xFF161B22) : const Color(0xFFF6F8FA),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: isDark ? const Color(0xFF30363D) : const Color(0xFFD1D9E0),
+                      width: 0.5,
+                    ),
+                  ),
+                  blockquoteDecoration: BoxDecoration(
+                    color: isDark ? const Color(0x0F388BFD) : const Color(0x0F388BFD),
+                    border: Border(
+                      left: BorderSide(
+                        color: isDark ? const Color(0xFF58A6FF) : const Color(0xFF388BFD),
+                        width: 4,
+                      ),
+                    ),
+                  ),
+                  tableBorder: TableBorder.all(
+                    color: isDark ? const Color(0xFF30363D) : const Color(0xFFD1D9E0),
+                    width: 1,
+                  ),
+                  tableHead: TextStyle(
+                    color: isUser
+                        ? theme.colorScheme.onPrimary
+                        : theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
                 builders: {
@@ -150,10 +176,10 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF8F8F8),
+        color: isDark ? const Color(0xFF161B22) : const Color(0xFFF6F8FA),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: isDark ? const Color(0xFF404040) : const Color(0xFFE0E0E0),
+          color: isDark ? const Color(0xFF30363D) : const Color(0xFFD1D9E0),
           width: 0.5,
         ),
       ),
@@ -196,22 +222,24 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
                 language: language.isNotEmpty ? language.toLowerCase() : 'plaintext',
                 theme: isDark
                     ? {
-                        'root': TextStyle(color: const Color(0xFFE6E6E6), backgroundColor: Colors.transparent),
-                        'keyword': TextStyle(color: const Color(0xFF569CD6), fontWeight: FontWeight.bold),
-                        'string': TextStyle(color: const Color(0xFFCE9178)),
-                        'comment': TextStyle(color: const Color(0xFF6A9955)),
-                        'number': TextStyle(color: const Color(0xFFB5CEA8)),
-                        'function': TextStyle(color: const Color(0xFFDCBDFB)),
-                        'type': TextStyle(color: const Color(0xFF4EC9B0)),
+                        'root': TextStyle(color: const Color(0xFFE6EDF3), backgroundColor: Colors.transparent),
+                        'keyword': TextStyle(color: const Color(0xFFFD7B31), fontWeight: FontWeight.bold),
+                        'string': TextStyle(color: const Color(0xFFA5D6FF)),
+                        'comment': TextStyle(color: const Color(0xFF8B949E)),
+                        'number': TextStyle(color: const Color(0xFF79C0FF)),
+                        'function': TextStyle(color: const Color(0xFFD2A8FF)),
+                        'type': TextStyle(color: const Color(0xFF7EE787)),
+                        'variable': TextStyle(color: const Color(0xFFF85149)),
                       }
                     : {
-                        'root': TextStyle(color: const Color(0xFF1E1E1E), backgroundColor: Colors.transparent),
-                        'keyword': TextStyle(color: const Color(0xFF0000FF), fontWeight: FontWeight.bold),
-                        'string': TextStyle(color: const Color(0xFF008000)),
-                        'comment': TextStyle(color: const Color(0xFF008000)),
-                        'number': TextStyle(color: const Color(0xFF0000FF)),
-                        'function': TextStyle(color: const Color(0xFF795E26)),
-                        'type': TextStyle(color: const Color(0xFF267F99)),
+                        'root': TextStyle(color: const Color(0xFF1F2328), backgroundColor: Colors.transparent),
+                        'keyword': TextStyle(color: const Color(0xFFCF222E), fontWeight: FontWeight.bold),
+                        'string': TextStyle(color: const Color(0xFF0A3069)),
+                        'comment': TextStyle(color: const Color(0xFF6E7781)),
+                        'number': TextStyle(color: const Color(0xFF0550AE)),
+                        'function': TextStyle(color: const Color(0xFF8250DF)),
+                        'type': TextStyle(color: const Color(0xFF953800)),
+                        'variable': TextStyle(color: const Color(0xFFCF222E)),
                       },
                 padding: const EdgeInsets.all(4),
                 textStyle: const TextStyle(
