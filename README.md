@@ -1,6 +1,7 @@
 # Lemonade Chat
+### Lemonade Open Source Project - maintained by [Geramy Loveless](https://github.com/Geramy)
 
-A polished chat interface for Lemonade AI servers with syntax highlighting and multi-server support.
+#### A polished chat interface for Lemonade AI servers with syntax highlighting and multi-server support.
 
 ## Features
 
@@ -86,3 +87,5 @@ lib/
 └── utils/                    # Shared utilities
     └── constants.dart        # Theme & styling constants
 ```
+
+### This project is licensed as MIT
