@@ -1,6 +1,6 @@
 **Privacy Policy**
 
-This privacy policy applies to the Lemonade Mobile app (hereby referred to as "Application") for mobile devices that was created by Geramy L. Loveless (hereby referred to as "Service Provider") as an Open Source service. This service is intended for use "AS IS".
+This privacy policy applies to the Lemonade Mobile app (hereby referred to as "Application") for mobile devices that initially was created by Geramy L. Loveless as a foundation of the mobile app for Lemonade (hereby referred to as "Service Provider") as an Open Source service. This service is intended for use "AS IS".
 
 **What information does the Application obtain and how is it used?**
 
@@ -40,7 +40,7 @@ By using the Application, you are consenting to the processing of your informati
 
 **Contact Us**
 
-If you have any questions regarding privacy while using the Application, or have questions about the practices, please contact the Service Provider via email at gloveless@jqluv.com.
+If you have any questions regarding privacy while using the Application, you may submit a issue in the repository at: https://github.com/lemonade-sdk/lemonade-mobile/issues
 
 * * *
 
