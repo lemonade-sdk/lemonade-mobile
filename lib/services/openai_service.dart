@@ -4,9 +4,11 @@ import 'package:dart_openai/dart_openai.dart';
 import 'package:http/http.dart' as http;
 import 'package:lemonade_mobile/models/chat_message.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
+import 'package:lemonade_mobile/utils/model_utils.dart';
 
 class OpenaiService {
   final ServerConfig server;
+  final Map<String, List<String>> _modelLabels = {};
 
   OpenaiService(this.server) {
     // OpenAI library automatically adds /v1, so remove it if present
@@ -25,12 +27,58 @@ class OpenaiService {
     OpenAI.requestsTimeOut = const Duration(minutes: 10);
   }
 
-  Future<List<String>> fetchModels() async {
+  Future<List<Map<String, dynamic>>> fetchModels() async {
+    // Try direct HTTP request first to get labels
+    try {
+      String apiUrl = server.baseUrl;
+      if (!apiUrl.endsWith('/v1')) {
+        apiUrl = '${apiUrl}/v1';
+      }
+      final url = Uri.parse('$apiUrl/models');
+      final response = await http.get(
+        url,
+        headers: {
+          'Authorization': 'Bearer ${server.apiKey ?? "lemonade"}',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final models = data['data'] as List<dynamic>? ?? [];
+
+        _modelLabels.clear();
+        final modelsData = <Map<String, dynamic>>[];
+        for (final model in models) {
+          final id = model['id'] as String?;
+          final labels = (model['labels'] as List<dynamic>?)?.map((e) => e as String).toList() ?? [];
+          if (id != null) {
+            _modelLabels[id] = labels;
+            modelsData.add({'id': id, 'labels': labels});
+          }
+        }
+
+        return modelsData;
+      }
+    } catch (e) {
+      // Direct request failed, fall back to library method
+    }
+
+    // Fallback to original OpenAI library method
     try {
       final modelsResponse = await OpenAI.instance.model.list();
-      return modelsResponse.map((model) => model.id).toList();
+      final modelIds = modelsResponse.map((model) => model.id).toList();
+
+      // For fallback, assume no labels
+      _modelLabels.clear();
+      final modelsData = <Map<String, dynamic>>[];
+      for (final id in modelIds) {
+        _modelLabels[id] = []; // No labels available
+        modelsData.add({'id': id, 'labels': <String>[]});
+      }
+
+      return modelsData;
     } catch (e) {
-      // Return empty list if API call fails - no default models
+      // Return empty list if all methods fail
       return [];
     }
   }
@@ -38,7 +86,7 @@ class OpenaiService {
   Future<bool> testServer() async {
     try {
       // Try to fetch models as a simple connectivity test
-      await OpenAI.instance.model.list();
+      await fetchModels();
       return true;
     } catch (e) {
       return false;
@@ -315,22 +363,8 @@ class OpenaiService {
 
   // Helper method to detect if a model supports vision (similar to JavaScript isVisionModel)
   bool isVisionModel(String modelId) {
-    if (modelId.isEmpty) return false;
-
-    final lowerId = modelId.toLowerCase();
-
-    // Vision-capable models (matching the detection logic from models_provider.dart)
-    return lowerId.contains('vision') ||
-        lowerId.contains('gpt-4v') ||
-        lowerId.contains('gpt-4-turbo') ||
-        lowerId.contains('claude-3') ||
-        lowerId.contains('gemini-1.5') ||
-        lowerId.contains('llava') ||
-        lowerId.contains('bakllava') ||
-        lowerId.contains('moondream') ||
-        (lowerId.contains('qwen') && lowerId.contains('vl')) ||
-        lowerId.contains('internvl') ||
-        lowerId.contains('gemma-3');
+    final labels = _modelLabels[modelId] ?? [];
+    return ModelUtils.isVisionModel(modelId, labels);
   }
 
   // Helper method to parse image size from prompt using command syntax

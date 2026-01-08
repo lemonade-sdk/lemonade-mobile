@@ -261,15 +261,15 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
 
     final selectedModelInfo = availableModels.firstWhere(
       (model) => model.id == selectedModel,
-      orElse: () => ModelInfo(selectedModel),
+      orElse: () => ModelInfo(selectedModel, []),
     );
 
-    if (selectedModelInfo.capabilities == ModelCapabilities.textOnly) {
+    if (selectedModelInfo.isTextOnly) {
       return AppMessages.textOnlyModelError(selectedModel);
-    } else if (selectedModelInfo.capabilities == ModelCapabilities.vision) {
-      return AppMessages.visionModelServerError(selectedModel);
-    } else {
+    } else if (selectedModelInfo.supportsImageGeneration) {
       return AppMessages.imageGenerationServerError(selectedModel);
+    } else {
+      return AppMessages.visionModelServerError(selectedModel);
     }
   }
 

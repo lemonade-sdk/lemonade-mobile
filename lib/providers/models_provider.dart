@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lemonade_mobile/services/openai_service.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
+import 'package:lemonade_mobile/utils/model_utils.dart';
 
 final modelsProvider = StateNotifierProvider<ModelsNotifier, List<ModelInfo>>(
   (ref) => ModelsNotifier(ref),
@@ -13,50 +14,15 @@ final selectedModelProvider = StateNotifierProvider<SelectedModelNotifier, Strin
 
 class ModelInfo {
   final String id;
-  final ModelCapabilities capabilities;
+  final List<String> labels;
+  final Set<ModelCapabilities> capabilities;
 
-  ModelInfo(this.id) : capabilities = _detectCapabilities(id);
+  ModelInfo(this.id, this.labels) : capabilities = ModelUtils.detectCapabilities(labels);
 
-  static ModelCapabilities _detectCapabilities(String modelId) {
-    final lowerId = modelId.toLowerCase();
-
-    // Vision-capable models
-    if (lowerId.contains('vision') ||
-        lowerId.contains('gpt-4v') ||
-        lowerId.contains('gpt-4-turbo') ||
-        lowerId.contains('claude-3') ||
-        lowerId.contains('gemini-1.5') ||
-        lowerId.contains('llava') ||
-        lowerId.contains('bakllava') ||
-        lowerId.contains('moondream') ||
-        lowerId.contains('qwen') && lowerId.contains('vl') ||
-        lowerId.contains('internvl')) {
-      return ModelCapabilities.vision;
-    }
-
-    // Image generation models
-    if (lowerId.contains('dall-e') ||
-        lowerId.contains('stable-diffusion') ||
-        lowerId.contains('sdxl') ||
-        lowerId.contains('flux') ||
-        lowerId.contains('midjourney') ||
-        lowerId.contains('kandinsky')) {
-      return ModelCapabilities.imageGeneration;
-    }
-
-    // Text-only models (default)
-    return ModelCapabilities.textOnly;
-  }
-
-  bool get supportsVision => capabilities == ModelCapabilities.vision;
-  bool get supportsImageGeneration => capabilities == ModelCapabilities.imageGeneration;
-  bool get isTextOnly => capabilities == ModelCapabilities.textOnly;
-}
-
-enum ModelCapabilities {
-  textOnly,
-  vision,
-  imageGeneration,
+  bool get supportsVision => ModelUtils.supportsVision(capabilities);
+  bool get supportsImageGeneration => ModelUtils.supportsImageGeneration(capabilities);
+  bool get supportsThinking => ModelUtils.supportsThinking(capabilities);
+  bool get isTextOnly => ModelUtils.isTextOnly(capabilities);
 }
 
 class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
@@ -78,8 +44,8 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
 
     try {
       final openaiService = OpenaiService(selectedServer);
-      final modelIds = await openaiService.fetchModels();
-      final modelInfos = modelIds.map((id) => ModelInfo(id)).toList();
+      final modelsData = await openaiService.fetchModels();
+      final modelInfos = modelsData.map((data) => ModelInfo(data['id'] as String, data['labels'] as List<String>)).toList();
       state = modelInfos;
     } catch (e) {
       // If fetching fails, set empty list - no default models
