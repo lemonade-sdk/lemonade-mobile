@@ -5,12 +5,26 @@ import 'package:lemonade_mobile/widgets/chat_input.dart';
 import 'package:lemonade_mobile/widgets/message_bubble.dart';
 import 'package:lemonade_mobile/widgets/server_selector.dart';
 import 'package:lemonade_mobile/widgets/chat_drawer.dart';
+import 'package:lemonade_mobile/constants/colors.dart';
 
-class ChatScreen extends ConsumerWidget {
+class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends ConsumerState<ChatScreen> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final messages = ref.watch(chatProvider);
 
     return Scaffold(
@@ -36,18 +50,31 @@ class ChatScreen extends ConsumerWidget {
           Expanded(
             child: messages.isEmpty
                 ? const Center(
-                    child: Text(
-                      'Start a conversation by typing a message below.',
-                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Start a conversation by typing a message below.',
+                          style: TextStyle(fontSize: 16, color: AppColors.hintText),
+                          textAlign: TextAlign.center,
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Use / for commands like /image or /draw',
+                          style: TextStyle(fontSize: 14, color: AppColors.hintText),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   )
-                : NotificationListener<ScrollStartNotification>(
+                : NotificationListener<ScrollNotification>(
                     onNotification: (notification) {
                       // Dismiss keyboard when user starts scrolling
                       FocusManager.instance.primaryFocus?.unfocus();
                       return false; // Allow the notification to continue
                     },
                     child: ListView.builder(
+                      controller: _scrollController,
                       padding: const EdgeInsets.only(bottom: 16),
                       itemCount: messages.length,
                       itemBuilder: (context, index) {
@@ -57,7 +84,7 @@ class ChatScreen extends ConsumerWidget {
                     ),
                   ),
           ),
-          const ChatInput(),
+          ChatInput(scrollController: _scrollController),
         ],
       ),
     );

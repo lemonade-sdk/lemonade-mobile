@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_mobile/providers/chat_history_provider.dart';
 import 'package:lemonade_mobile/providers/models_provider.dart';
 import 'package:lemonade_mobile/screens/settings_screen.dart';
+import 'package:lemonade_mobile/constants/colors.dart';
 
 class ChatDrawer extends ConsumerWidget {
   const ChatDrawer({super.key});
@@ -42,11 +43,17 @@ class ChatDrawer extends ConsumerWidget {
                             child: Text('Loading models...'),
                           )
                         else
-                          ...availableModels.map((model) => ListTile(
-                                title: Text(model),
-                                selected: model == selectedModel,
+                          ...availableModels.map((modelInfo) => ListTile(
+                                title: Row(
+                                  children: [
+                                    Expanded(child: Text(modelInfo.id)),
+                                    _buildCapabilityIcon(modelInfo.capabilities),
+                                  ],
+                                ),
+                                subtitle: _buildCapabilityText(modelInfo.capabilities),
+                                selected: modelInfo.id == selectedModel,
                                 onTap: () {
-                                  ref.read(selectedModelProvider.notifier).selectModel(model);
+                                  ref.read(selectedModelProvider.notifier).selectModel(modelInfo.id);
                                   Navigator.pop(context); // Close drawer
                                 },
                               )),
@@ -159,5 +166,27 @@ class ChatDrawer extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildCapabilityIcon(ModelCapabilities capabilities) {
+    switch (capabilities) {
+      case ModelCapabilities.vision:
+        return Icon(Icons.visibility, size: 16, color: AppColors.capabilityVision);
+      case ModelCapabilities.imageGeneration:
+        return Icon(Icons.image, size: 16, color: AppColors.capabilityImageGeneration);
+      case ModelCapabilities.textOnly:
+        return Icon(Icons.text_fields, size: 16, color: AppColors.capabilityTextOnly);
+    }
+  }
+
+  Widget _buildCapabilityText(ModelCapabilities capabilities) {
+    switch (capabilities) {
+      case ModelCapabilities.vision:
+        return const Text('Vision + Text', style: TextStyle(fontSize: 12));
+      case ModelCapabilities.imageGeneration:
+        return const Text('Image Generation', style: TextStyle(fontSize: 12));
+      case ModelCapabilities.textOnly:
+        return const Text('Text Only', style: TextStyle(fontSize: 12));
+    }
   }
 }

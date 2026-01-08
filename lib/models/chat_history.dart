@@ -23,9 +23,12 @@ class ChatHistory {
     if (title.isNotEmpty) return title;
     if (messages.isNotEmpty) {
       final firstMessage = messages.first;
-      return firstMessage.content.length > 50
-          ? '${firstMessage.content.substring(0, 50)}...'
-          : firstMessage.content;
+      final textContent = firstMessage.textContent;
+      if (textContent.isNotEmpty) {
+        return textContent.length > 50
+            ? '${textContent.substring(0, 50)}...'
+            : textContent;
+      }
     }
     return 'New Chat';
   }

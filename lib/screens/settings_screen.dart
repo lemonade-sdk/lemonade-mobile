@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
 import 'package:lemonade_mobile/services/openai_service.dart';
+import 'package:lemonade_mobile/constants/colors.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -65,7 +66,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ? '✅ Server "${server.name}" is working!'
                   : '❌ Server "${server.name}" is not responding. Check your configuration.',
             ),
-            backgroundColor: isAlive ? Colors.green : Colors.red,
+            backgroundColor: isAlive ? AppColors.serverAlive : AppColors.serverDead,
             duration: const Duration(seconds: 3),
           ),
         );
@@ -75,7 +76,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('❌ Error testing server "${server.name}": ${e.toString()}'),
-            backgroundColor: Colors.red,
+            backgroundColor: AppColors.serverDead,
             duration: const Duration(seconds: 3),
           ),
         );

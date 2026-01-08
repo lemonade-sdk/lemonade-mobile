@@ -59,11 +59,11 @@
 
 	<!-- Privacy Descriptions -->
 	<key>NSCameraUsageDescription</key>
-	<string>This app does not use the camera.</string>
+	<string>This app uses the camera to take photos for AI image analysis.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app does not use the microphone.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app does not access photos.</string>
+	<string>This app accesses photos from your library for AI image analysis.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app does not use location services.</string>
 </dict>

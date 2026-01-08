@@ -19,7 +19,8 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # OpenAI API client
-  dart_openai: ^5.0.0
+  dart_openai: ^6.1.1
+
 
   # State management
   flutter_riverpod: ^2.0.0
@@ -37,6 +38,15 @@ dependencies:
   # Syntax highlighting
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
+
+  # Image handling
+  image_picker: ^1.0.0
+  permission_handler: ^11.0.0
+  path_provider: ^2.0.0
+  file_picker: ^8.0.0
+
+  # HTTP client for direct API calls
+  http: ^1.0.0
 
 dev_dependencies:
   flutter_test:
