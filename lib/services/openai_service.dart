@@ -329,7 +329,8 @@ class OpenaiService {
         lowerId.contains('bakllava') ||
         lowerId.contains('moondream') ||
         (lowerId.contains('qwen') && lowerId.contains('vl')) ||
-        lowerId.contains('internvl');
+        lowerId.contains('internvl') ||
+        lowerId.contains('gemma-3');
   }
 
   // Helper method to parse image size from prompt using command syntax
