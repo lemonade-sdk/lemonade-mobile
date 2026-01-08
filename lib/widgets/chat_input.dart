@@ -201,8 +201,8 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
       // Let image_picker handle permissions automatically
       final XFile? image = await _picker.pickImage(
         source: source,
-        maxWidth: 2048,
-        maxHeight: 2048,
+        maxWidth: 768,
+        maxHeight: 768,
         imageQuality: 95,
       );
 
