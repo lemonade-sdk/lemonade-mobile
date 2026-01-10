@@ -19,6 +19,15 @@ android {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = "upload"
+            keyPassword = "password"
+            storeFile = file("upload-keystore.jks")
+            storePassword = "password"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.lemonade.mobile.chat.ai"
         minSdk = flutter.minSdkVersion
@@ -29,9 +38,7 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
