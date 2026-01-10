@@ -10,7 +10,12 @@ class OpenaiService {
   final ServerConfig server;
   final Map<String, List<String>> _modelLabels = {};
 
-  OpenaiService(this.server) {
+  OpenaiService(this.server, {Map<String, List<String>>? modelLabels}) {
+    // Initialize with provided labels if available
+    if (modelLabels != null) {
+      _modelLabels.addAll(modelLabels);
+    }
+
     // OpenAI library automatically adds /v1, so remove it if present
     String baseUrl = server.baseUrl;
     if (baseUrl.endsWith('/v1')) {
@@ -293,7 +298,7 @@ class OpenaiService {
           'Authorization': 'Bearer ${server.apiKey ?? "lemonade"}',
         },
         body: jsonEncode(payload),
-      ).timeout(const Duration(minutes: 10));
+      ).timeout(const Duration(minutes: 4));
 
       if (response.statusCode != 200) {
         throw Exception('Image generation request failed with status: ${response.statusCode}');

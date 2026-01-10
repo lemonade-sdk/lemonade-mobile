@@ -23,8 +23,7 @@ class ModelUtils {
         lowerId.contains('bakllava') ||
         lowerId.contains('moondream') ||
         (lowerId.contains('qwen') && lowerId.contains('vl')) ||
-        lowerId.contains('internvl') ||
-        lowerId.contains('gemma-3');
+        lowerId.contains('internvl');
   }
 
   /// Detect model capabilities from labels

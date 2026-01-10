@@ -52,8 +52,12 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       print('Selected model after delay: $selectedModel');
     }
 
+    // Get current model labels from the models provider
+    final availableModels = ref.read(modelsProvider);
+    final modelLabels = {for (final model in availableModels) model.id: model.labels};
+
     // Check if trying to send images to non-vision model (moved to service layer like JavaScript)
-    final openaiService = OpenaiService(selectedServer);
+    final openaiService = OpenaiService(selectedServer, modelLabels: modelLabels);
     if ((imagePaths != null && imagePaths.isNotEmpty) && !openaiService.isVisionModel(selectedModel)) {
       final errorMessage = ChatMessage.text(
         role: MessageRole.assistant,
@@ -92,9 +96,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     await ref.read(chatHistoryProvider.notifier).updateActiveChat(updatedMessages);
 
     // Scroll to bottom to show the user's message
-    if (scrollController != null && scrollController!.hasClients) {
-      scrollController!.animateTo(
-        scrollController!.position.maxScrollExtent,
+    if (scrollController != null && scrollController.hasClients) {
+      scrollController.animateTo(
+        scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
@@ -106,7 +110,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     await ref.read(chatHistoryProvider.notifier).updateActiveChat(messagesWithPlaceholder);
 
     try {
-      final openaiService = OpenaiService(selectedServer);
+      final openaiService = OpenaiService(selectedServer, modelLabels: modelLabels);
 
       // Check if this is an image generation request
       if (openaiService.isImageGenerationRequest(message)) {
@@ -196,9 +200,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
 
       // Auto-scroll during streaming response
       void scrollToBottom() {
-        if (scrollController != null && scrollController!.hasClients) {
-          scrollController!.animateTo(
-            scrollController!.position.maxScrollExtent,
+        if (scrollController != null && scrollController.hasClients) {
+          scrollController.animateTo(
+            scrollController.position.maxScrollExtent,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
           );
