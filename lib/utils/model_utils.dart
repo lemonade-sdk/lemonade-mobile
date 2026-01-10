@@ -12,10 +12,14 @@ class ModelUtils {
       return true;
     }
 
-    // Fallback to old logic if labels not available
+    // Fallback to old logic if labels not available - check if model name contains 'vision'
     final lowerId = modelId.toLowerCase();
-    return lowerId.contains('vision') ||
-        lowerId.contains('gpt-4v') ||
+    if (lowerId.contains('vision')) {
+      return true;
+    }
+
+    // Additional known vision models
+    return lowerId.contains('gpt-4v') ||
         lowerId.contains('gpt-4-turbo') ||
         lowerId.contains('claude-3') ||
         lowerId.contains('gemini-1.5') ||
@@ -26,10 +30,11 @@ class ModelUtils {
         lowerId.contains('internvl');
   }
 
-  /// Detect model capabilities from labels
-  static Set<ModelCapabilities> detectCapabilities(List<String> labels) {
+  /// Detect model capabilities from model ID and labels
+  static Set<ModelCapabilities> detectCapabilities(String modelId, List<String> labels) {
     final capabilities = <ModelCapabilities>{};
 
+    // Check labels first
     if (labels.contains('vision')) {
       capabilities.add(ModelCapabilities.vision);
     }
@@ -39,6 +44,28 @@ class ModelUtils {
     if (labels.contains('thinking')) {
       capabilities.add(ModelCapabilities.thinking);
     }
+
+    // If no capabilities detected from labels, check model name
+    if (capabilities.isEmpty) {
+      final lowerId = modelId.toLowerCase();
+
+      // Check for vision capability in model name
+      if (lowerId.contains('vision')) {
+        capabilities.add(ModelCapabilities.vision);
+      }
+
+      // Check for image generation capability in model name
+      if (lowerId.contains('dall') || lowerId.contains('stable-diffusion') || lowerId.contains('sdxl')) {
+        capabilities.add(ModelCapabilities.imageGeneration);
+      }
+
+      // Check for thinking capability in model name
+      if (lowerId.contains('thinking') || lowerId.contains('o1')) {
+        capabilities.add(ModelCapabilities.thinking);
+      }
+    }
+
+    // If still no capabilities detected, default to text-only
     if (capabilities.isEmpty) {
       capabilities.add(ModelCapabilities.textOnly);
     }
@@ -99,6 +126,37 @@ class ModelUtils {
 
     final text = capabilityNames.isEmpty ? 'Text Only' : capabilityNames.join(' + ');
     return Text(text, style: const TextStyle(fontSize: 12));
+  }
+
+  /// Build label tags widget for UI display
+  static Widget buildLabelTags(List<String> labels) {
+    if (labels.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Wrap(
+      spacing: 4,
+      runSpacing: 2,
+      children: labels.map((label) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.blue.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: Colors.blue.withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+            color: Colors.blue,
+          ),
+        ),
+      )).toList(),
+    );
   }
 }
 

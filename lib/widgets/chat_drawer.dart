@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_mobile/providers/chat_history_provider.dart';
-import 'package:lemonade_mobile/providers/models_provider.dart';
 import 'package:lemonade_mobile/screens/settings_screen.dart';
-import 'package:lemonade_mobile/utils/model_utils.dart';
+import 'package:lemonade_mobile/widgets/model_selector.dart';
 
 class ChatDrawer extends ConsumerWidget {
   const ChatDrawer({super.key});
@@ -11,8 +10,6 @@ class ChatDrawer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chatHistories = ref.watch(chatHistoryProvider);
-    final selectedModel = ref.watch(selectedModelProvider);
-    final availableModels = ref.watch(modelsProvider);
 
     return Drawer(
       child: SafeArea(
@@ -27,38 +24,7 @@ class ChatDrawer extends ConsumerWidget {
                 child: Column(
                   children: [
                     // Model Selection
-                    ExpansionTile(
-                      title: const Text('Model'),
-                      subtitle: Text(selectedModel ?? 'Select a model'),
-                      onExpansionChanged: (expanded) {
-                        if (expanded && availableModels.isEmpty) {
-                          // Fetch models when expanding if we don't have them yet
-                          ref.read(modelsProvider.notifier).fetchModels();
-                        }
-                      },
-                      children: [
-                        if (availableModels.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text('Loading models...'),
-                          )
-                        else
-                          ...availableModels.map((modelInfo) => ListTile(
-                                title: Row(
-                                  children: [
-                                    Expanded(child: Text(modelInfo.id)),
-                                    ModelUtils.buildCapabilityIcon(modelInfo.capabilities),
-                                  ],
-                                ),
-                                subtitle: ModelUtils.buildCapabilityText(modelInfo.capabilities),
-                                selected: modelInfo.id == selectedModel,
-                                onTap: () {
-                                  ref.read(selectedModelProvider.notifier).selectModel(modelInfo.id);
-                                  Navigator.pop(context); // Close drawer
-                                },
-                              )),
-                      ],
-                    ),
+                    const ModelSelector(compact: false),
 
                     const Divider(),
 

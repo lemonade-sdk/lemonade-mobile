@@ -5,6 +5,7 @@ import 'package:lemonade_mobile/widgets/chat_input.dart';
 import 'package:lemonade_mobile/widgets/message_bubble.dart';
 import 'package:lemonade_mobile/widgets/server_selector.dart';
 import 'package:lemonade_mobile/widgets/chat_drawer.dart';
+import 'package:lemonade_mobile/widgets/model_selector.dart';
 import 'package:lemonade_mobile/constants/colors.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -56,6 +57,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ),
         actions: [
+          const ModelSelector(compact: true),
           IconButton(
             icon: const Icon(Icons.clear),
             onPressed: () => ref.read(chatProvider.notifier).clearChat(),

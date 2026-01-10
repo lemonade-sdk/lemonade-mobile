@@ -17,7 +17,7 @@ class ModelInfo {
   final List<String> labels;
   final Set<ModelCapabilities> capabilities;
 
-  ModelInfo(this.id, this.labels) : capabilities = ModelUtils.detectCapabilities(labels);
+  ModelInfo(this.id, this.labels) : capabilities = ModelUtils.detectCapabilities(id, labels);
 
   bool get supportsVision => ModelUtils.supportsVision(capabilities);
   bool get supportsImageGeneration => ModelUtils.supportsImageGeneration(capabilities);
@@ -29,12 +29,16 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   final Ref ref;
 
   ModelsNotifier(this.ref) : super([]) {
-    // Watch for server changes and clear models (don't auto-fetch)
+    // Watch for server changes and fetch models for the new server
     ref.listen(selectedServerProvider, (previous, next) {
       if (next == null) {
         state = [];
+      } else {
+        // Clear selected model when switching servers since each server has its own models
+        ref.read(selectedModelProvider.notifier).clearSelection();
+        // Automatically fetch models when server changes
+        fetchModels();
       }
-      // Don't automatically fetch models - let UI request them when needed
     });
   }
 
@@ -47,6 +51,14 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       final modelsData = await openaiService.fetchModels();
       final modelInfos = modelsData.map((data) => ModelInfo(data['id'] as String, data['labels'] as List<String>)).toList();
       state = modelInfos;
+
+      // Auto-select first model if no model is currently selected
+      final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
+      if (selectedModelNotifier.state == null || selectedModelNotifier.state!.isEmpty) {
+        if (modelInfos.isNotEmpty) {
+          await selectedModelNotifier.selectModel(modelInfos.first.id);
+        }
+      }
     } catch (e) {
       // If fetching fails, set empty list - no default models
       state = [];

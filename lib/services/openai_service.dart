@@ -90,9 +90,10 @@ class OpenaiService {
 
   Future<bool> testServer() async {
     try {
-      // Try to fetch models as a simple connectivity test
-      await fetchModels();
-      return true;
+      // Try to fetch models as a connectivity test
+      final models = await fetchModels();
+      // Server is considered working only if we actually got some models
+      return models.isNotEmpty;
     } catch (e) {
       return false;
     }
