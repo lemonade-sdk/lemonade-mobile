@@ -3,6 +3,8 @@
 
 #### A polished chat interface for Lemonade AI servers with syntax highlighting and multi-server support.
 
+Join our discord: https://discord.com/channels/1392562559122407535/1458473208171860157
+
 ## Features
 
 - **Multi-Server Support**: Connect to multiple Lemonade/OpenAI-compatible servers
