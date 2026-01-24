@@ -1,9 +1,29 @@
-# Lemonade Chat
-### A Lemonade Open Source Project - maintained by [Geramy Loveless](https://github.com/Geramy)
+# 🍋 Lemonade Mobile: local AI server companion app
 
-#### A polished chat interface for Lemonade AI servers with syntax highlighting and multi-server support.
+<table>
+  <tr>
+    <td>
+      <img src="https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/be/17/cb/be17cb07-3e0c-0ea2-06a9-70a7088f05ff/IMG_6296.png/230x499bb.webp" alt="Lemonade Chat Screenshot 1" width="230" />
+    </td>
+    <td>
+      <img src="https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/22/6f/5a/226f5a08-79fd-f148-9802-7af577d2ea69/IMG_6295.png/230x499bb.webp" alt="Lemonade Chat Screenshot 2" width="230" />
+    </td>
+    <td>
+      <img src="https://is1-ssl.mzstatic.com/image/thumb/PurpleSource211/v4/14/4b/11/144b1186-8a00-a069-392a-6923f6376420/IMG_6294.png/230x499bb.webp" alt="Lemonade Chat Screenshot 3" width="230" />
+    </td>
+  </tr>
+</table>
 
-Join our discord: https://discord.com/channels/1392562559122407535/1458473208171860157
+<h3 align="center">
+  <a href="https://apps.apple.com/us/app/lemonade-mobile/id6757372210">iPhone/iPad</a> | 
+  Android: Coming Soon | 
+  <a href="https://discord.gg/5xXzkMu8Zk">Discord</a>
+</h3>
+
+
+Lemonade Mobile is a polished chat interface for [Lemonade AI servers](https://github.com/lemonade-sdk/lemonade) with syntax highlighting and multi-server support. Start your server, connect this app, and take your Lemonade to go. 
+
+A Lemonade Open Source Project - maintained by [Geramy Loveless](https://github.com/Geramy).
 
 ## Features
 
