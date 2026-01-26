@@ -51,7 +51,7 @@ flutter run
 1. Launch the app and tap the settings gear icon
 2. Add your server details:
    - **Name**: Something descriptive like "My Local Server"
-   - **URL**: Your server endpoint (e.g., `http://localhost:8000`)
+   - **URL**: Your server endpoint (e.g., `http://192.168.1.10:8000/api`) - Later will be changed to be user friendly.
    - **API Key**: Optional, defaults to "lemonade" if empty
 
 ### Testing Connections
