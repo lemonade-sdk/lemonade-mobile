@@ -88,6 +88,11 @@ class AppColors {
   static const serverAlive = Colors.green;
   static const serverDead = Colors.red;
 
+  // ===== BEACON DISCOVERY COLORS =====
+  static const beaconActive = Color(0xFF22C55E); // Green pulse
+  static const beaconCardBackground = Color(0xFF1A2E1A); // Dark green tint
+  static const beaconNotification = Color(0xFF15803D); // Green notification bar
+
   // ===== SHADOW COLORS =====
   static const shadowLight = Color(0x0F000000);
   static const shadowDark = Color(0x4D000000);
