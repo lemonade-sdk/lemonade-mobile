@@ -11,8 +11,12 @@
     <td>
       <img src="https://is1-ssl.mzstatic.com/image/thumb/PurpleSource211/v4/14/4b/11/144b1186-8a00-a069-392a-6923f6376420/IMG_6294.png/230x499bb.webp" alt="Lemonade Chat Screenshot 3" width="230" />
     </td>
+    <td>
+      <img src="https://github.com/user-attachments/assets/f6dd076c-2166-44b6-82b8-00ec851a0ad0" alt="Lemonade Chat Screenshot 4" width="230" />
+    </td>
   </tr>
 </table>
+
 
 <h3 align="center">
   <a href="https://apps.apple.com/us/app/lemonade-mobile/id6757372210">iPhone/iPad</a> | 
