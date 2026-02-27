@@ -57,6 +57,14 @@
 		<true/>
 	</dict>
 
+	<!-- Local Network Discovery -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app uses the local network to discover Lemonade AI servers on your network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_lemonade._udp</string>
+	</array>
+
 	<!-- Privacy Descriptions -->
 	<key>NSCameraUsageDescription</key>
 	<string>This app uses the camera to take photos for AI image analysis.</string>

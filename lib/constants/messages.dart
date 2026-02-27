@@ -72,6 +72,13 @@ class AppMessages {
   static const String chooseFromGallery = 'Choose from Gallery';
   static const String deleteThread = 'Delete Thread';
 
+  // Beacon discovery
+  static String serverDiscovered(String hostname) =>
+      'Server "$hostname" found on network';
+  static const String beaconListening = 'Listening for Lemonade servers on the network...';
+  static const String beaconInactive = 'Beacon listener is not active';
+  static const String noServersDetected = 'No servers detected yet';
+
   // Generic errors
   static String genericError(String error) => 'Error: $error';
 
