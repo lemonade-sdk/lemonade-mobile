@@ -20,7 +20,7 @@
 
 <h3 align="center">
   <a href="https://apps.apple.com/us/app/lemonade-mobile/id6757372210">iPhone/iPad</a> | 
-  Android: Coming Soon | 
+  <a href="https://play.google.com/store/apps/details?id=com.lemonade.mobile.chat.ai">Android</a> | 
   <a href="https://discord.gg/5xXzkMu8Zk">Discord</a>
 </h3>
 
