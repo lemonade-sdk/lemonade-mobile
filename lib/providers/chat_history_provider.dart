@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:lemonade_mobile/models/chat_history.dart';
 import 'package:lemonade_mobile/models/chat_message.dart';
+import 'package:lemonade_mobile/models/model_defaults.dart';
 
 final chatHistoryProvider = StateNotifierProvider<ChatHistoryNotifier, List<ChatHistory>>(
   (ref) => ChatHistoryNotifier(),
@@ -124,6 +125,35 @@ class ChatHistoryNotifier extends StateNotifier<List<ChatHistory>> {
     } catch (e) {
       return null;
     }
+  }
+
+  ModelDefaults? getChatOverrides(String chatId) {
+    try {
+      final chat = state.firstWhere((c) => c.id == chatId);
+      return chat.modelOverrides;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<void> updateChatOverrides(String chatId, ModelDefaults? overrides) async {
+    final chatIndex = state.indexWhere((c) => c.id == chatId);
+    if (chatIndex == -1) return;
+
+    final chat = state[chatIndex];
+    final updatedChat = chat.copyWith(
+      modelOverrides: overrides,
+      clearModelOverrides: overrides == null,
+      lastUpdated: DateTime.now(),
+    );
+
+    state = [
+      ...state.sublist(0, chatIndex),
+      updatedChat,
+      ...state.sublist(chatIndex + 1),
+    ];
+
+    await _saveChats();
   }
 }
 

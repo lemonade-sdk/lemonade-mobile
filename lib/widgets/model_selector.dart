@@ -47,6 +47,12 @@ class ModelSelector extends ConsumerWidget {
                           if (capabilities.contains(ModelCapabilities.thinking)) {
                             capabilityNames.add('Thinking');
                           }
+                          if (capabilities.contains(ModelCapabilities.audio)) {
+                            capabilityNames.add('Audio');
+                          }
+                          if (capabilities.contains(ModelCapabilities.tts)) {
+                            capabilityNames.add('TTS');
+                          }
                           if (capabilities.contains(ModelCapabilities.textOnly) && capabilities.length == 1) {
                             capabilityNames.add('Text Only');
                           }

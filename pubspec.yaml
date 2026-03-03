@@ -1,7 +1,7 @@
 name: lemonade_mobile
 description: "A chat app for Lemonade AI servers with syntax highlighting and multi-server support"
 publish_to: 'none'
-version: 1.2.2+9
+version: 2.0.0+10
 
 environment:
   sdk: ^3.8.1
@@ -47,6 +47,14 @@ dependencies:
 
   # HTTP client for direct API calls
   http: ^1.0.0
+
+  # Audio recording & playback
+  record: ^6.2.0
+  just_audio: ^0.9.39
+  mic_stream_recorder: ^1.1.2
+
+  # WebSocket client for realtime transcription
+  web_socket_channel: ^3.0.0
 
 dev_dependencies:
   flutter_test:

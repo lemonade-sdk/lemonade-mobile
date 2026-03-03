@@ -82,6 +82,13 @@ class AppColors {
   static const capabilityVision = Colors.blue;
   static const capabilityImageGeneration = Colors.green;
   static const capabilityTextOnly = Colors.grey;
+  static const capabilityAudio = Colors.amber;
+
+  // ===== AUDIO / TRANSCRIPTION COLORS =====
+  static const recordingRed = Color(0xFFEF4444);
+  static const streamingGreen = Color(0xFF22C55E);
+  static const waveformPlayed = Color(0xFFFBBF24);    // amber-400
+  static const waveformUnplayed = Color(0xFF4B5563);   // gray-600
 
   // ===== UI ELEMENT COLORS =====
   static const hintText = Colors.grey;
