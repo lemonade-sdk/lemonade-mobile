@@ -141,7 +141,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               decoration: const InputDecoration(
                 labelText: 'Base URL',
                 hintText: 'http://localhost:8000',
-                helperText: '/api/v1 is added automatically if not included',
+                helperText: '/api/v1 is added automatically for bare URLs',
                 border: OutlineInputBorder(),
               ),
             ),

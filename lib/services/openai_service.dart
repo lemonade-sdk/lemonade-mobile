@@ -16,9 +16,9 @@ class OpenaiService {
       _modelLabels.addAll(modelLabels);
     }
 
-    // OpenAI library automatically adds /v1, so set base to .../api
-    // so that the library constructs .../api/v1/...
-    String apiUrl = server.apiUrl; // ends with /api/v1
+    // OpenAI library automatically adds /v1, so strip it from apiUrl
+    // e.g. .../api/v1 -> .../api, or .../v1 -> ...
+    String apiUrl = server.apiUrl; // ends with /v1 or /api/v1
     // Strip /v1 so the library can add it back
     OpenAI.baseUrl = apiUrl.substring(0, apiUrl.length - 3);
     OpenAI.apiKey = server.apiKey ?? "lemonade";
