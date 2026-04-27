@@ -37,7 +37,13 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
   final List<String> _attachedImagePaths = [];
 
   // Command autocomplete
-  final List<String> _availableCommands = ['/image', '/draw', '/small', '/medium', '/large'];
+  final List<String> _availableCommands = [
+    '/image',
+    '/draw',
+    '/small',
+    '/medium',
+    '/large',
+  ];
   bool _showCommandSuggestions = false;
   String _currentCommandPrefix = '';
   OverlayEntry? _overlayEntry;
@@ -112,12 +118,16 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(25), // Pill shape
               border: Border.all(
-                color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                color: Theme.of(
+                  context,
+                ).colorScheme.outline.withValues(alpha: 0.3),
                 width: 1,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Theme.of(context).colorScheme.shadow.withValues(alpha: 0.1),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.shadow.withValues(alpha: 0.1),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
@@ -125,35 +135,48 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
             ),
             child: SingleChildScrollView(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: _availableCommands
                       .where((cmd) => cmd.startsWith(_currentCommandPrefix))
-                      .map((command) => InkWell(
-                            onTap: () => _selectCommand(command),
-                            borderRadius: BorderRadius.circular(20),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
-                                  width: 1,
-                                ),
-                              ),
-                              child: Text(
-                                command,
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                      .map(
+                        (command) => InkWell(
+                          onTap: () => _selectCommand(command),
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primaryContainer
+                                  .withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: 0.2),
+                                width: 1,
                               ),
                             ),
-                          ))
+                            child: Text(
+                              command,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
                       .toList(),
                 ),
               ),
@@ -194,8 +217,6 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
     _focusNode.requestFocus();
   }
 
-
-
   Future<void> _pickImage(ImageSource source) async {
     try {
       // Let image_picker handle permissions automatically
@@ -218,11 +239,15 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
           setState(() {
             _attachedImagePaths.add(dataUrl);
           });
-          print('Image converted to base64 data URL: ${dataUrl.length} characters');
+          print(
+            'Image converted to base64 data URL: ${dataUrl.length} characters',
+          );
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Failed to read image: file is empty')),
+              const SnackBar(
+                content: Text('Failed to read image: file is empty'),
+              ),
             );
           }
         }
@@ -292,11 +317,15 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
           setState(() {
             _attachedImagePaths.add(dataUrl);
           });
-          print('Image converted to base64 data URL: ${dataUrl.length} characters');
+          print(
+            'Image converted to base64 data URL: ${dataUrl.length} characters',
+          );
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Failed to read image: file is empty')),
+              const SnackBar(
+                content: Text('Failed to read image: file is empty'),
+              ),
             );
           }
         }
@@ -320,7 +349,13 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
     _attachedImagePaths.clear();
 
     try {
-      await widget.ref.read(chatProvider.notifier).sendMessage(message, imagePaths: imagePaths, scrollController: widget.scrollController);
+      await widget.ref
+          .read(chatProvider.notifier)
+          .sendMessage(
+            message,
+            imagePaths: imagePaths,
+            scrollController: widget.scrollController,
+          );
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -334,7 +369,7 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
     final theme = Theme.of(context);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 12),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border(
@@ -344,90 +379,100 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
           ),
         ),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                width: 1,
-              ),
-            ),
-            child: IconButton(
-              onPressed: _isLoading ? null : _showImageSourceDialog,
-              icon: Icon(
-                Icons.image,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-              tooltip: 'Add image',
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Container(
+      child: SafeArea(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
               decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: theme.colorScheme.outline.withValues(alpha: 0.2),
                   width: 1,
                 ),
               ),
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                decoration: InputDecoration(
-                  hintText: _attachedImagePaths.isNotEmpty
-                      ? (_controller.text.startsWith('/') ? AppMessages.imageCommandHint : AppMessages.messageWithImageHint)
-                      : (_controller.text.startsWith('/') ? AppMessages.imageCommandHint : AppMessages.defaultMessageHint),
-                  hintStyle: TextStyle(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: IconButton(
+                onPressed: _isLoading ? null : _showImageSourceDialog,
+                icon: Icon(
+                  Icons.image,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                 ),
-                onSubmitted: (_) => _sendMessage(),
-                textInputAction: TextInputAction.send,
-                maxLines: 5,
-                minLines: 1,
+                tooltip: 'Add image',
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.5,
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.2),
+                    width: 1,
+                  ),
                 ),
-              ],
-            ),
-            child: IconButton(
-              onPressed: _isLoading ? null : _sendMessage,
-              icon: _isLoading
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: theme.colorScheme.onPrimary,
-                      ),
-                    )
-                  : Icon(
-                      Icons.send,
-                      color: theme.colorScheme.onPrimary,
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  decoration: InputDecoration(
+                    hintText: _attachedImagePaths.isNotEmpty
+                        ? (_controller.text.startsWith('/')
+                              ? AppMessages.imageCommandHint
+                              : AppMessages.messageWithImageHint)
+                        : (_controller.text.startsWith('/')
+                              ? AppMessages.imageCommandHint
+                              : AppMessages.defaultMessageHint),
+                    hintStyle: TextStyle(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
-              padding: const EdgeInsets.all(12),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  onSubmitted: (_) => _sendMessage(),
+                  textInputAction: TextInputAction.send,
+                  maxLines: 5,
+                  minLines: 1,
+                ),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                onPressed: _isLoading ? null : _sendMessage,
+                icon: _isLoading
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: theme.colorScheme.onPrimary,
+                        ),
+                      )
+                    : Icon(Icons.send, color: theme.colorScheme.onPrimary),
+                padding: const EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
