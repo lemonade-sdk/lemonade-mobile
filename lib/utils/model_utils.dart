@@ -44,6 +44,12 @@ class ModelUtils {
     if (labels.contains('thinking')) {
       capabilities.add(ModelCapabilities.thinking);
     }
+    if (labels.contains('audio') || labels.contains('transcription')) {
+      capabilities.add(ModelCapabilities.audio);
+    }
+    if (labels.contains('tts') || labels.contains('speech')) {
+      capabilities.add(ModelCapabilities.tts);
+    }
 
     // If no capabilities detected from labels, check model name
     if (capabilities.isEmpty) {
@@ -62,6 +68,16 @@ class ModelUtils {
       // Check for thinking capability in model name
       if (lowerId.contains('thinking') || lowerId.contains('o1')) {
         capabilities.add(ModelCapabilities.thinking);
+      }
+
+      // Check for audio capability in model name
+      if (lowerId.contains('whisper') || lowerId.contains('transcrib')) {
+        capabilities.add(ModelCapabilities.audio);
+      }
+
+      // Check for TTS capability in model name
+      if (lowerId.contains('tts') || lowerId.contains('speech')) {
+        capabilities.add(ModelCapabilities.tts);
       }
     }
 
@@ -93,10 +109,24 @@ class ModelUtils {
     return capabilities.contains(ModelCapabilities.thinking);
   }
 
+  /// Check if capabilities include audio/transcription support
+  static bool supportsAudio(Set<ModelCapabilities> capabilities) {
+    return capabilities.contains(ModelCapabilities.audio);
+  }
+
+  /// Check if capabilities include text-to-speech support
+  static bool supportsTts(Set<ModelCapabilities> capabilities) {
+    return capabilities.contains(ModelCapabilities.tts);
+  }
+
   /// Build capability icon widget for UI display
   static Widget buildCapabilityIcon(Set<ModelCapabilities> capabilities) {
     // Show icon for the highest priority capability
-    if (capabilities.contains(ModelCapabilities.vision)) {
+    if (capabilities.contains(ModelCapabilities.audio)) {
+      return Icon(Icons.mic, size: 16, color: AppColors.capabilityAudio);
+    } else if (capabilities.contains(ModelCapabilities.tts)) {
+      return Icon(Icons.volume_up, size: 16, color: AppColors.capabilityAudio);
+    } else if (capabilities.contains(ModelCapabilities.vision)) {
       return Icon(Icons.visibility, size: 16, color: AppColors.capabilityVision);
     } else if (capabilities.contains(ModelCapabilities.imageGeneration)) {
       return Icon(Icons.image, size: 16, color: AppColors.capabilityImageGeneration);
@@ -119,6 +149,12 @@ class ModelUtils {
     }
     if (capabilities.contains(ModelCapabilities.thinking)) {
       capabilityNames.add('Thinking');
+    }
+    if (capabilities.contains(ModelCapabilities.audio)) {
+      capabilityNames.add('Audio');
+    }
+    if (capabilities.contains(ModelCapabilities.tts)) {
+      capabilityNames.add('TTS');
     }
     if (capabilities.contains(ModelCapabilities.textOnly) && capabilities.length == 1) {
       capabilityNames.add('Text Only');
@@ -165,4 +201,6 @@ enum ModelCapabilities {
   vision,
   imageGeneration,
   thinking,
+  audio,
+  tts,
 }

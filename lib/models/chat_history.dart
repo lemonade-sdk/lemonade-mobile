@@ -1,4 +1,5 @@
 import 'package:lemonade_mobile/models/chat_message.dart';
+import 'package:lemonade_mobile/models/model_defaults.dart';
 
 class ChatHistory {
   final String id;
@@ -7,6 +8,7 @@ class ChatHistory {
   final DateTime createdAt;
   final DateTime lastUpdated;
   final bool isActive;
+  final ModelDefaults? modelOverrides;
 
   ChatHistory({
     required this.id,
@@ -15,6 +17,7 @@ class ChatHistory {
     DateTime? createdAt,
     DateTime? lastUpdated,
     this.isActive = false,
+    this.modelOverrides,
   }) :
     createdAt = createdAt ?? DateTime.now(),
     lastUpdated = lastUpdated ?? DateTime.now();
@@ -41,6 +44,7 @@ class ChatHistory {
       'createdAt': createdAt.toIso8601String(),
       'lastUpdated': lastUpdated.toIso8601String(),
       'isActive': isActive,
+      if (modelOverrides != null) 'modelOverrides': modelOverrides!.toJson(),
     };
   }
 
@@ -54,6 +58,9 @@ class ChatHistory {
       createdAt: DateTime.parse(json['createdAt']),
       lastUpdated: DateTime.parse(json['lastUpdated']),
       isActive: json['isActive'] ?? false,
+      modelOverrides: json['modelOverrides'] != null
+          ? ModelDefaults.fromJson(json['modelOverrides'])
+          : null,
     );
   }
 
@@ -64,6 +71,8 @@ class ChatHistory {
     DateTime? createdAt,
     DateTime? lastUpdated,
     bool? isActive,
+    ModelDefaults? modelOverrides,
+    bool clearModelOverrides = false,
   }) {
     return ChatHistory(
       id: id ?? this.id,
@@ -72,6 +81,7 @@ class ChatHistory {
       createdAt: createdAt ?? this.createdAt,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       isActive: isActive ?? this.isActive,
+      modelOverrides: clearModelOverrides ? null : (modelOverrides ?? this.modelOverrides),
     );
   }
 }

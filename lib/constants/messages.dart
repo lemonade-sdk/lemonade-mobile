@@ -88,4 +88,24 @@ class AppMessages {
   // Chat history
   static String messagesCount(int count) => '$count messages';
   static String lastUpdated(DateTime date) => 'Last updated: ${date.toString().split(' ')[0]}';
+
+  // Transcription
+  static const String transcription = 'Transcription';
+  static const String transcriptionCopied = 'Transcription copied to clipboard';
+  static const String microphonePermissionRequired = 'Microphone permission is required for transcription.';
+  static const String noAudioModels = 'No audio transcription models detected on this server.';
+  static String transcriptionFailed(String error) => 'Transcription failed: $error';
+  static const String recordingStarted = 'Recording started...';
+  static const String processingTranscription = 'Processing transcription...';
+
+  // Model defaults
+  static const String modelDefaults = 'Model Defaults';
+  static const String modelDefaultsReset = 'All model defaults reset';
+  static const String settingsCopied = 'Settings copied';
+  static const String settingsPasted = 'Settings pasted to this chat';
+  static const String noSettingsToPaste = 'No settings to paste. Long-press a chat thread and select "Copy Settings" first.';
+
+  // Copy settings
+  static const String copySettings = 'Copy Settings';
+  static const String pasteSettings = 'Paste Settings';
 }

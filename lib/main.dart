@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_mobile/providers/beacon_provider.dart';
 import 'package:lemonade_mobile/screens/chat_screen.dart';
 import 'package:lemonade_mobile/screens/settings_screen.dart';
+import 'package:lemonade_mobile/screens/transcription_screen.dart';
+import 'package:lemonade_mobile/screens/model_defaults_screen.dart';
 import 'package:lemonade_mobile/utils/constants.dart';
 
 void main() {
@@ -61,6 +63,8 @@ class _MyAppState extends ConsumerState<MyApp> {
       routes: {
         '/': (context) => const ChatScreen(),
         '/settings': (context) => const SettingsScreen(),
+        '/transcription': (context) => const TranscriptionScreen(),
+        '/model-defaults': (context) => const ModelDefaultsScreen(),
       },
     );
   }

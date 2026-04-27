@@ -22,6 +22,8 @@ class ModelInfo {
   bool get supportsVision => ModelUtils.supportsVision(capabilities);
   bool get supportsImageGeneration => ModelUtils.supportsImageGeneration(capabilities);
   bool get supportsThinking => ModelUtils.supportsThinking(capabilities);
+  bool get supportsAudio => ModelUtils.supportsAudio(capabilities);
+  bool get supportsTts => ModelUtils.supportsTts(capabilities);
   bool get isTextOnly => ModelUtils.isTextOnly(capabilities);
 }
 

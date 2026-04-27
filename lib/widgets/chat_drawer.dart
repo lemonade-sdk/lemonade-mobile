@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lemonade_mobile/constants/messages.dart';
+import 'package:lemonade_mobile/models/model_defaults.dart';
 import 'package:lemonade_mobile/providers/chat_history_provider.dart';
+import 'package:lemonade_mobile/providers/model_defaults_provider.dart';
+import 'package:lemonade_mobile/screens/model_defaults_screen.dart';
 import 'package:lemonade_mobile/screens/settings_screen.dart';
+import 'package:lemonade_mobile/screens/transcription_screen.dart';
 import 'package:lemonade_mobile/widgets/model_selector.dart';
 
 class ChatDrawer extends ConsumerWidget {
@@ -59,8 +64,17 @@ class ChatDrawer extends ConsumerWidget {
                     else
                       ...chatHistories.map((chat) => ListTile(
                             title: Text(chat.displayTitle),
-                            subtitle: Text(
-                              '${chat.messages.length} messages • ${chat.lastUpdated.toString().split(' ')[0]}',
+                            subtitle: Row(
+                              children: [
+                                Text(
+                                  '${chat.messages.length} messages \u2022 ${chat.lastUpdated.toString().split(' ')[0]}',
+                                ),
+                                if (chat.modelOverrides != null && !chat.modelOverrides!.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 4),
+                                    child: Icon(Icons.tune, size: 14, color: Colors.amber),
+                                  ),
+                              ],
                             ),
                             selected: chat.isActive,
                             onTap: () {
@@ -70,6 +84,33 @@ class ChatDrawer extends ConsumerWidget {
                             trailing: PopupMenuButton(
                               itemBuilder: (context) => [
                                 PopupMenuItem(
+                                  child: const Text(AppMessages.copySettings),
+                                  onTap: () {
+                                    final overrides = chat.modelOverrides ?? const ModelDefaults();
+                                    ref.read(modelDefaultsClipboardProvider.notifier).state = overrides;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text(AppMessages.settingsCopied)),
+                                    );
+                                  },
+                                ),
+                                PopupMenuItem(
+                                  child: const Text(AppMessages.pasteSettings),
+                                  onTap: () {
+                                    final clipboard = ref.read(modelDefaultsClipboardProvider);
+                                    if (clipboard == null) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text(AppMessages.noSettingsToPaste)),
+                                      );
+                                    } else {
+                                      ref.read(chatHistoryProvider.notifier)
+                                          .updateChatOverrides(chat.id, clipboard);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text(AppMessages.settingsPasted)),
+                                      );
+                                    }
+                                  },
+                                ),
+                                PopupMenuItem(
                                   child: const Text('Delete Thread'),
                                   onTap: () => ref.read(chatHistoryProvider.notifier).deleteChat(chat.id),
                                 ),
@@ -78,6 +119,32 @@ class ChatDrawer extends ConsumerWidget {
                           )),
 
                     const Divider(),
+
+                    // Transcription
+                    ListTile(
+                      leading: const Icon(Icons.mic),
+                      title: const Text(AppMessages.transcription),
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const TranscriptionScreen()),
+                        );
+                      },
+                    ),
+
+                    // Model Defaults
+                    ListTile(
+                      leading: const Icon(Icons.tune),
+                      title: const Text(AppMessages.modelDefaults),
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const ModelDefaultsScreen()),
+                        );
+                      },
+                    ),
 
                     // Settings
                     ListTile(

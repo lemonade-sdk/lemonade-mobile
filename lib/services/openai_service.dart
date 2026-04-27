@@ -16,16 +16,11 @@ class OpenaiService {
       _modelLabels.addAll(modelLabels);
     }
 
-    // OpenAI library automatically adds /v1, so remove it if present
-    String baseUrl = server.baseUrl;
-    if (baseUrl.endsWith('/v1')) {
-      baseUrl = baseUrl.substring(0, baseUrl.length - 3);
-      // Remove trailing slash if present after removing /v1
-      if (baseUrl.endsWith('/')) {
-        baseUrl = baseUrl.substring(0, baseUrl.length - 1);
-      }
-    }
-    OpenAI.baseUrl = baseUrl;
+    // OpenAI library automatically adds /v1, so strip it from apiUrl
+    // e.g. .../api/v1 -> .../api, or .../v1 -> ...
+    String apiUrl = server.apiUrl; // ends with /v1 or /api/v1
+    // Strip /v1 so the library can add it back
+    OpenAI.baseUrl = apiUrl.substring(0, apiUrl.length - 3);
     OpenAI.apiKey = server.apiKey ?? "lemonade";
 
     // Set longer timeout for image generation (10 minutes)
@@ -35,10 +30,7 @@ class OpenaiService {
   Future<List<Map<String, dynamic>>> fetchModels() async {
     // Try direct HTTP request first to get labels
     try {
-      String apiUrl = server.baseUrl;
-      if (!apiUrl.endsWith('/v1')) {
-        apiUrl = '${apiUrl}/v1';
-      }
+      final apiUrl = server.apiUrl;
       final url = Uri.parse('$apiUrl/models');
       final response = await http.get(
         url,
@@ -143,11 +135,7 @@ class OpenaiService {
       'max_tokens': 1000,
     };
 
-    // Handle base URL construction - some servers include /v1, some don't
-    String apiUrl = server.baseUrl;
-    if (!apiUrl.endsWith('/v1')) {
-      apiUrl = '${apiUrl}/v1';
-    }
+    final apiUrl = server.apiUrl;
     final url = Uri.parse('$apiUrl/chat/completions');
     final request = http.Request('POST', url)
       ..headers['Content-Type'] = 'application/json'
@@ -226,11 +214,7 @@ class OpenaiService {
       'max_tokens': 1000,
     };
 
-    // Handle base URL construction - some servers include /v1, some don't
-    String apiUrl = server.baseUrl;
-    if (!apiUrl.endsWith('/v1')) {
-      apiUrl = '${apiUrl}/v1';
-    }
+    final apiUrl = server.apiUrl;
     final url = Uri.parse('$apiUrl/chat/completions');
     final response = await http.post(
       url,
@@ -286,11 +270,7 @@ class OpenaiService {
         'temperature': 0.8, // Add some creativity for image generation
       };
 
-      // Handle base URL construction - some servers include /v1, some don't
-      String apiUrl = server.baseUrl;
-      if (!apiUrl.endsWith('/v1')) {
-        apiUrl = '${apiUrl}/v1';
-      }
+      final apiUrl = server.apiUrl;
       final url = Uri.parse('$apiUrl/chat/completions');
       final response = await http.post(
         url,
