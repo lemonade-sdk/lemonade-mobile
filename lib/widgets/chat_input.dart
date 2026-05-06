@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:lemonade_mobile/providers/chat_provider.dart';
 import 'package:lemonade_mobile/constants/messages.dart';
 import 'package:lemonade_mobile/utils/image_utils.dart';
+import 'package:lemonade_mobile/widgets/voice_input_sheet.dart';
 
 class ChatInput extends ConsumerWidget {
   final ScrollController? scrollController;
@@ -363,6 +364,30 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               ),
               tooltip: 'Add image',
+            ),
+          ),
+          const SizedBox(width: 4),
+          Container(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: theme.colorScheme.outline.withValues(alpha: 0.2),
+                width: 1,
+              ),
+            ),
+            child: IconButton(
+              onPressed: _isLoading
+                  ? null
+                  : () => VoiceInputSheet.show(
+                        context,
+                        chatScrollController: widget.scrollController,
+                      ),
+              icon: Icon(
+                Icons.mic,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+              ),
+              tooltip: 'Voice input',
             ),
           ),
           const SizedBox(width: 8),

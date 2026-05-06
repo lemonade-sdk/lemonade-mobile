@@ -29,6 +29,11 @@ migrate_working_dir/
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
+
+# Generated code (Isar / freezed / json_serializable, etc.)
+# Re-generate locally with: dart run build_runner build --delete-conflicting-outputs
+**/*.g.dart
+**/*.freezed.dart
 .pub-cache/
 .pub/
 /build/

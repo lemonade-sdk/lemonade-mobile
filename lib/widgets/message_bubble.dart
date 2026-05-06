@@ -7,6 +7,7 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:lemonade_mobile/models/chat_message.dart';
 import 'package:lemonade_mobile/constants/messages.dart';
 import 'package:lemonade_mobile/constants/colors.dart';
+import 'package:lemonade_mobile/widgets/inline_audio_player.dart';
 
 class MessageBubble extends StatelessWidget {
   final ChatMessage message;
@@ -253,6 +254,7 @@ class _MessageBubbleContent extends StatelessWidget {
 
     final hasText = message.textContent.isNotEmpty;
     final hasImage = message.hasImages;
+    final audios = message.audioContent.toList();
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -292,7 +294,16 @@ class _MessageBubbleContent extends StatelessWidget {
             children: [
               if (hasImage) ...[
                 _buildImage(context, message.imageContent!),
-                if (hasText) const SizedBox(height: 8),
+                if (hasText || audios.isNotEmpty) const SizedBox(height: 8),
+              ],
+              for (final src in audios) ...[
+                InlineAudioPlayer(
+                  source: src,
+                  color: isUser
+                      ? theme.colorScheme.onPrimary
+                      : theme.colorScheme.primary,
+                ),
+                const SizedBox(height: 8),
               ],
               if (hasText) _buildTextContent(context, isUser, isDark),
               const SizedBox(height: 4),

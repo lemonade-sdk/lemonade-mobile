@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:lemonade_mobile/services/openai_service.dart';
+import 'package:lemonade_mobile/api/lemonade_client.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
 import 'package:lemonade_mobile/utils/model_utils.dart';
 
@@ -16,8 +16,19 @@ class ModelInfo {
   final String id;
   final List<String> labels;
   final Set<ModelCapabilities> capabilities;
+  /// True for server-side Collections (recipe == 'collection'). Collections
+  /// can't be sent as the `model` on /chat/completions — callers should
+  /// substitute one of [compositeModels] for the actual LLM call.
+  final bool isCollection;
+  /// Component model ids when [isCollection] is true; empty otherwise.
+  final List<String> compositeModels;
 
-  ModelInfo(this.id, this.labels) : capabilities = ModelUtils.detectCapabilities(id, labels);
+  ModelInfo(
+    this.id,
+    this.labels, {
+    this.isCollection = false,
+    this.compositeModels = const [],
+  }) : capabilities = ModelUtils.detectCapabilities(id, labels);
 
   bool get supportsVision => ModelUtils.supportsVision(capabilities);
   bool get supportsImageGeneration => ModelUtils.supportsImageGeneration(capabilities);
@@ -48,22 +59,29 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     final selectedServer = ref.read(selectedServerProvider);
     if (selectedServer == null) return;
 
+    final client = LemonadeApiClient(selectedServer);
     try {
-      final openaiService = OpenaiService(selectedServer);
-      final modelsData = await openaiService.fetchModels();
-      final modelInfos = modelsData.map((data) => ModelInfo(data['id'] as String, data['labels'] as List<String>)).toList();
+      final apiModels = await client.models.installed();
+      final modelInfos = apiModels
+          .map((m) => ModelInfo(
+                m.id,
+                m.labels,
+                isCollection: m.isCollection,
+                compositeModels: m.compositeModels,
+              ))
+          .toList();
       state = modelInfos;
 
-      // Auto-select first model if no model is currently selected
       final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
       if (selectedModelNotifier.state == null || selectedModelNotifier.state!.isEmpty) {
         if (modelInfos.isNotEmpty) {
           await selectedModelNotifier.selectModel(modelInfos.first.id);
         }
       }
-    } catch (e) {
-      // If fetching fails, set empty list - no default models
+    } catch (_) {
       state = [];
+    } finally {
+      client.close();
     }
   }
 }

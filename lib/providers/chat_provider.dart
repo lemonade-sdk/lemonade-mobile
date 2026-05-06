@@ -1,279 +1,241 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/widgets.dart';
-import 'package:lemonade_mobile/models/chat_message.dart';
-import 'package:lemonade_mobile/services/openai_service.dart';
-import 'package:lemonade_mobile/providers/servers_provider.dart';
-import 'package:lemonade_mobile/providers/chat_history_provider.dart';
-import 'package:lemonade_mobile/providers/models_provider.dart';
-import 'package:lemonade_mobile/constants/messages.dart';
+import 'dart:convert';
 
-// Active chat messages provider
-final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>(
-  (ref) => ChatNotifier(ref),
-);
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../constants/messages.dart';
+import '../models/chat_message.dart';
+import '../omni/tool_executor.dart';
+import '../providers/chat_history_provider.dart';
+import '../providers/lemonade_client_provider.dart';
+import '../providers/models_provider.dart';
+import '../providers/omni_router_provider.dart';
+import '../providers/servers_provider.dart';
+import '../services/chat_service.dart';
+import '../storage/file_storage.dart';
+
+/// Active chat messages. Mirrors whatever ChatHistory the chat-history provider
+/// has marked active, plus any in-flight assistant placeholder.
+final chatProvider =
+    StateNotifierProvider<ChatNotifier, List<ChatMessage>>((ref) => ChatNotifier(ref));
 
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   final Ref ref;
 
   ChatNotifier(this.ref) : super([]) {
-    // Update messages when active chat changes
-    ref.listen(chatHistoryProvider, (_, __) => _updateMessagesFromActiveChat());
-    _updateMessagesFromActiveChat();
+    ref.listen(chatHistoryProvider, (_, __) => _syncFromActiveChat());
+    _syncFromActiveChat();
   }
 
-  void _updateMessagesFromActiveChat() {
-    final activeChat = ref.read(chatHistoryProvider.notifier).getActiveChat();
-    state = activeChat?.messages ?? [];
+  void _syncFromActiveChat() {
+    final active = ref.read(chatHistoryProvider.notifier).getActiveChat();
+    state = active?.messages ?? [];
   }
-  Future<void> sendMessage(String message, {List<String>? imagePaths, ScrollController? scrollController}) async {
-    final selectedServer = ref.read(selectedServerProvider);
-    if (selectedServer == null) {
-      // Add error message directly to chat history
-      final errorMessage = ChatMessage.text(
-        role: MessageRole.assistant,
-        text: AppMessages.noServerSelected,
-      );
-      final updatedMessages = [...state, errorMessage];
-      await ref.read(chatHistoryProvider.notifier).updateActiveChat(updatedMessages);
+
+  Future<void> sendMessage(
+    String message, {
+    List<String>? imagePaths,
+    ScrollController? scrollController,
+  }) async {
+    final server = ref.read(selectedServerProvider);
+    if (server == null) {
+      await _appendError(AppMessages.noServerSelected);
       return;
     }
 
-    // Ensure selected model is loaded from preferences
-    final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
-    String selectedModel = selectedModelNotifier.state ?? '';
-
-    // If model is not loaded yet, wait for it
+    // Resolve the actual LLM id. If the user picked a Collection, the
+    // wire provider substitutes its chat-shaped component so we don't
+    // post the Collection meta-id to /chat/completions (server returns a
+    // "GGUF file not found for checkpoint" 500 in that case).
+    final selectedModel = ref.read(wireLlmModelProvider) ?? '';
     if (selectedModel.isEmpty) {
-      // Wait a short time for async loading to complete
-      await Future.delayed(const Duration(milliseconds: 100));
-      selectedModel = selectedModelNotifier.state ?? '';
-      print('Selected model after delay: $selectedModel');
-    }
-
-    // Get current model labels from the models provider
-    final availableModels = ref.read(modelsProvider);
-    final modelLabels = {for (final model in availableModels) model.id: model.labels};
-
-    // Check if trying to send images to non-vision model (moved to service layer like JavaScript)
-    final openaiService = OpenaiService(selectedServer, modelLabels: modelLabels);
-    if ((imagePaths != null && imagePaths.isNotEmpty) && !openaiService.isVisionModel(selectedModel)) {
-      final errorMessage = ChatMessage.text(
-        role: MessageRole.assistant,
-        text: 'Cannot send images to model "$selectedModel" as it does not support vision. Please load a model with "Vision" capabilities or remove the attached images.',
-      );
-      final updatedMessages = [...state, errorMessage];
-      await ref.read(chatHistoryProvider.notifier).updateActiveChat(updatedMessages);
+      await _appendError(AppMessages.noModelSelected);
       return;
     }
 
-    // Create user message with text and/or images
-    final messageContent = <MessageContent>[];
+    final availableModels = ref.read(modelsProvider);
+    final modelInfo = availableModels.firstWhere(
+      (m) => m.id == selectedModel,
+      orElse: () => ModelInfo(selectedModel, const []),
+    );
 
-    // Add text if present
-    if (message.isNotEmpty) {
-      messageContent.add(MessageContent(type: MessageContentType.text, value: message));
+    final hasImages = imagePaths != null && imagePaths.isNotEmpty;
+    if (hasImages && !modelInfo.supportsVision) {
+      await _appendError(AppMessages.visionModelServerError(selectedModel));
+      return;
     }
 
-    // Add images if present (already converted to data URLs in chat input)
-    if (imagePaths != null) {
-      for (final imageData in imagePaths) {
-        messageContent.add(MessageContent(
-          type: MessageContentType.image,
-          value: imageData, // Already a data URL like 'data:image/jpeg;base64,...'
-        ));
+    // Build & persist the user message immediately.
+    final userParts = <MessageContent>[];
+    if (message.isNotEmpty) {
+      userParts.add(MessageContent(type: MessageContentType.text, value: message));
+    }
+    if (hasImages) {
+      for (final dataUrl in imagePaths) {
+        userParts.add(MessageContent(type: MessageContentType.image, value: dataUrl));
       }
     }
+    final userMessage = ChatMessage(role: MessageRole.user, content: userParts);
+    final history = [...state, userMessage];
+    await ref.read(chatHistoryProvider.notifier).updateActiveChat(history);
+    _scroll(scrollController, animated: true);
 
-    final userMessage = ChatMessage(
-      role: MessageRole.user,
-      content: messageContent,
-    );
-    final updatedMessages = [...state, userMessage];
+    // Add the assistant placeholder.
+    final placeholder = ChatMessage.text(role: MessageRole.assistant, text: '');
+    var working = [...history, placeholder];
+    await ref.read(chatHistoryProvider.notifier).updateActiveChat(working);
 
-    // Update chat history immediately with user message
-    await ref.read(chatHistoryProvider.notifier).updateActiveChat(updatedMessages);
-
-    // Scroll to bottom to show the user's message
-    if (scrollController != null && scrollController.hasClients) {
-      scrollController.animateTo(
-        scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+    final client = ref.read(lemonadeClientProvider);
+    if (client == null) {
+      await _replaceLast(working, AppMessages.noServerSelected);
+      return;
     }
 
-    // Add placeholder for assistant message
-    final assistantMessage = ChatMessage.text(role: MessageRole.assistant, text: '');
-    final messagesWithPlaceholder = [...updatedMessages, assistantMessage];
-    await ref.read(chatHistoryProvider.notifier).updateActiveChat(messagesWithPlaceholder);
+    // Force omni mode on for Collection selections — the whole point of a
+    // Collection is "use this bundle of components", which is exactly what
+    // the agent loop drives. The toggle still controls regular models.
+    final omniEnabled = ref.read(omniRouterEnabledProvider) ||
+        ref.read(selectedIsCollectionProvider);
+    final caps = ref.read(omniCapabilitiesProvider);
+    final executor = ref.read(omniToolExecutorProvider);
+
+    final svc = ChatService(client);
+
+    var assistantText = '';
+    final artifactParts = <MessageContent>[];
 
     try {
-      final openaiService = OpenaiService(selectedServer, modelLabels: modelLabels);
+      final stream = svc.run(
+        llmModel: selectedModel,
+        history: history,
+        omniRouterEnabled: omniEnabled,
+        capabilities: caps,
+        executor: executor,
+      );
 
-      // Check if this is an image generation request
-      if (openaiService.isImageGenerationRequest(message)) {
-        print('Image generation request detected: $message');
-
-        // Parse size from prompt
-        final (cleanPrompt, imageSize) = openaiService.parseImagePrompt(message);
-        print('Parsed prompt: "$cleanPrompt", size: $imageSize');
-
-        // Try to generate an image
-        String? imageBase64;
-        Object? imageGenerationError;
-        try {
-          imageBase64 = await openaiService.generateImage(cleanPrompt, model: selectedModel, size: imageSize);
-        } catch (e) {
-          // Handle specific error types
-          print('Image generation exception: $e');
-          imageGenerationError = e;
-          imageBase64 = null; // Ensure it's null so we fall through to error handling
-        }
-
-        if (imageBase64 != null) {
-          print('Image generation succeeded, creating image message');
-          // Create assistant message with generated image
-          final imageMessage = ChatMessage(
-            role: MessageRole.assistant,
-            content: [
-              MessageContent(type: MessageContentType.image, value: imageBase64),
-            ],
-          );
-          final finalMessages = [
-            ...messagesWithPlaceholder.sublist(
-                0, messagesWithPlaceholder.length - 1),
-            imageMessage,
-          ];
-          await ref.read(chatHistoryProvider.notifier).updateActiveChat(
-              finalMessages);
-          return;
-        } else {
-          print('Image generation failed, falling back to text chat');
-          // Check model capabilities for better error messages
-          String errorText;
-          if (selectedModel.isEmpty) {
-            errorText = AppMessages.noModelSelectedForImage;
-          } else {
-            // Ensure models are loaded before checking capabilities
-            final availableModels = ref.read(modelsProvider);
-            if (availableModels.isEmpty) {
-              // Models not loaded yet, fetch them
-              await ref.read(modelsProvider.notifier).fetchModels();
-              // Re-read after fetching
-              final updatedModels = ref.read(modelsProvider);
-              final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
-
-              if (!selectedModelNotifier.isModelSelectedAndAvailable(updatedModels)) {
-                errorText = AppMessages.noModelSelectedForImage;
-              } else {
-                errorText = _getImageGenerationErrorMessage(updatedModels, selectedModel, imageGenerationError);
-              }
-            } else {
-              // Models are loaded, check normally
-              final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
-              if (!selectedModelNotifier.isModelSelectedAndAvailable(availableModels)) {
-                errorText = AppMessages.noModelSelectedForImage;
-              } else {
-                errorText = _getImageGenerationErrorMessage(availableModels, selectedModel, imageGenerationError);
+      await for (final ev in stream) {
+        switch (ev) {
+          case ChatTokens():
+            assistantText += ev.delta;
+            working = await _updateAssistant(
+              working,
+              text: assistantText,
+              extra: artifactParts,
+            );
+            _scroll(scrollController);
+          case ChatStatus():
+            // Show the status as the in-flight assistant text. Final text overwrites it.
+            working = await _updateAssistant(
+              working,
+              text: ev.message,
+              extra: artifactParts,
+            );
+          case ChatArtifact():
+            final part = await _persistArtifact(ev.artifact);
+            if (part != null) artifactParts.add(part);
+            working = await _updateAssistant(
+              working,
+              text: assistantText,
+              extra: artifactParts,
+            );
+            _scroll(scrollController);
+          case ChatDone():
+            assistantText = ev.text;
+            // Replace artifact parts with whatever the agent produced this turn,
+            // but don't double-add ones we already persisted incrementally.
+            if (artifactParts.isEmpty) {
+              for (final art in ev.artifacts) {
+                final part = await _persistArtifact(art);
+                if (part != null) artifactParts.add(part);
               }
             }
-          }
-          final errorMessage = ChatMessage.text(
-            role: MessageRole.assistant,
-            text: errorText,
-          );
-          final finalMessages = [
-            ...messagesWithPlaceholder.sublist(
-                0, messagesWithPlaceholder.length - 1),
-            errorMessage,
-          ];
-          await ref.read(chatHistoryProvider.notifier).updateActiveChat(finalMessages);
-          return;
-        }
-      }
-
-      final stream = openaiService.streamChat(updatedMessages, model: selectedModel);
-
-      String accumulatedResponse = '';
-
-      // Auto-scroll during streaming response
-      void scrollToBottom() {
-        if (scrollController != null && scrollController.hasClients) {
-          scrollController.animateTo(
-            scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
-      }
-
-      await for (final chunk in stream) {
-        accumulatedResponse += chunk;
-
-        final lastMessage = messagesWithPlaceholder.last;
-        if (lastMessage.role == MessageRole.assistant) {
-          final updatedAssistantMessage = ChatMessage.text(
-            role: MessageRole.assistant,
-            text: accumulatedResponse,
-            timestamp: lastMessage.timestamp,
-          );
-
-          final finalMessages = [
-            ...messagesWithPlaceholder.sublist(0, messagesWithPlaceholder.length - 1),
-            updatedAssistantMessage,
-          ];
-
-          await ref.read(chatHistoryProvider.notifier).updateActiveChat(finalMessages);
-
-          // Auto-scroll to show new text as it arrives
-          scrollToBottom();
+            working = await _updateAssistant(
+              working,
+              text: assistantText,
+              extra: artifactParts,
+            );
+            _scroll(scrollController);
         }
       }
     } catch (e) {
-      // Replace last message with error
-      String errorText;
-      if (e.toString().contains("Model '' was not found") || e.toString().contains("model") && e.toString().contains("not found")) {
-        errorText = AppMessages.noModelSelected;
-      } else {
-        errorText = AppMessages.genericError(e.toString());
-      }
-
-      final errorMessage = ChatMessage.text(
-        role: MessageRole.assistant,
-        text: errorText,
-        timestamp: DateTime.now(),
-      );
-
-      final finalMessages = [
-        ...messagesWithPlaceholder.sublist(0, messagesWithPlaceholder.length - 1),
-        errorMessage,
-      ];
-
-      await ref.read(chatHistoryProvider.notifier).updateActiveChat(finalMessages);
+      final errText = AppMessages.genericError(e.toString());
+      await _replaceLast(working, errText);
     }
   }
 
-  String _getImageGenerationErrorMessage(List<ModelInfo> availableModels, String selectedModel, Object? error) {
-    // Check for specific error types first
-    if (error != null) {
-      if (error is TimeoutException) {
-        return AppMessages.imageGenerationTimeout;
-      }
+  Future<List<ChatMessage>> _updateAssistant(
+    List<ChatMessage> messages, {
+    required String text,
+    List<MessageContent> extra = const [],
+  }) async {
+    final last = messages.last;
+    final parts = <MessageContent>[];
+    if (text.isNotEmpty) {
+      parts.add(MessageContent(type: MessageContentType.text, value: text));
     }
-
-    final selectedModelInfo = availableModels.firstWhere(
-      (model) => model.id == selectedModel,
-      orElse: () => ModelInfo(selectedModel, []),
+    parts.addAll(extra);
+    final updated = ChatMessage(
+      role: MessageRole.assistant,
+      content: parts.isEmpty
+          ? [MessageContent(type: MessageContentType.text, value: '')]
+          : parts,
+      timestamp: last.timestamp,
     );
+    final next = [...messages.sublist(0, messages.length - 1), updated];
+    await ref.read(chatHistoryProvider.notifier).updateActiveChat(next);
+    return next;
+  }
 
-    if (selectedModelInfo.isTextOnly) {
-      return AppMessages.textOnlyModelError(selectedModel);
-    } else if (selectedModelInfo.supportsImageGeneration) {
-      return AppMessages.imageGenerationServerError(selectedModel);
+  Future<MessageContent?> _persistArtifact(Artifact artifact) async {
+    try {
+      final ext = '.${artifact.mime.split('/').last}';
+      final kind = artifact.kind == ArtifactKind.image ? 'image' : 'audio';
+      await AttachmentStore.writeBase64(
+        base64Data: artifact.base64Data,
+        kind: kind,
+        extension: ext,
+      );
+      final dataUrl = 'data:${artifact.mime};base64,${artifact.base64Data}';
+      return MessageContent(
+        type: artifact.kind == ArtifactKind.image
+            ? MessageContentType.image
+            : MessageContentType.audio,
+        value: dataUrl,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _appendError(String text) async {
+    final errMessage = ChatMessage.text(role: MessageRole.assistant, text: text);
+    final next = [...state, errMessage];
+    await ref.read(chatHistoryProvider.notifier).updateActiveChat(next);
+  }
+
+  Future<void> _replaceLast(List<ChatMessage> working, String text) async {
+    final next = [
+      ...working.sublist(0, working.length - 1),
+      ChatMessage.text(
+        role: MessageRole.assistant,
+        text: text,
+        timestamp: DateTime.now(),
+      ),
+    ];
+    await ref.read(chatHistoryProvider.notifier).updateActiveChat(next);
+  }
+
+  void _scroll(ScrollController? controller, {bool animated = false}) {
+    if (controller == null || !controller.hasClients) return;
+    if (animated) {
+      controller.animateTo(
+        controller.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
     } else {
-      return AppMessages.visionModelServerError(selectedModel);
+      controller.jumpTo(controller.position.maxScrollExtent);
     }
   }
 
@@ -281,3 +243,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     ref.read(chatHistoryProvider.notifier).updateActiveChat([]);
   }
 }
+
+// jsonEncode kept around for any future tool-calls payload persistence.
+// ignore: unused_element
+String _unused() => jsonEncode({'_': null});

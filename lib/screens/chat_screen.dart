@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_mobile/providers/chat_provider.dart';
+import 'package:lemonade_mobile/providers/omni_router_provider.dart';
 import 'package:lemonade_mobile/widgets/chat_input.dart';
+import 'package:lemonade_mobile/screens/talk_screen.dart';
+import 'package:lemonade_mobile/widgets/manual_tools_bar.dart';
 import 'package:lemonade_mobile/widgets/message_bubble.dart';
-import 'package:lemonade_mobile/widgets/server_selector.dart';
 import 'package:lemonade_mobile/widgets/chat_drawer.dart';
 import 'package:lemonade_mobile/widgets/model_selector.dart';
 import 'package:lemonade_mobile/constants/colors.dart';
@@ -59,6 +61,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         actions: [
           const ModelSelector(compact: true),
           IconButton(
+            icon: const Icon(Icons.call),
+            tooltip: 'Talk',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const TalkScreen()),
+            ),
+          ),
+          IconButton(
             icon: const Icon(Icons.clear),
             onPressed: () => ref.read(chatProvider.notifier).clearChat(),
           ),
@@ -67,7 +76,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       drawer: const ChatDrawer(),
       body: Column(
         children: [
-          const ServerSelector(),
           Expanded(
             child: messages.isEmpty
                 ? const Center(
@@ -105,6 +113,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ),
                   ),
           ),
+          if (!ref.watch(omniRouterEnabledProvider)) const ManualToolsBar(),
           ChatInput(scrollController: _scrollController),
         ],
       ),

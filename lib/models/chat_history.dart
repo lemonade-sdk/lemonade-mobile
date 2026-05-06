@@ -10,6 +10,9 @@ class ChatHistory {
   final bool isActive;
   final ModelDefaults? modelOverrides;
 
+  /// Folder the chat lives in. Null = root / Inbox.
+  final String? folderId;
+
   ChatHistory({
     required this.id,
     required this.title,
@@ -18,6 +21,7 @@ class ChatHistory {
     DateTime? lastUpdated,
     this.isActive = false,
     this.modelOverrides,
+    this.folderId,
   }) :
     createdAt = createdAt ?? DateTime.now(),
     lastUpdated = lastUpdated ?? DateTime.now();
@@ -73,6 +77,8 @@ class ChatHistory {
     bool? isActive,
     ModelDefaults? modelOverrides,
     bool clearModelOverrides = false,
+    String? folderId,
+    bool clearFolder = false,
   }) {
     return ChatHistory(
       id: id ?? this.id,
@@ -82,6 +88,7 @@ class ChatHistory {
       lastUpdated: lastUpdated ?? this.lastUpdated,
       isActive: isActive ?? this.isActive,
       modelOverrides: clearModelOverrides ? null : (modelOverrides ?? this.modelOverrides),
+      folderId: clearFolder ? null : (folderId ?? this.folderId),
     );
   }
 }

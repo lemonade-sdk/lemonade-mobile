@@ -4,8 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:isar/isar.dart';
 import 'package:record/record.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:lemonade_mobile/models/transcription.dart';
@@ -15,6 +15,8 @@ import 'package:lemonade_mobile/providers/servers_provider.dart';
 import 'package:lemonade_mobile/services/audio_transcription_service.dart';
 import 'package:lemonade_mobile/services/audio_recorder_service.dart';
 import 'package:lemonade_mobile/services/realtime_transcription_service.dart';
+import 'package:lemonade_mobile/storage/database.dart';
+import 'package:lemonade_mobile/storage/entities/transcription_entity.dart';
 
 // Recording state
 enum RecordingState { idle, recording, processing }
@@ -69,7 +71,6 @@ final transcriptionHistoryProvider =
 );
 
 class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
-  static const String _prefsKey = 'transcription_history';
   final _uuid = const Uuid();
 
   TranscriptionHistoryNotifier() : super([]) {
@@ -77,20 +78,28 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonList = prefs.getStringList(_prefsKey) ?? [];
-    final items = jsonList
-        .map((json) => Transcription.fromJson(jsonDecode(json)))
-        .toList();
-    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    state = items;
+    if (!AppDatabase.isOpen) return;
+    final rows = await AppDatabase.instance.transcriptions
+        .where()
+        .sortByCreatedAtDesc()
+        .findAll();
+    state = rows.map(_entityToModel).toList(growable: false);
   }
 
-  Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonList = state.map((t) => jsonEncode(t.toJson())).toList();
-    await prefs.setStringList(_prefsKey, jsonList);
-  }
+  Transcription _entityToModel(TranscriptionEntity e) => Transcription(
+        id: e.uuid,
+        text: e.text,
+        modelId: e.modelId,
+        mode: e.mode == 'realtime'
+            ? TranscriptionMode.realtime
+            : TranscriptionMode.http,
+        serverName: e.serverName,
+        audioFilePath: e.audioFilePath,
+        audioDuration: e.audioDurationMs == null
+            ? null
+            : Duration(milliseconds: e.audioDurationMs!),
+        createdAt: e.createdAt,
+      );
 
   Future<Transcription> addTranscription({
     required String text,
@@ -109,8 +118,20 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
       audioFilePath: audioFilePath,
       audioDuration: audioDuration,
     );
+    if (AppDatabase.isOpen) {
+      final db = AppDatabase.instance;
+      final entity = TranscriptionEntity()
+        ..uuid = transcription.id
+        ..text = transcription.text
+        ..modelId = transcription.modelId
+        ..mode = mode == TranscriptionMode.realtime ? 'realtime' : 'http'
+        ..serverName = transcription.serverName
+        ..audioFilePath = transcription.audioFilePath
+        ..audioDurationMs = transcription.audioDuration?.inMilliseconds
+        ..createdAt = transcription.createdAt;
+      await db.isar.writeTxn(() async => db.transcriptions.put(entity));
+    }
     state = [transcription, ...state];
-    await _save();
     return transcription;
   }
 
@@ -119,11 +140,16 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
       if (t.id == id) return t.copyWith(text: text);
       return t;
     }).toList();
-    await _save();
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    final existing =
+        await db.transcriptions.filter().uuidEqualTo(id).findFirst();
+    if (existing == null) return;
+    existing.text = text;
+    await db.isar.writeTxn(() async => db.transcriptions.put(existing));
   }
 
   Future<void> deleteTranscription(String id) async {
-    // Delete associated audio file if it exists
     final transcription = state.firstWhere(
       (t) => t.id == id,
       orElse: () => throw StateError('Not found'),
@@ -131,29 +157,30 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
     if (transcription.audioFilePath != null) {
       try {
         final file = File(transcription.audioFilePath!);
-        if (await file.exists()) {
-          await file.delete();
-        }
+        if (await file.exists()) await file.delete();
       } catch (_) {}
     }
     state = state.where((t) => t.id != id).toList();
-    await _save();
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    await db.isar.writeTxn(() async {
+      await db.transcriptions.filter().uuidEqualTo(id).deleteAll();
+    });
   }
 
   Future<void> clearAll() async {
-    // Delete all associated audio files
     for (final t in state) {
       if (t.audioFilePath != null) {
         try {
           final file = File(t.audioFilePath!);
-          if (await file.exists()) {
-            await file.delete();
-          }
+          if (await file.exists()) await file.delete();
         } catch (_) {}
       }
     }
     state = [];
-    await _save();
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    await db.isar.writeTxn(() async => db.transcriptions.where().deleteAll());
   }
 }
 

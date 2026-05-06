@@ -25,7 +25,14 @@ class DiscoveredServersNotifier extends StateNotifier<List<DiscoveredServer>> {
   final Ref ref;
   StreamSubscription? _subscription;
   Timer? _cleanupTimer;
-  final Set<String> _notifiedUrls = {};
+
+  // Notification dedup is per-hostname. A multi-NIC server broadcasts from
+  // every interface, so the same hostname arrives with several different
+  // source IPs — each is its own list entry (the user can pick which network
+  // path to connect over), but only the first one fires a banner. We never
+  // re-notify for a hostname during the session, even if it briefly drops off
+  // and returns. App restart clears the set, which is the right behavior.
+  final Set<String> _notifiedHostnames = {};
 
   DiscoveredServersNotifier(this.ref) : super([]) {
     _startListening();
@@ -56,24 +63,43 @@ class DiscoveredServersNotifier extends StateNotifier<List<DiscoveredServer>> {
     }
   }
 
+  /// Normalise a hostname so cosmetic variants (`Lemonade`, `lemonade`,
+  /// `lemonade.local`, trailing whitespace, etc.) collapse to a single key.
+  /// Without this a server that announces both an mDNS name and a bare host
+  /// fires two banners for what's clearly the same machine.
+  String _hostnameKey(String raw) {
+    var s = raw.trim().toLowerCase();
+    if (s.endsWith('.local')) s = s.substring(0, s.length - '.local'.length);
+    if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+    return s;
+  }
+
   void _handleDiscoveredServer(DiscoveredServer server) {
-    final existingIndex = state.indexWhere((s) => s.url == server.url);
+    // Match by hostname AND url so the same hostname at a different IP shows
+    // up as its own list entry (the user can pick which network path to use).
+    final existingIndex = state.indexWhere(
+      (s) => s.hostname == server.hostname && s.url == server.url,
+    );
 
     if (existingIndex >= 0) {
-      // Update lastSeen timestamp
+      // Same hostname + url: just refresh lastSeen, no notification.
       state = [
         ...state.sublist(0, existingIndex),
         server,
         ...state.sublist(existingIndex + 1),
       ];
-    } else {
-      // Brand new server discovered
-      state = [...state, server];
+      return;
+    }
 
-      if (!_notifiedUrls.contains(server.url)) {
-        _notifiedUrls.add(server.url);
-        ref.read(pendingBeaconNotificationProvider.notifier).state = server;
-      }
+    state = [...state, server];
+
+    // One banner per hostname per session, normalised so `foo`, `Foo`, and
+    // `foo.local` all collapse to the same key. Subsequent IPs for the same
+    // host (multi-NIC, VPN + LAN, IP renewal) appear in the discovered list
+    // but don't pop another notification.
+    final key = _hostnameKey(server.hostname);
+    if (_notifiedHostnames.add(key)) {
+      ref.read(pendingBeaconNotificationProvider.notifier).state = server;
     }
   }
 
@@ -83,16 +109,12 @@ class DiscoveredServersNotifier extends StateNotifier<List<DiscoveredServer>> {
       return now.difference(server.lastSeen).inSeconds < _expirationSeconds;
     }).toList();
 
-    // Allow re-notification for servers that expire and come back
-    final removedUrls = state
-        .where((s) => !newState.contains(s))
-        .map((s) => s.url)
-        .toSet();
-    _notifiedUrls.removeAll(removedUrls);
-
     if (newState.length != state.length) {
       state = newState;
     }
+    // _notifiedHostnames is intentionally not cleared here — expiring a
+    // server from the visible list shouldn't re-arm the banner for that
+    // hostname.
   }
 
   @override

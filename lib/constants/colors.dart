@@ -97,7 +97,8 @@ class AppColors {
 
   // ===== BEACON DISCOVERY COLORS =====
   static const beaconActive = Color(0xFF22C55E); // Green pulse
-  static const beaconCardBackground = Color(0xFF1A2E1A); // Dark green tint
+  static const beaconCardBackgroundDark = Color(0xFF1A2E1A); // Dark green tint
+  static const beaconCardBackgroundLight = Color(0xFFE8F5E9); // Soft mint tint
   static const beaconNotification = Color(0xFF15803D); // Green notification bar
 
   // ===== SHADOW COLORS =====

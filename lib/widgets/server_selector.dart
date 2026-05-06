@@ -1,52 +1,85 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:lemonade_mobile/models/server_config.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
+import 'package:lemonade_mobile/screens/servers_screen.dart';
 
+/// Drawer-friendly picker for the active server. Tapping a row switches
+/// `selectedServerProvider`, which cascades through `lemonadeClientProvider`
+/// to flip every API call to the new host.
 class ServerSelector extends ConsumerWidget {
   const ServerSelector({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final servers = ref.watch(serversProvider);
-    final selectedServer = ref.watch(selectedServerProvider);
+    final selected = ref.watch(selectedServerProvider);
 
-    // Auto-select first server if none selected but servers exist
+    // Auto-pick the first server on cold start so the rest of the app has
+    // something to talk to without forcing the user through Settings.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (selectedServer == null && servers.isNotEmpty) {
+      if (selected == null && servers.isNotEmpty) {
         ref.read(selectedServerProvider.notifier).selectServer(servers.first);
       }
     });
 
-    if (servers.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: const Text(
-          'No servers configured. Go to Settings to add one.',
-          style: TextStyle(color: Colors.grey),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: DropdownButton<ServerConfig>(
-        value: selectedServer,
-        hint: const Text('Select Server'),
-        items: servers.map((server) {
-          return DropdownMenuItem(
-            value: server,
-            child: Text(server.name),
-          );
-        }).toList(),
-        onChanged: (server) {
-          if (server != null) {
-            ref.read(selectedServerProvider.notifier).selectServer(server);
-          }
-        },
-        underline: Container(),
-        icon: const Icon(Icons.arrow_drop_down),
+    return ExpansionTile(
+      leading: const Icon(Icons.dns_outlined),
+      title: const Text('Server'),
+      subtitle: Text(
+        selected?.name ??
+            (servers.isEmpty ? 'No servers configured' : 'Pick a server'),
+        overflow: TextOverflow.ellipsis,
       ),
+      children: [
+        if (servers.isEmpty)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.add),
+            title: const Text('Add a server'),
+            onTap: () => _openServersScreen(context),
+          )
+        else ...[
+          for (final server in servers)
+            ListTile(
+              dense: true,
+              leading: Icon(
+                server.name == selected?.name
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: server.name == selected?.name
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+              title: Text(server.name, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                server.baseUrl,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              selected: server.name == selected?.name,
+              onTap: () {
+                ref
+                    .read(selectedServerProvider.notifier)
+                    .selectServer(server);
+                Navigator.pop(context);
+              },
+            ),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.settings),
+            title: const Text('Manage servers…'),
+            onTap: () => _openServersScreen(context),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _openServersScreen(BuildContext context) {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ServersScreen()),
     );
   }
 }
