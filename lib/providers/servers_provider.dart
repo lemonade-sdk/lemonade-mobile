@@ -1,60 +1,131 @@
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:isar/isar.dart';
+
 import '../models/server_config.dart';
+import '../storage/database.dart';
+import '../storage/entities/server_config_entity.dart';
+import '../storage/secure_storage.dart';
 
 final serversProvider = StateNotifierProvider<ServersNotifier, List<ServerConfig>>(
   (ref) => ServersNotifier(),
 );
 
-final selectedServerProvider = StateNotifierProvider<SelectedServerNotifier, ServerConfig?>(
+final selectedServerProvider =
+    StateNotifierProvider<SelectedServerNotifier, ServerConfig?>(
   (ref) => SelectedServerNotifier(ref),
 );
 
 class ServersNotifier extends StateNotifier<List<ServerConfig>> {
-  static const String _serversKey = 'servers';
   ServersNotifier() : super([]) {
-    _loadServers();
+    _load();
   }
 
-  Future<void> _loadServers() async {
-    final prefs = await SharedPreferences.getInstance();
-    final serversJson = prefs.getStringList(_serversKey) ?? [];
-    state = serversJson
-        .map((json) => ServerConfig.fromJson(jsonDecode(json)))
-        .toList();
-  }
-
-  Future<void> _saveServers() async {
-    final prefs = await SharedPreferences.getInstance();
-    final serversJson = state.map((server) => jsonEncode(server.toJson())).toList();
-    await prefs.setStringList(_serversKey, serversJson);
+  Future<void> _load() async {
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    final rows = await db.serverConfigs.where().findAll();
+    final configs = <ServerConfig>[];
+    for (final row in rows) {
+      String? apiKey;
+      if (row.hasApiKey) {
+        try {
+          apiKey = await SecureKeyStore.readApiKey(row.name);
+        } catch (_) {
+          apiKey = null; // Keychain unavailable — proceed without auth.
+        }
+      }
+      configs.add(ServerConfig(
+        name: row.name,
+        baseUrl: row.baseUrl,
+        apiKey: apiKey,
+      ));
+    }
+    state = configs;
   }
 
   Future<void> addServer(ServerConfig server) async {
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    final hasKey = (server.apiKey ?? '').isNotEmpty;
+    var keyPersisted = false;
+    if (hasKey) {
+      try {
+        await SecureKeyStore.writeApiKey(server.name, server.apiKey!);
+        keyPersisted = true;
+      } catch (_) {
+        // Keychain unavailable. The API key won't be saved across launches.
+      }
+    }
+    final entity = ServerConfigEntity()
+      ..name = server.name
+      ..baseUrl = server.baseUrl
+      ..hasApiKey = keyPersisted
+      ..createdAt = DateTime.now();
+    await db.isar.writeTxn(() async => db.serverConfigs.put(entity));
     state = [...state, server];
-    await _saveServers();
   }
 
   Future<void> removeServer(ServerConfig server) async {
-    state = state.where((s) => s != server).toList();
-    await _saveServers();
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    try {
+      await db.isar.writeTxn(() async {
+        await db.serverConfigs.filter().nameEqualTo(server.name).deleteFirst();
+      });
+    } catch (e) {
+      debugPrint('removeServer: Isar delete failed: $e');
+    }
+    try {
+      await SecureKeyStore.deleteApiKey(server.name);
+    } catch (_) {
+      // Keychain unavailable — ignore. The Isar row is already gone.
+    }
+    state = state.where((s) => s.name != server.name).toList(growable: false);
   }
 
   Future<void> updateServer(ServerConfig oldServer, ServerConfig newServer) async {
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    final hasKey = (newServer.apiKey ?? '').isNotEmpty;
+
+    await db.isar.writeTxn(() async {
+      final existing =
+          await db.serverConfigs.filter().nameEqualTo(oldServer.name).findFirst();
+      if (existing != null) {
+        existing
+          ..name = newServer.name
+          ..baseUrl = newServer.baseUrl
+          ..hasApiKey = hasKey;
+        await db.serverConfigs.put(existing);
+      } else {
+        await db.serverConfigs.put(ServerConfigEntity()
+          ..name = newServer.name
+          ..baseUrl = newServer.baseUrl
+          ..hasApiKey = hasKey
+          ..createdAt = DateTime.now());
+      }
+    });
+
+    if (oldServer.name != newServer.name) {
+      await SecureKeyStore.renameApiKey(oldServer.name, newServer.name);
+    }
+    if (hasKey) {
+      await SecureKeyStore.writeApiKey(newServer.name, newServer.apiKey!);
+    } else {
+      await SecureKeyStore.deleteApiKey(newServer.name);
+    }
+
     state = state.map((s) => s == oldServer ? newServer : s).toList();
-    await _saveServers();
   }
 }
 
 class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
-  static const String _selectedServerKey = 'selected_server_name';
   final Ref ref;
   String? _savedServerName;
 
   SelectedServerNotifier(this.ref) : super(null) {
-    _loadSelectedServer();
-    // Listen for server list changes to restore selection
+    _loadSelected();
     ref.listen(serversProvider, (previous, next) {
       if (_savedServerName != null && next.isNotEmpty) {
         state = next.cast<ServerConfig?>().firstWhere(
@@ -65,11 +136,11 @@ class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
     });
   }
 
-  Future<void> _loadSelectedServer() async {
-    final prefs = await SharedPreferences.getInstance();
-    _savedServerName = prefs.getString(_selectedServerKey);
+  Future<void> _loadSelected() async {
+    if (!AppDatabase.isOpen) return;
+    final prefs = await AppDatabase.instance.readOrCreatePrefs();
+    _savedServerName = prefs.selectedServerName;
     if (_savedServerName != null) {
-      // Try to find the server immediately, or it will be found when servers load
       final servers = ref.read(serversProvider);
       if (servers.isNotEmpty) {
         state = servers.cast<ServerConfig?>().firstWhere(
@@ -80,17 +151,17 @@ class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
     }
   }
 
-  Future<void> _saveSelectedServer() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (state != null) {
-      await prefs.setString(_selectedServerKey, state!.name);
-    } else {
-      await prefs.remove(_selectedServerKey);
-    }
+  Future<void> _saveSelected() async {
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    final prefs = await db.readOrCreatePrefs();
+    prefs.selectedServerName = state?.name;
+    await db.isar.writeTxn(() async => db.appPrefs.put(prefs));
   }
 
   Future<void> selectServer(ServerConfig? server) async {
     state = server;
-    await _saveSelectedServer();
+    _savedServerName = server?.name;
+    await _saveSelected();
   }
 }

@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 enum MessageRole { user, assistant }
 
-enum MessageContentType { text, image }
+enum MessageContentType { text, image, audio }
 
 class MessageContent {
   final MessageContentType type;
@@ -94,6 +94,16 @@ class ChatMessage {
   bool get hasImages {
     return content.any((c) => c.type == MessageContentType.image);
   }
+
+  // Check if message has audio attachments
+  bool get hasAudio {
+    return content.any((c) => c.type == MessageContentType.audio);
+  }
+
+  // Get all audio data URLs
+  Iterable<String> get audioContent => content
+      .where((c) => c.type == MessageContentType.audio)
+      .map((c) => c.value);
 
   Map<String, dynamic> toJson() {
     return {

@@ -1,9 +1,8 @@
-import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lemonade_mobile/models/model_defaults.dart';
 import 'package:lemonade_mobile/providers/chat_history_provider.dart';
 import 'package:lemonade_mobile/providers/models_provider.dart';
+import 'package:lemonade_mobile/storage/database.dart';
 
 // Global model defaults persisted to SharedPreferences
 final globalModelDefaultsProvider =
@@ -55,23 +54,31 @@ final effectiveImageGenModelProvider = Provider<String?>((ref) {
 });
 
 class GlobalModelDefaultsNotifier extends StateNotifier<ModelDefaults> {
-  static const String _prefsKey = 'global_model_defaults';
-
   GlobalModelDefaultsNotifier() : super(const ModelDefaults()) {
     _load();
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final json = prefs.getString(_prefsKey);
-    if (json != null) {
-      state = ModelDefaults.fromJson(jsonDecode(json));
-    }
+    if (!AppDatabase.isOpen) return;
+    final row = await AppDatabase.instance.readOrCreateDefaults();
+    state = ModelDefaults(
+      llmModel: row.llmModel,
+      audioToTextModel: row.audioToTextModel,
+      textToAudioModel: row.textToAudioModel,
+      imageGenerationModel: row.imageGenerationModel,
+    );
   }
 
   Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, jsonEncode(state.toJson()));
+    if (!AppDatabase.isOpen) return;
+    final db = AppDatabase.instance;
+    final row = await db.readOrCreateDefaults();
+    row
+      ..llmModel = state.llmModel
+      ..audioToTextModel = state.audioToTextModel
+      ..textToAudioModel = state.textToAudioModel
+      ..imageGenerationModel = state.imageGenerationModel;
+    await db.isar.writeTxn(() async => db.modelDefaults.put(row));
   }
 
   Future<void> setLlmModel(String? model) async {

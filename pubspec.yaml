@@ -18,15 +18,15 @@ dependencies:
 
   cupertino_icons: ^1.0.8
 
-  # OpenAI API client
-  dart_openai: ^6.1.1
-
-
   # State management
   flutter_riverpod: ^2.0.0
 
   # Persistence
-  shared_preferences: ^2.0.0
+  shared_preferences: ^2.0.0          # legacy keys + simple scalar prefs
+  isar: ^3.1.0+1                      # primary database (chats, messages, attachments, folders, transcriptions)
+  isar_flutter_libs: ^3.1.0+1
+  flutter_secure_storage: ^9.0.0      # API keys / auth tokens
+  path: ^1.8.0
 
   # UUID generation
   uuid: ^4.0.0
@@ -47,6 +47,8 @@ dependencies:
 
   # HTTP client for direct API calls
   http: ^1.0.0
+  http_parser: ^4.0.0           # MediaType for multipart uploads
+  crypto: ^3.0.0                # sha256 for content-addressed attachments
 
   # Audio recording & playback
   record: ^6.2.0
@@ -61,6 +63,10 @@ dev_dependencies:
     sdk: flutter
 
   flutter_launcher_icons: ^0.13.1
+
+  # Isar code generation
+  isar_generator: ^3.1.0+1
+  build_runner: ^2.4.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
