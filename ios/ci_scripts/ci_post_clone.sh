@@ -21,6 +21,18 @@ echo "🩺 Verifying Flutter..."
 flutter --version
 flutter precache --ios
 
+# Disable Flutter's Swift Package Manager integration on CI. Our
+# Runner.xcodeproj predates SPM support and was never migrated — without
+# the local FlutterGeneratedPluginSwiftPackage reference in the project,
+# any SPM-only plugin (audio_session, just_audio, image_picker_ios, etc.)
+# is missing at link time and the build fails with
+# "Module 'X' not found in GeneratedPluginRegistrant.m".
+# Disabling SPM here forces every plugin through CocoaPods, which the
+# Podfile already handles. Local dev is untouched (this only sets the
+# Flutter config on the CI machine).
+echo "🔧 Disabling Flutter SPM (forcing CocoaPods for all plugins)..."
+flutter config --no-enable-swift-package-manager
+
 echo "📦 Installing Dependencies..."
 # Install Flutter pub packages
 flutter pub get
