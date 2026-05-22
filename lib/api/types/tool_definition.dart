@@ -13,12 +13,18 @@ class ToolDefinition {
   /// Null means no LLM-side requirement.
   final List<String>? requiresLlmLabels;
 
+  /// True for app-control tools that don't need any media model — they
+  /// affect the host app's state (e.g. `end_call` hangs up the voice call).
+  /// The capability resolver advertises these to the LLM unconditionally.
+  final bool isAppControl;
+
   const ToolDefinition({
     required this.name,
     required this.description,
     required this.parameters,
     this.requiresLabels,
     this.requiresLlmLabels,
+    this.isAppControl = false,
   });
 
   /// Wire format sent in `tools` field of chat completions request.

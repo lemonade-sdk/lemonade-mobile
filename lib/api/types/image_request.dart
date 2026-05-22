@@ -6,6 +6,11 @@ class ImageGenerationRequest {
   final int? height;
   final int n;
   final String responseFormat; // 'b64_json' | 'url'
+  /// Optional seed forwarded to the image backend. The Lemonade server
+  /// reads this (`sd_server.cpp` → extra_args["seed"]) and passes it to
+  /// the diffusion model; without a seed the backend uses a fixed default
+  /// and every call with the same prompt returns the *same* bytes.
+  final int? seed;
 
   ImageGenerationRequest({
     required this.model,
@@ -14,6 +19,7 @@ class ImageGenerationRequest {
     this.height,
     this.n = 1,
     this.responseFormat = 'b64_json',
+    this.seed,
   });
 
   factory ImageGenerationRequest.bySize({
@@ -21,6 +27,7 @@ class ImageGenerationRequest {
     required String prompt,
     String? size, // '512x512' style
     int n = 1,
+    int? seed,
   }) {
     int? w;
     int? h;
@@ -37,6 +44,7 @@ class ImageGenerationRequest {
       width: w,
       height: h,
       n: n,
+      seed: seed,
     );
   }
 
@@ -49,6 +57,7 @@ class ImageGenerationRequest {
     };
     if (width != null) body['width'] = width;
     if (height != null) body['height'] = height;
+    if (seed != null) body['seed'] = seed;
     return body;
   }
 }

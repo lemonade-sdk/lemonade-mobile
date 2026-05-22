@@ -7,6 +7,7 @@ import '../providers/servers_provider.dart';
 import 'admin_console_screen.dart';
 import 'omni_router_screen.dart';
 import 'servers_screen.dart';
+import 'transcription_screen.dart';
 import '../widgets/server_selector.dart';
 import '../widgets/theme_picker.dart';
 
@@ -54,10 +55,10 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
 
-          // ====== OmniRouter ======
+          // ====== Lemonade Omni ======
           ListTile(
             leading: Icon(Icons.hub_outlined, color: scheme.primary),
-            title: const Text('OmniRouter'),
+            title: const Text('Lemonade Omni'),
             subtitle: Text(
               omniEnabled
                   ? 'On — multimodal tools enabled'
@@ -78,6 +79,23 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const OmniRouterScreen()),
+            ),
+          ),
+
+          // ====== Transcription tool ======
+          // Standalone audio-file → text utility. The primary in-chat voice
+          // experience lives on the mic button in the chat input; this page
+          // is the legacy/power-user tool for capturing a one-shot recording.
+          ListTile(
+            leading: Icon(Icons.transcribe_outlined, color: scheme.primary),
+            title: const Text('Transcription tool'),
+            subtitle: const Text(
+              'Standalone audio recorder + transcriber (not needed for normal voice chat).',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TranscriptionScreen()),
             ),
           ),
 

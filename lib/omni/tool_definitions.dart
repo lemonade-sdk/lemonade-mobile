@@ -6,26 +6,36 @@ import '../api/types/tool_definition.dart';
 /// Lemonade's model registry.
 class OmniToolCatalog {
   static const String systemPromptTemplate =
-      "You are a helpful multimodal AI assistant with access to the following tools:\n\n"
+      "You are a helpful multimodal AI assistant. Your DEFAULT mode is normal text (or spoken) "
+      "conversation — answer questions, chat, explain, describe. You only call a tool when the user "
+      "EXPLICITLY asks for the action that tool performs. If the user is just talking, asking a question, "
+      "or describing something, REPLY WITH TEXT — do not invoke any tool.\n\n"
+      "Available tools:\n\n"
       "{tool_list}\n\n"
-      "When the user asks you to perform an action that matches one of these tools, use the appropriate tool. "
-      "You may call multiple tools if the request requires it. After using a tool, describe what you did to the user "
-      "in a brief, friendly response. If the user's request does not require any tool, respond normally with text.\n"
-      "IMPORTANT: When an image has already been generated in this conversation and the user wants to add something, "
-      "remove something, change, modify, or adjust the image in any way, you MUST use the edit_image tool — NOT generate_image. "
-      "Only use generate_image for creating a brand new image from scratch. The edit_image tool automatically uses the most "
-      "recent image as its source.\n"
-      "When the user sends an image (as an image_url in their message), use the analyze_image tool to look at the image "
-      "before responding about it.\n"
-      "When you see '[User provided audio file #N]' in a message, it means the user sent audio data. "
-      "Call the transcribe_audio tool to transcribe it — the audio data is handled automatically by the system.";
+      "Rules for tool use:\n"
+      "  - generate_image / edit_image: ONLY when the user explicitly asks to make or change an image. "
+      "Words like 'draw / make a picture of / show me an image of / create an image / generate an image' "
+      "trigger generate_image. Words like 'add / remove / change / edit / modify / fix / make it …' on the "
+      "existing image trigger edit_image. Otherwise, do not produce an image.\n"
+      "  - text_to_speech: only when the user explicitly asks you to say/read/speak something aloud.\n"
+      "  - transcribe_audio: only when the user provides an audio file or you see "
+      "'[User provided audio file #N]' in their message.\n"
+      "  - analyze_image: only when the user provides an image (image_url part) and asks about it.\n"
+      "After using any tool, give a short friendly text reply describing what you did. "
+      "When in doubt, just talk back — do not invoke any tool.";
 
   static final List<ToolDefinition> all = [
     ToolDefinition(
       name: 'generate_image',
       description:
-          'Generate a NEW image from scratch based on a text description. Use this ONLY when the user asks you to create '
-          'an entirely new image. Do NOT use this to modify or change an existing image — use edit_image instead.',
+          'Create a brand-new picture. ONLY call this when the user EXPLICITLY asks for an image with words like '
+          '"make/draw/show me/create/generate/picture/photo/image of X". Examples that REQUIRE this tool: '
+          '"make me a picture of a sunset", "draw a cat", "show me what a robot dog looks like", '
+          '"generate an image of a woman and child". '
+          'If the user is just chatting, asking questions, or describing things WITHOUT explicitly asking '
+          'for an image to be made, DO NOT call this tool — reply with text instead. '
+          'When the user names a new subject (different from any prior image), this is generate_image with a '
+          'fresh random seed — not edit_image.',
       parameters: const {
         'type': 'object',
         'properties': {
@@ -56,10 +66,14 @@ class OmniToolCatalog {
     ToolDefinition(
       name: 'edit_image',
       description:
-          'Edit or modify a previously generated image. Use this when the user wants to add, remove, change, modify, '
-          'update, fix, or adjust anything in an existing image from this conversation. The most recently generated image '
-          'is used automatically as the source. Always prefer this over generate_image when an image already exists in the '
-          'conversation.',
+          'Modify the EXISTING image. ONLY call this when the user EXPLICITLY asks to change/update/edit '
+          'the image already shown, with words like "add/remove/change/update/edit/modify/fix/adjust/make it/keep '
+          'but…". The subject of the image stays the same; only details change. Examples that REQUIRE this tool: '
+          '"add a hat to her", "make it brighter", "remove the background", "change the dress to blue", '
+          '"edit the image to include a child". '
+          'Do NOT call this when the user names a different subject — that is generate_image. '
+          'Do NOT call this for general chat. The most recently generated image is used automatically as the source '
+          '— do not pass an image_url.',
       parameters: const {
         'type': 'object',
         'properties': {
@@ -123,6 +137,23 @@ class OmniToolCatalog {
         'required': <String>[],
       },
       requiresLabels: const ['audio', 'transcription'],
+    ),
+    ToolDefinition(
+      name: 'end_call',
+      description:
+          'End the current voice call / conversation when the user clearly wants to '
+          'finish: "hang up", "end the call", "goodbye", "I\'m done", "bye", '
+          '"we\'re done here", "stop the call", "talk to you later", etc. The host '
+          'app will tear the call down right after your final reply. Only call this '
+          'when the user is unambiguously signing off — do not invoke it on '
+          'polite filler like "thanks", and never on the user\'s very first message.',
+      parameters: const {
+        'type': 'object',
+        'properties': <String, dynamic>{},
+        'required': <String>[],
+      },
+      // App-control tool — no model gating; always advertised to the LLM.
+      isAppControl: true,
     ),
     ToolDefinition(
       name: 'analyze_image',

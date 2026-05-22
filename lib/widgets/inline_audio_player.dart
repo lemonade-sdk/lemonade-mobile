@@ -88,6 +88,13 @@ class _InlineAudioPlayerState extends State<InlineAudioPlayer> {
 
   Future<String> _writeToCache(Uint8List bytes, String mime) async {
     final dir = await getTemporaryDirectory();
+    // macOS app sandbox: getTemporaryDirectory() returns Library/Caches/,
+    // which the OS doesn't always pre-create. Make sure it exists before
+    // writing — without this, the very first inline-audio tap crashes with
+    // PathNotFoundException.
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
     final ext = '.${mime.split('/').last}';
     final path = p.join(
       dir.path,

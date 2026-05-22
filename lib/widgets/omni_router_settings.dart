@@ -37,7 +37,7 @@ class OmniRouterSettings extends ConsumerWidget {
             Icon(Icons.hub, color: scheme.primary),
             const SizedBox(width: 8),
             Expanded(
-              child: Text('OmniRouter Mode',
+              child: Text('Lemonade Omni',
                   style: Theme.of(context).textTheme.titleLarge),
             ),
             Switch(
@@ -66,7 +66,7 @@ class OmniRouterSettings extends ConsumerWidget {
               padding: EdgeInsets.only(bottom: 12),
               child: _Note(
                 'The selected LLM does not advertise the "tool-calling" label. '
-                'OmniRouter mode will refuse multi-tool calls. Pick a tool-calling LLM, or turn OmniRouter off.',
+                'Lemonade Omni will refuse multi-tool calls. Pick a tool-calling LLM, or turn Lemonade Omni off.',
                 tone: _NoteTone.warn,
               ),
             ),
@@ -82,51 +82,179 @@ class _WorkflowPicker extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Mirror whichever workflow is actually driving the agent right now —
-    // either the user's last manual pick OR the Collection-derived override
-    // when a Collection is the selected model.
-    final activeKind = ref.watch(activeOmniWorkflowProvider).kind;
-    final overridden = ref.watch(selectedIsCollectionProvider);
-    final notifier = ref.read(omniWorkflowKindProvider.notifier);
+    // Pull whatever Omni Collections (recipe == 'collection.omni') are actually
+    // installed on this server, by ID. Previously this picker hard-coded
+    // "Lite" and "Ultra" with fixed model names — but servers freely name
+    // their Omni Collections (e.g. "LMX-Omni-…"), so the static list was
+    // useless for anything but the canonical server build.
+    final installed = ref.watch(modelsProvider);
+    final collections =
+        installed.where((m) => m.isCollection).toList(growable: false);
+    final selectedId = ref.watch(selectedModelProvider);
+    final theme = Theme.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SegmentedButton<OmniWorkflowKind>(
-          segments: const [
-            ButtonSegment(
-              value: OmniWorkflowKind.custom,
-              label: Text('Custom'),
-              icon: Icon(Icons.tune),
-            ),
-            ButtonSegment(
-              value: OmniWorkflowKind.lite,
-              label: Text('Lite'),
-              icon: Icon(Icons.speed),
-            ),
-            ButtonSegment(
-              value: OmniWorkflowKind.ultra,
-              label: Text('Ultra'),
-              icon: Icon(Icons.auto_awesome),
-            ),
-          ],
-          selected: {activeKind},
-          // While a Collection is the selected model the workflow is locked
-          // to that bundle. Switching to a regular model re-enables manual
-          // picking.
-          onSelectionChanged: overridden
-              ? null
-              : (s) => notifier.setKind(s.first),
+        // "Custom" — no Collection, free per-tool model picks via globalModelDefaults.
+        _CustomWorkflowTile(
+          selected: selectedId == null ||
+              !collections.any((c) => c.id == selectedId),
+          onTap: () {
+            // Clearing the selection drops us out of any Collection-driven
+            // workflow. The user can then pick any chat-shaped LLM from
+            // the chat header model picker.
+            ref.read(selectedModelProvider.notifier).clearSelection();
+          },
         ),
-        if (overridden)
+        const SizedBox(height: 6),
+        if (collections.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              'Workflow is set by the selected Collection. Pick a regular model to switch manually.',
-              style: Theme.of(context).textTheme.bodySmall,
+              'No Omni Collections installed on this server. Install one '
+              'from the Admin Console → Models tab (look for any model whose '
+              'recipe is "collection.omni"), or stay on Custom and pick '
+              'per-tool models below.',
+              style: theme.textTheme.bodySmall,
             ),
-          ),
+          )
+        else
+          for (final c in collections)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: _CollectionWorkflowTile(
+                collection: c,
+                selected: selectedId == c.id,
+                onTap: () => ref
+                    .read(selectedModelProvider.notifier)
+                    .selectModel(c.id),
+              ),
+            ),
       ],
+    );
+  }
+}
+
+/// "Custom" workflow row — uses the per-tool dropdowns instead of an Omni
+/// Collection. Picking it clears any selected Collection so the chat falls
+/// back to the user's manually configured slots.
+class _CustomWorkflowTile extends StatelessWidget {
+  final bool selected;
+  final VoidCallback onTap;
+  const _CustomWorkflowTile({required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _WorkflowTile(
+      icon: Icons.tune,
+      title: 'Custom',
+      subtitle:
+          'Pick your own LLM + image / TTS / ASR models from the dropdowns below.',
+      selected: selected,
+      onTap: onTap,
+      theme: theme,
+    );
+  }
+}
+
+/// One row per installed Omni Collection. Shows the collection's ID and its
+/// component count; tapping selects it as the active chat model.
+class _CollectionWorkflowTile extends StatelessWidget {
+  final ModelInfo collection;
+  final bool selected;
+  final VoidCallback onTap;
+  const _CollectionWorkflowTile({
+    required this.collection,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final n = collection.compositeModels.length;
+    return _WorkflowTile(
+      icon: Icons.auto_awesome,
+      title: collection.id,
+      subtitle: n == 0
+          ? 'Omni Collection (components unknown).'
+          : 'Omni Collection · $n component model${n == 1 ? "" : "s"}',
+      selected: selected,
+      onTap: onTap,
+      theme: theme,
+    );
+  }
+}
+
+class _WorkflowTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+  final ThemeData theme;
+  const _WorkflowTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+    required this.theme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = theme.colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? scheme.primaryContainer.withValues(alpha: 0.5)
+              : scheme.surfaceContainer,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected
+                ? scheme.primary.withValues(alpha: 0.6)
+                : scheme.outline.withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'monospace',
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            if (selected) Icon(Icons.check_circle, color: scheme.primary),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -177,7 +305,7 @@ class _WorkflowSlots extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Pick the model for each capability. Empty = let OmniRouter pick the first installed match.',
+          'Pick the model for each capability. Empty = let Lemonade Omni pick the first installed match.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 12),

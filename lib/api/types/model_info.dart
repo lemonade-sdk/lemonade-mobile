@@ -18,7 +18,13 @@ class ApiModelInfo {
     this.suggested = false,
   });
 
-  bool get isCollection => recipe == 'collection' && compositeModels.isNotEmpty;
+  /// True when this is a Lemonade Omni Model — a bundle whose `recipe` is
+  /// `collection.omni` and which lists its component models. This is the
+  /// authoritative server signal for "this model is an Omni / tool-calling
+  /// bundle"; matches the desktop app's `isCollectionRecipe` check.
+  bool get isCollection =>
+      (recipe == 'collection.omni' || recipe == 'collection') &&
+      compositeModels.isNotEmpty;
 
   /// Returns true if this model has at least one of the requested labels.
   bool hasAnyLabel(Iterable<String> requested) {
@@ -33,9 +39,12 @@ class ApiModelInfo {
     final labels = rawLabels is List
         ? rawLabels.whereType<String>().toList()
         : <String>[];
-    final rawComposite = json['composite_models'];
-    final composite = rawComposite is List
-        ? rawComposite.whereType<String>().toList()
+    // The Lemonade server emits the component list as `components`; older
+    // builds (or alternate transports) may have used `composite_models`, so
+    // accept either to stay compatible.
+    final rawComponents = json['components'] ?? json['composite_models'];
+    final composite = rawComponents is List
+        ? rawComponents.whereType<String>().toList()
         : <String>[];
 
     return ApiModelInfo(

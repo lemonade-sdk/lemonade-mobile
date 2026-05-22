@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Lemonade Mobile uses the microphone to send your voice to the AI for conversation and transcription.</string>
 </dict>
 </plist>

@@ -14,6 +14,7 @@ import '../models/chat_message.dart' as ui;
 import '../omni/agent_loop.dart';
 import '../omni/capability_resolver.dart';
 import '../omni/tool_executor.dart';
+import 'audio_recorder_service.dart';
 import 'audio_transcription_service.dart';
 
 /// Drives a half-duplex voice conversation:
@@ -51,6 +52,11 @@ class DuplexVoiceSession {
   bool _running = false;
   bool _disposed = false;
   String _liveTranscript = '';
+
+  /// PCM16 chunks captured during the current utterance. Cleared at the start
+  /// of every listening turn and consumed when ASR completion fires, so the
+  /// in-chat voice mode can persist the user's audio alongside the transcript.
+  final List<List<int>> _utterancePcm = <List<int>>[];
 
   DuplexVoiceSession({
     required this.client,
@@ -107,6 +113,7 @@ class DuplexVoiceSession {
   Future<void> _beginListening() async {
     if (!_running) return;
     _liveTranscript = '';
+    _utterancePcm.clear();
     _emitEvent(DuplexEvent.transcriptUpdate(''));
     _emitState(DuplexState.listening);
 
@@ -116,6 +123,7 @@ class DuplexVoiceSession {
       numChannels: 1,
     ));
     _pcmSub = stream.listen((chunk) {
+      _utterancePcm.add(chunk);
       _ws.appendAudio(base64Encode(chunk));
     });
   }
@@ -141,7 +149,22 @@ class DuplexVoiceSession {
         final finalText = ev.transcript.isNotEmpty ? ev.transcript : _liveTranscript;
         if (finalText.trim().isEmpty) return;
         await _stopListening();
-        _emitEvent(DuplexEvent.userSpoke(finalText));
+        final pcm = List<List<int>>.from(_utterancePcm);
+        _utterancePcm.clear();
+        String? audioBase64;
+        if (pcm.isNotEmpty) {
+          try {
+            final wav = AudioRecorderService.buildWavBytes(pcm);
+            audioBase64 = base64Encode(wav);
+          } catch (_) {
+            audioBase64 = null;
+          }
+        }
+        _emitEvent(DuplexUserSpoke(
+          finalText,
+          audioBase64: audioBase64,
+          audioMime: audioBase64 == null ? null : 'audio/wav',
+        ));
         await _runTurn(finalText);
       case RealtimeError():
         _emitEvent(DuplexEvent.error(ev.message));
@@ -218,7 +241,11 @@ class DuplexVoiceSession {
       role: ui.MessageRole.assistant,
       content: assistantParts,
     ));
-    if (reply.isNotEmpty) _emitEvent(DuplexEvent.assistantSpoke(reply));
+    _emitEvent(DuplexAssistantSpoke(
+      reply,
+      audioArtifacts: ttsArtifacts,
+      imageArtifacts: imageArtifacts,
+    ));
 
     // Speak: prefer audio the agent already synthesized via text_to_speech;
     // otherwise fall back to a fresh TTS pass on the assistant text.
@@ -269,6 +296,9 @@ class DuplexVoiceSession {
           _emitEvent(DuplexEvent.transcriptUpdate(ev.message));
         case AgentArtifact():
           artifacts.add(ev.artifact);
+        case AgentEndCall():
+          // TalkScreen owns its own hang-up affordance; ignore.
+          break;
         case AgentDone():
           text = ev.text.trim();
           artifacts
@@ -333,8 +363,6 @@ sealed class DuplexEvent {
   const DuplexEvent();
 
   factory DuplexEvent.transcriptUpdate(String text) = DuplexTranscriptUpdate;
-  factory DuplexEvent.userSpoke(String text) = DuplexUserSpoke;
-  factory DuplexEvent.assistantSpoke(String text) = DuplexAssistantSpoke;
   factory DuplexEvent.artifact(Artifact artifact) = DuplexArtifactEvent;
   factory DuplexEvent.error(String message) = DuplexErrorEvent;
 }
@@ -357,12 +385,27 @@ class DuplexTranscriptUpdate extends DuplexEvent {
 
 class DuplexUserSpoke extends DuplexEvent {
   final String text;
-  const DuplexUserSpoke(this.text);
+  /// Base64-encoded WAV of the spoken utterance, if the mic stream produced
+  /// any PCM. May be null when the recognizer fires without captured audio
+  /// (e.g. a server-side replay of a prior utterance).
+  final String? audioBase64;
+  final String? audioMime;
+  const DuplexUserSpoke(
+    this.text, {
+    this.audioBase64,
+    this.audioMime,
+  });
 }
 
 class DuplexAssistantSpoke extends DuplexEvent {
   final String text;
-  const DuplexAssistantSpoke(this.text);
+  final List<Artifact> audioArtifacts;
+  final List<Artifact> imageArtifacts;
+  const DuplexAssistantSpoke(
+    this.text, {
+    this.audioArtifacts = const [],
+    this.imageArtifacts = const [],
+  });
 }
 
 class DuplexErrorEvent extends DuplexEvent {

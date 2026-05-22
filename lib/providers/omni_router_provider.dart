@@ -236,10 +236,26 @@ final omniCapabilitiesProvider = Provider<CapabilitySnapshot?>((ref) {
   // chat-shaped component, so the resolver's `tool-calling` check looks at
   // a real model instead of the Collection meta-model.
   final selectedLlmId = ref.watch(wireLlmModelProvider);
+  final selectedRawId = ref.watch(selectedModelProvider);
   final workflow = ref.watch(activeOmniWorkflowProvider);
   if (modelsRaw.isEmpty) return null;
 
-  // Convert UI ModelInfo back to ApiModelInfo for resolver.
+  // If the user has an Omni Model (recipe='collection.omni') selected, the
+  // server itself advertises this as a tool-calling bundle. Treat the recipe
+  // as the authoritative "Lemonade Omni" signal — no need to second-guess
+  // the planner LLM's labels.
+  bool selectedIsOmniRecipe = false;
+  for (final m in modelsRaw) {
+    if (m.id == selectedRawId && m.isCollection) {
+      selectedIsOmniRecipe = true;
+      break;
+    }
+  }
+
+  // Convert UI ModelInfo back to ApiModelInfo for resolver, preserving the
+  // `tool-calling` label on the planner LLM when the selection is an Omni
+  // Model — even if the server's component listing omits that label, the
+  // recipe implies it.
   final apiModels = modelsRaw
       .map((m) => ApiModelInfo(
             id: m.id,
@@ -247,12 +263,33 @@ final omniCapabilitiesProvider = Provider<CapabilitySnapshot?>((ref) {
           ))
       .toList(growable: false);
 
-  final activeLlm = selectedLlmId == null
-      ? null
-      : apiModels.firstWhere(
-          (m) => m.id == selectedLlmId,
-          orElse: () => ApiModelInfo(id: selectedLlmId, labels: const []),
-        );
+  // Only treat the LLM as "known" if it's actually in the loaded models list.
+  // Synthesizing an empty-label ApiModelInfo here would flip the tool-calling
+  // check to false and surface a misleading warning while the models list is
+  // still loading or stale — return null instead so the UI suppresses the
+  // warning until we have real label data.
+  ApiModelInfo? activeLlm;
+  if (selectedLlmId != null) {
+    for (final m in apiModels) {
+      if (m.id == selectedLlmId) {
+        activeLlm = m;
+        break;
+      }
+    }
+    if (activeLlm == null) return null;
+
+    // Force the tool-calling label on when the selection is an Omni Model.
+    // The Omni recipe is the contract for tool-calling support; if the
+    // planner component's label list happens to be missing it, the recipe
+    // still wins.
+    if (selectedIsOmniRecipe &&
+        !activeLlm.labels.contains('tool-calling')) {
+      activeLlm = ApiModelInfo(
+        id: activeLlm.id,
+        labels: [...activeLlm.labels, 'tool-calling'],
+      );
+    }
+  }
 
   // Translate the active workflow's slots into per-tool pins. For Lite/Ultra
   // these come from the collection template; for Custom they come from the

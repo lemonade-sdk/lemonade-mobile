@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lemonade_mobile/api/lemonade_client.dart';
@@ -16,9 +18,9 @@ class ModelInfo {
   final String id;
   final List<String> labels;
   final Set<ModelCapabilities> capabilities;
-  /// True for server-side Collections (recipe == 'collection'). Collections
-  /// can't be sent as the `model` on /chat/completions — callers should
-  /// substitute one of [compositeModels] for the actual LLM call.
+  /// True for server-side Lemonade Omni Models (recipe == 'collection.omni').
+  /// These can't be sent as the `model` on /chat/completions — callers should
+  /// substitute the planner LLM from [compositeModels] for the actual call.
   final bool isCollection;
   /// Component model ids when [isCollection] is true; empty otherwise.
   final List<String> compositeModels;
@@ -42,16 +44,20 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   final Ref ref;
 
   ModelsNotifier(this.ref) : super([]) {
-    // Watch for server changes and fetch models for the new server
+    // Watch for server changes and fetch models for the new server.
     ref.listen(selectedServerProvider, (previous, next) {
       if (next == null) {
         state = [];
-      } else {
-        // Clear selected model when switching servers since each server has its own models
-        ref.read(selectedModelProvider.notifier).clearSelection();
-        // Automatically fetch models when server changes
-        fetchModels();
+        return;
       }
+      // Only clear the saved model on a *real* server change. The initial
+      // hydration from prefs is a null→server transition and would
+      // otherwise wipe the user's persisted model (e.g. their selected
+      // Omni Collection) on every app start.
+      if (previous != null && previous.baseUrl != next.baseUrl) {
+        ref.read(selectedModelProvider.notifier).clearSelection();
+      }
+      fetchModels();
     });
   }
 
@@ -73,9 +79,32 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       state = modelInfos;
 
       final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
-      if (selectedModelNotifier.state == null || selectedModelNotifier.state!.isEmpty) {
-        if (modelInfos.isNotEmpty) {
-          await selectedModelNotifier.selectModel(modelInfos.first.id);
+      // Wait for the persisted selection to finish loading before deciding
+      // whether to auto-pick. Otherwise the first call after app start
+      // wins the race and overwrites the saved model.
+      await selectedModelNotifier.loaded;
+
+      // If the saved model is no longer installed on this server, fall back
+      // to auto-select.
+      final saved = selectedModelNotifier.state;
+      final savedStillValid =
+          saved != null && modelInfos.any((m) => m.id == saved);
+
+      if (!savedStillValid) {
+        // Prefer a chat-shaped model — `modelInfos.first` is whatever the
+        // server returned first, which is often an image-gen / TTS / ASR
+        // model and would cause /chat/completions to 400 on first chat.
+        final chatModel = modelInfos.firstWhere(
+          (m) =>
+              !m.supportsTts &&
+              !m.supportsAudio &&
+              !m.supportsImageGeneration,
+          orElse: () => modelInfos.isNotEmpty
+              ? modelInfos.first
+              : ModelInfo('', const []),
+        );
+        if (chatModel.id.isNotEmpty) {
+          await selectedModelNotifier.selectModel(chatModel.id);
         }
       }
     } catch (_) {
@@ -89,19 +118,14 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
 class SelectedModelNotifier extends StateNotifier<String?> {
   static const String _selectedModelKey = 'selected_model';
 
-  SelectedModelNotifier() : super(null) {
-    _loadSelectedModelSync();
-  }
+  /// Completes once the persisted selection has been read from prefs. Code
+  /// that needs to decide "is this null because the user hasn't picked
+  /// anything OR because we haven't loaded yet?" can await this.
+  final Completer<void> _loadedCompleter = Completer<void>();
+  Future<void> get loaded => _loadedCompleter.future;
 
-  void _loadSelectedModelSync() {
-    try {
-      // Note: SharedPreferences.getInstance() is async, but we need sync loading
-      // For now, we'll load it async and the UI will handle the delay
-      _loadSelectedModel();
-    } catch (e) {
-      print('Error initializing selected model: $e');
-      state = null;
-    }
+  SelectedModelNotifier() : super(null) {
+    _loadSelectedModel();
   }
 
   Future<void> _loadSelectedModel() async {
@@ -113,6 +137,8 @@ class SelectedModelNotifier extends StateNotifier<String?> {
     } catch (e) {
       print('Error loading selected model: $e');
       state = null;
+    } finally {
+      if (!_loadedCompleter.isCompleted) _loadedCompleter.complete();
     }
   }
 

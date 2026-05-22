@@ -30,6 +30,13 @@ class OmniCapabilityResolver {
     final tools = <ResolvedTool>[];
 
     for (final def in OmniToolCatalog.all) {
+      // App-control tools (e.g. end_call) don't need any media model — they
+      // operate on host-app state. Always advertise them to the LLM.
+      if (def.isAppControl) {
+        tools.add(ResolvedTool(definition: def, modelId: ''));
+        continue;
+      }
+
       // analyze_image: gated on the *LLM* having `vision`, no separate component model.
       if (def.requiresLlmLabels != null) {
         final llmLabels = activeLlm?.labels ?? const <String>[];

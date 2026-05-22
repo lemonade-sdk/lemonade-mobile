@@ -71,6 +71,9 @@ class ChatService {
           yield ChatTurnEvent.status(event.message);
         case AgentArtifact():
           yield ChatTurnEvent.artifact(event.artifact);
+        case AgentEndCall():
+          // end_call is a voice-mode control signal; plain chat ignores it.
+          break;
         case AgentDone():
           yield ChatTurnEvent.done(text: event.text, artifacts: event.artifacts);
       }

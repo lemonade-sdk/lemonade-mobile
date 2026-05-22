@@ -5,32 +5,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:lemonade_mobile/providers/chat_provider.dart';
+import 'package:lemonade_mobile/providers/voice_mode_provider.dart';
 import 'package:lemonade_mobile/constants/messages.dart';
 import 'package:lemonade_mobile/utils/image_utils.dart';
-import 'package:lemonade_mobile/widgets/voice_input_sheet.dart';
 
-class ChatInput extends ConsumerWidget {
+class ChatInput extends ConsumerStatefulWidget {
   final ScrollController? scrollController;
 
   const ChatInput({super.key, this.scrollController});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return _ChatInputWidget(ref: ref, scrollController: scrollController);
-  }
+  ConsumerState<ChatInput> createState() => _ChatInputState();
 }
 
-class _ChatInputWidget extends StatefulWidget {
-  final WidgetRef ref;
-  final ScrollController? scrollController;
-
-  const _ChatInputWidget({required this.ref, this.scrollController});
-
-  @override
-  State<_ChatInputWidget> createState() => _ChatInputWidgetState();
-}
-
-class _ChatInputWidgetState extends State<_ChatInputWidget> {
+class _ChatInputState extends ConsumerState<ChatInput> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _isLoading = false;
@@ -321,7 +309,7 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
     _attachedImagePaths.clear();
 
     try {
-      await widget.ref.read(chatProvider.notifier).sendMessage(message, imagePaths: imagePaths, scrollController: widget.scrollController);
+      await ref.read(chatProvider.notifier).sendMessage(message, imagePaths: imagePaths, scrollController: widget.scrollController);
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -333,6 +321,8 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final voice = ref.watch(voiceModeProvider);
+    final voiceActive = voice.active;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -348,51 +338,8 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                width: 1,
-              ),
-            ),
-            child: IconButton(
-              onPressed: _isLoading ? null : _showImageSourceDialog,
-              icon: Icon(
-                Icons.image,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-              tooltip: 'Add image',
-            ),
-          ),
-          const SizedBox(width: 4),
-          Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                width: 1,
-              ),
-            ),
-            child: IconButton(
-              onPressed: _isLoading
-                  ? null
-                  : () => VoiceInputSheet.show(
-                        context,
-                        chatScrollController: widget.scrollController,
-                      ),
-              icon: Icon(
-                Icons.mic,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-              tooltip: 'Voice input',
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Container(
+          if (!voiceActive) ...[
+            Container(
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(24),
@@ -401,59 +348,311 @@ class _ChatInputWidgetState extends State<_ChatInputWidget> {
                   width: 1,
                 ),
               ),
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                decoration: InputDecoration(
-                  hintText: _attachedImagePaths.isNotEmpty
-                      ? (_controller.text.startsWith('/') ? AppMessages.imageCommandHint : AppMessages.messageWithImageHint)
-                      : (_controller.text.startsWith('/') ? AppMessages.imageCommandHint : AppMessages.defaultMessageHint),
-                  hintStyle: TextStyle(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: IconButton(
+                onPressed: _isLoading ? null : _showImageSourceDialog,
+                icon: Icon(
+                  Icons.image,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                 ),
-                onSubmitted: (_) => _sendMessage(),
-                textInputAction: TextInputAction.send,
-                maxLines: 5,
-                minLines: 1,
+                tooltip: 'Add image',
               ),
             ),
-          ),
+            const SizedBox(width: 4),
+          ],
+          _VoiceModeButton(scrollController: widget.scrollController),
           const SizedBox(width: 8),
-          Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: IconButton(
-              onPressed: _isLoading ? null : _sendMessage,
-              icon: _isLoading
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
+          Expanded(
+            child: voiceActive
+                ? _VoiceModeIndicator(status: voice)
+                : Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
+                        width: 1,
+                      ),
+                    ),
+                    child: TextField(
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      decoration: InputDecoration(
+                        hintText: _attachedImagePaths.isNotEmpty
+                            ? (_controller.text.startsWith('/')
+                                ? AppMessages.imageCommandHint
+                                : AppMessages.messageWithImageHint)
+                            : (_controller.text.startsWith('/')
+                                ? AppMessages.imageCommandHint
+                                : AppMessages.defaultMessageHint),
+                        hintStyle: TextStyle(
+                          color: theme.colorScheme.onSurface
+                              .withValues(alpha: 0.6),
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 12),
+                      ),
+                      onSubmitted: (_) => _sendMessage(),
+                      textInputAction: TextInputAction.send,
+                      maxLines: 5,
+                      minLines: 1,
+                    ),
+                  ),
+          ),
+          if (!voiceActive) ...[
+            const SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                onPressed: _isLoading ? null : _sendMessage,
+                icon: _isLoading
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: theme.colorScheme.onPrimary,
+                        ),
+                      )
+                    : Icon(
+                        Icons.send,
                         color: theme.colorScheme.onPrimary,
                       ),
-                    )
-                  : Icon(
-                      Icons.send,
-                      color: theme.colorScheme.onPrimary,
-                    ),
-              padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
+}
+
+/// Push-to-talk voice button. Tap to start capturing; tap again to commit
+/// the utterance and run a turn. The icon and tint reflect the phase from
+/// [voiceModeProvider] — mic when idle, big red stop while listening, and a
+/// spinner during thinking/speaking so the user knows the AI is working.
+class _VoiceModeButton extends ConsumerWidget {
+  final ScrollController? scrollController;
+  const _VoiceModeButton({this.scrollController});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final status = ref.watch(voiceModeProvider);
+    final phase = status.phase;
+
+    ref.listen<VoiceModeStatus>(voiceModeProvider, (prev, next) {
+      if (next.phase == VoicePhase.error && next.message != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(next.message!)),
+        );
+      }
+    });
+
+    final isListening = phase == VoicePhase.listening;
+    final isBusy =
+        phase == VoicePhase.thinking || phase == VoicePhase.speaking;
+    final bg = isListening
+        ? theme.colorScheme.error
+        : (isBusy
+            ? theme.colorScheme.primaryContainer
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5));
+    final fg = isListening
+        ? theme.colorScheme.onError
+        : (isBusy
+            ? theme.colorScheme.onPrimaryContainer
+            : theme.colorScheme.onSurface.withValues(alpha: 0.6));
+
+    final size = isListening ? 56.0 : 40.0;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: bg,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: isListening
+              ? theme.colorScheme.error
+              : theme.colorScheme.outline.withValues(alpha: 0.2),
+          width: 1,
+        ),
+        boxShadow: isListening
+            ? [
+                BoxShadow(
+                  color: theme.colorScheme.error.withValues(alpha: 0.35),
+                  blurRadius: 16,
+                  spreadRadius: 2,
+                ),
+              ]
+            : null,
+      ),
+      child: IconButton(
+        onPressed: () => ref.read(voiceModeProvider.notifier).toggle(),
+        padding: EdgeInsets.zero,
+        icon: isBusy
+            ? SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: fg,
+                ),
+              )
+            : Icon(
+                // Idle = "start a call" (phone), active = "hang up" (call_end).
+                // The pulsing red ring around the button + the live waveform
+                // is what tells the user they're actively in the call.
+                isListening || isBusy ? Icons.call_end : Icons.call,
+                color: fg,
+                size: isListening ? 28 : 22,
+              ),
+        tooltip: switch (phase) {
+          VoicePhase.idle || VoicePhase.error => 'Start voice call',
+          VoicePhase.listening => 'End call',
+          VoicePhase.thinking => 'End call',
+          VoicePhase.speaking => 'End call',
+        },
+      ),
+    );
+  }
+}
+
+/// Inline replacement for the text field while voice mode is active.
+/// Shows a live waveform when capturing, and a status label + spinner when
+/// the AI is thinking or speaking, so the user always has feedback about
+/// what's happening.
+class _VoiceModeIndicator extends StatelessWidget {
+  final VoiceModeStatus status;
+  const _VoiceModeIndicator({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final listening = status.phase == VoicePhase.listening;
+    final label = switch (status.phase) {
+      VoicePhase.listening => status.message ?? 'On call — speak naturally',
+      VoicePhase.thinking => status.message ?? 'AI is thinking…',
+      VoicePhase.speaking => status.message ?? 'AI is speaking…',
+      _ => '',
+    };
+
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: listening
+            ? theme.colorScheme.errorContainer.withValues(alpha: 0.35)
+            : theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: (listening
+                  ? theme.colorScheme.error
+                  : theme.colorScheme.primary)
+              .withValues(alpha: 0.45),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          if (listening)
+            Expanded(
+              child: _Waveform(
+                amplitudes: status.amplitudes,
+                color: theme.colorScheme.error,
+              ),
+            )
+          else
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: theme.colorScheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          if (listening && label.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Lightweight waveform painter. Renders the recent amplitude buffer as
+/// vertical bars; padded with zeroes on the left so newer samples appear at
+/// the right edge as you'd expect.
+class _Waveform extends StatelessWidget {
+  final List<double> amplitudes;
+  final Color color;
+  const _Waveform({required this.amplitudes, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _WaveformPainter(amplitudes: amplitudes, color: color),
+      size: Size.infinite,
+    );
+  }
+}
+
+class _WaveformPainter extends CustomPainter {
+  final List<double> amplitudes;
+  final Color color;
+  _WaveformPainter({required this.amplitudes, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (amplitudes.isEmpty) return;
+    final paint = Paint()
+      ..color = color
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+    const targetBars = 32;
+    final n = amplitudes.length;
+    final start = n > targetBars ? n - targetBars : 0;
+    final visible = amplitudes.sublist(start);
+    final barCount = visible.length;
+    final spacing = size.width / targetBars;
+    final centerY = size.height / 2;
+    for (var i = 0; i < barCount; i++) {
+      // Right-align bars (newest on the right).
+      final x = size.width - (barCount - i) * spacing + spacing / 2;
+      final amp = visible[i].clamp(0.0, 1.0);
+      final h = (amp * size.height * 0.9).clamp(2.0, size.height);
+      canvas.drawLine(
+        Offset(x, centerY - h / 2),
+        Offset(x, centerY + h / 2),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WaveformPainter old) =>
+      old.amplitudes != amplitudes || old.color != color;
 }

@@ -33,32 +33,70 @@ class RealtimeAudioSocket {
     _emitState(RealtimeConnectionState.connecting);
     final apiUri = Uri.parse(_client.server.apiUrl);
     final scheme = apiUri.scheme == 'https' ? 'wss' : 'ws';
-    final effectivePort = port ?? (apiUri.hasPort ? apiUri.port : (scheme == 'wss' ? 443 : 80));
-    final uri = Uri(
-      scheme: scheme,
-      host: apiUri.host,
-      port: effectivePort,
-      path: '/',
-      queryParameters: {'model': model},
+    final httpPort =
+        apiUri.hasPort ? apiUri.port : (scheme == 'wss' ? 443 : 80);
+
+    // Try the advertised WS port first. If the server advertised a separate
+    // port (e.g. 9001) that isn't reachable from this network — common when
+    // the HTTP API is exposed through a NAT/proxy but the WS port isn't —
+    // fall back to the HTTP port, where many Lemonade proxies actually
+    // serve WS via HTTP upgrade.
+    final advertisedPort = port ?? httpPort;
+    final candidates = <int>[advertisedPort];
+    if (advertisedPort != httpPort) candidates.add(httpPort);
+
+    // Lemonade's WS server rejects unauthenticated connections when an API
+    // key is configured. It accepts the key via `Authorization: Bearer …`
+    // header OR a `?api_key=` query param; the query param is the only way
+    // that works portably with `web_socket_channel` across platforms.
+    final apiKey = _client.server.apiKey ?? 'lemonade';
+
+    Object? lastError;
+    for (final candidatePort in candidates) {
+      final uri = Uri(
+        scheme: scheme,
+        host: apiUri.host,
+        port: candidatePort,
+        path: '/',
+        queryParameters: {
+          'model': model,
+          'api_key': apiKey,
+        },
+      );
+      try {
+        final channel = WebSocketChannel.connect(uri);
+        // .ready throws if the handshake fails. Without this we'd happily
+        // declare success on a server that's never going to answer.
+        await channel.ready.timeout(const Duration(seconds: 4));
+        _channel = channel;
+        _channel!.stream.listen(
+          _onMessage,
+          onError: (err) {
+            _events.add(RealtimeEvent.error(err.toString()));
+            _emitState(RealtimeConnectionState.error);
+          },
+          onDone: () => _emitState(RealtimeConnectionState.disconnected),
+        );
+        _emitState(RealtimeConnectionState.connected);
+        _send({
+          'type': 'session.update',
+          'session': {'model': model},
+        });
+        return;
+      } catch (e) {
+        lastError = e;
+        // Try the next candidate (if any).
+      }
+    }
+
+    _emitState(RealtimeConnectionState.error);
+    throw StateError(
+      'Could not open the realtime audio WebSocket on '
+      '${apiUri.host}:${candidates.join(' or ')}. '
+      'Last error: $lastError. '
+      'Check that the server\'s WS port is reachable from this device — '
+      'remote setups often need the WS port forwarded too, not just HTTP.',
     );
-
-    _channel = WebSocketChannel.connect(uri);
-
-    _channel!.stream.listen(
-      _onMessage,
-      onError: (err) {
-        _events.add(RealtimeEvent.error(err.toString()));
-        _emitState(RealtimeConnectionState.error);
-      },
-      onDone: () => _emitState(RealtimeConnectionState.disconnected),
-    );
-
-    _emitState(RealtimeConnectionState.connected);
-
-    _send({
-      'type': 'session.update',
-      'session': {'model': model},
-    });
   }
 
   /// Append a chunk of audio to the input buffer.

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import '../api/lemonade_client.dart';
@@ -85,6 +86,13 @@ class ErrorResult extends ToolExecutionResult {
   const ErrorResult(this.message);
 }
 
+/// Signal from the LLM that the host should end the current session
+/// (e.g. hang up the voice call). The agent loop forwards this as an
+/// [AgentEndCall] event so the voice-mode controller can act on it.
+class EndCallResult extends ToolExecutionResult {
+  const EndCallResult();
+}
+
 /// Translates a tool_call into the appropriate Lemonade endpoint call.
 class OmniToolExecutor {
   final LemonadeApiClient client;
@@ -105,16 +113,13 @@ class OmniToolExecutor {
       args = {};
     }
 
-    // generate_image → edit_image redirect when a prior image exists and the
-    // chosen image model also supports edit. Mirrors the desktop reference.
-    final hasPriorImage = ctx.sourceArtifacts.any((a) => a.kind == ArtifactKind.image) ||
-        ctx.turnArtifacts.any((a) => a.kind == ArtifactKind.image);
-    final editModel = toolModels['edit_image'];
-    final effective = (call.name == 'generate_image' && hasPriorImage && editModel != null)
-        ? 'edit_image'
-        : call.name;
-
-    switch (effective) {
+    // Trust the LLM's tool choice. We used to auto-redirect generate_image
+    // to edit_image whenever any prior image existed in the conversation,
+    // but that hijacked legitimate "make me a NEW picture of X" requests
+    // and kept editing the previous image — so every new prompt produced
+    // a variation of the same photo. The system prompt and tool
+    // descriptions already tell the model when to pick which tool; let it.
+    switch (call.name) {
       case 'generate_image':
         return _generate(args);
       case 'edit_image':
@@ -125,6 +130,8 @@ class OmniToolExecutor {
         return _transcribe(args, ctx);
       case 'analyze_image':
         return _analyze(args, ctx);
+      case 'end_call':
+        return const EndCallResult();
       default:
         return ErrorResult("Unknown tool '${call.name}'");
     }
@@ -141,10 +148,18 @@ class OmniToolExecutor {
     // aspect_ratio is the new schema; legacy `size` still works.
     final size = (args['size'] as String?) ?? _sizeForAspect(args['aspect_ratio'] as String?);
 
+    // Without a seed the diffusion backend (sd-server) uses a fixed default,
+    // which means every call with the same prompt returns identical bytes.
+    // Our on-disk store is content-addressed (sha256), so identical bytes
+    // collapse to the same file and the chat shows "the same photo" for
+    // every generation. Inject a fresh random seed per call so each
+    // generation truly varies.
+    final seed = Random().nextInt(0x7FFFFFFF);
     final req = ImageGenerationRequest.bySize(
       model: model,
       prompt: prompt,
       size: size,
+      seed: seed,
     );
     try {
       final resp = await client.images.generate(req);

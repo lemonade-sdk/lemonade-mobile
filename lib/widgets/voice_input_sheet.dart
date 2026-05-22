@@ -205,6 +205,9 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
           type: MessageContentType.audio,
           value: 'data:${result.mime};base64,${result.base64Data}',
         ));
+      case EndCallResult():
+        // end_call is a voice-mode control signal; no chat-side effect here.
+        break;
     }
     final finalMsg = ChatMessage(role: MessageRole.assistant, content: finalContents);
     final updated = [...working.sublist(0, working.length - 1), finalMsg];

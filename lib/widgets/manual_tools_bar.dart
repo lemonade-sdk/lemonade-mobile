@@ -212,6 +212,9 @@ class ManualToolsBar extends ConsumerWidget {
       case ErrorResult():
         finalContents.add(MessageContent(
             type: MessageContentType.text, value: 'Error: ${result.message}'));
+      case EndCallResult():
+        // Manual tool bar isn't part of a voice call; nothing to do.
+        break;
     }
 
     final finalMsg = ChatMessage(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import '../api/lemonade_client.dart';
 import '../api/types/chat_message.dart';
@@ -27,6 +28,15 @@ class AgentStatus extends AgentEvent {
 class AgentArtifact extends AgentEvent {
   final Artifact artifact;
   const AgentArtifact(this.artifact);
+}
+
+/// The LLM invoked an app-control tool that signals the host should end
+/// the current session (e.g. `end_call` in voice mode). The loop still
+/// gives the model one final iteration so it can speak its goodbye, but
+/// consumers should set up to tear down the session after the next
+/// [AgentDone].
+class AgentEndCall extends AgentEvent {
+  const AgentEndCall();
 }
 
 /// Final assistant text + accumulated artifacts. Stream ends after this.
@@ -103,7 +113,10 @@ class AgentLoop {
 
       final toolCalls = assistant.toolCalls ?? const <ToolCall>[];
       if (toolCalls.isEmpty) {
-        yield AgentDone(text: lastAssistantText, artifacts: ctx.turnArtifacts);
+        yield AgentDone(
+          text: _humanizeReactJson(lastAssistantText),
+          artifacts: ctx.turnArtifacts,
+        );
         return;
       }
 
@@ -119,6 +132,9 @@ class AgentLoop {
         if (result is ImageResult || result is AudioResult) {
           yield AgentArtifact(ctx.turnArtifacts.last);
         }
+        if (result is EndCallResult) {
+          yield const AgentEndCall();
+        }
         llmMessages.add(ApiChatMessage.tool(summary, toolCallId: tc.id));
       }
     }
@@ -126,9 +142,81 @@ class AgentLoop {
     yield AgentDone(
       text: lastAssistantText.isEmpty
           ? 'I ran out of iterations before completing the request.'
-          : lastAssistantText,
+          : _humanizeReactJson(lastAssistantText),
       artifacts: ctx.turnArtifacts,
     );
+  }
+
+  /// Some Lemonade-served LLMs (especially small open-weights models) emit a
+  /// ReAct-style JSON block — `{"action": "...", "action_input": "...",
+  /// "thought": "..."}` — as their assistant content instead of natural prose.
+  /// The tool runs (the artifact appears) but the chat ends up showing raw
+  /// JSON. Rewrite that to a readable `**Thoughts:** ...` line plus a caption
+  /// derived from the action input. Non-ReAct content passes through unchanged.
+  String _humanizeReactJson(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('{')) return text;
+
+    final Map<String, dynamic>? parsed = _tryDecodeJsonObject(trimmed);
+    if (parsed == null) return text;
+
+    final hasReactKeys = parsed.containsKey('action') ||
+        parsed.containsKey('action_input') ||
+        parsed.containsKey('thought');
+    if (!hasReactKeys) return text;
+
+    final out = <String>[];
+
+    final thought = parsed['thought'];
+    if (thought is String && thought.trim().isNotEmpty) {
+      out.add('**Thoughts:** ${thought.trim()}');
+    }
+
+    final caption = _captionForActionInput(parsed['action_input']);
+    if (caption != null && caption.isNotEmpty) {
+      out.add(caption);
+    } else if (parsed['action'] is String) {
+      out.add('_Used ${parsed['action']}._');
+    }
+
+    return out.isEmpty ? text : out.join('\n\n');
+  }
+
+  /// `action_input` is usually a JSON object, but models sometimes emit it as
+  /// a JSON-encoded string (occasionally with single quotes). Pull the most
+  /// human-meaningful field out — image_prompt for image gen, prompt for
+  /// edit/general, text_to_speak for TTS — and fall back to the raw value.
+  String? _captionForActionInput(dynamic actionInput) {
+    Map<String, dynamic>? asMap;
+    if (actionInput is Map) {
+      asMap = actionInput.cast<String, dynamic>();
+    } else if (actionInput is String) {
+      asMap = _tryDecodeJsonObject(actionInput) ??
+          _tryDecodeJsonObject(actionInput.replaceAll("'", '"'));
+      if (asMap == null) {
+        final s = actionInput.trim();
+        return s.isEmpty ? null : s;
+      }
+    }
+    if (asMap == null) return null;
+    for (final key in const [
+      'image_prompt',
+      'prompt',
+      'text_to_speak',
+      'question',
+    ]) {
+      final v = asMap[key];
+      if (v is String && v.trim().isNotEmpty) return v.trim();
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _tryDecodeJsonObject(String raw) {
+    try {
+      final v = jsonDecode(raw);
+      if (v is Map) return v.cast<String, dynamic>();
+    } catch (_) {}
+    return null;
   }
 
   String _applyResult(ToolExecutionResult result, ToolExecutionContext ctx) {
@@ -162,6 +250,10 @@ class AgentLoop {
           base64Data: result.base64Data,
         ));
         return 'Audio generated successfully.';
+      case EndCallResult():
+        // Feed a confirmation back to the LLM so its final iteration knows
+        // to wrap up gracefully — usually a short "Goodbye!" or similar.
+        return 'Call ending — say a brief goodbye.';
       case ErrorResult():
         return 'Error: ${result.message}';
     }
