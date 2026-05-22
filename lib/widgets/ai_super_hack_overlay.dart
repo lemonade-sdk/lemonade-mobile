@@ -11,12 +11,17 @@ class AiSuperHackOverlay extends StatefulWidget {
   final Widget child;
   final Color glowColor;
   final bool animated;
+  /// When false, this widget is a tree-stable passthrough — keeps the same
+  /// position in the element tree as themes that *do* enable scanlines, so
+  /// MaterialApp.builder doesn't reshape its descendants on theme switch.
+  final bool enabled;
 
   const AiSuperHackOverlay({
     super.key,
     required this.child,
     this.glowColor = const Color(0xFF39FF14),
     this.animated = true,
+    this.enabled = true,
   });
 
   @override
@@ -34,15 +39,20 @@ class _AiSuperHackOverlayState extends State<AiSuperHackOverlay>
       vsync: this,
       duration: const Duration(seconds: 8),
     );
-    if (widget.animated) _ctrl.repeat();
+    _syncTicker();
   }
 
   @override
   void didUpdateWidget(covariant AiSuperHackOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.animated && !_ctrl.isAnimating) {
+    _syncTicker();
+  }
+
+  void _syncTicker() {
+    final shouldRun = widget.enabled && widget.animated;
+    if (shouldRun && !_ctrl.isAnimating) {
       _ctrl.repeat();
-    } else if (!widget.animated && _ctrl.isAnimating) {
+    } else if (!shouldRun && _ctrl.isAnimating) {
       _ctrl.stop();
     }
   }
@@ -55,22 +65,27 @@ class _AiSuperHackOverlayState extends State<AiSuperHackOverlay>
 
   @override
   Widget build(BuildContext context) {
+    // Always wrap in a Stack so the element tree shape is identical whether
+    // or not scanlines are drawn — toggling between Stack and bare child
+    // during a theme switch is what triggered the `_elements.contains`
+    // assertion in MaterialApp's rebuild.
     return Stack(
       children: [
         widget.child,
-        Positioned.fill(
-          child: IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _ctrl,
-              builder: (context, _) => CustomPaint(
-                painter: _ScanlinePainter(
-                  phase: _ctrl.value,
-                  glow: widget.glowColor,
+        if (widget.enabled)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _ctrl,
+                builder: (context, _) => CustomPaint(
+                  painter: _ScanlinePainter(
+                    phase: _ctrl.value,
+                    glow: widget.glowColor,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
       ],
     );
   }

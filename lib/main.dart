@@ -129,12 +129,17 @@ class _MyAppState extends ConsumerState<MyApp> {
       scaffoldMessengerKey: _scaffoldMessengerKey,
       title: 'Lemonade Chat',
       theme: activeTheme.buildTheme(),
-      builder: decorations.useScanlines
-          ? (ctx, child) => AiSuperHackOverlay(
-                glowColor: decorations.glowColor ?? const Color(0xFF39FF14),
-                child: child ?? const SizedBox.shrink(),
-              )
-          : null,
+      // `builder` stays set unconditionally so the element tree shape above
+      // the navigator is identical across themes. Toggling between null and
+      // a wrapper function during a theme switch reshaped MaterialApp's
+      // descendants and tripped a `_elements.contains(element)` assertion in
+      // _InactiveElements.remove the next frame. The overlay itself is a
+      // cheap passthrough when scanlines are off.
+      builder: (ctx, child) => AiSuperHackOverlay(
+        glowColor: decorations.glowColor ?? const Color(0xFF39FF14),
+        enabled: decorations.useScanlines,
+        child: child ?? const SizedBox.shrink(),
+      ),
       initialRoute: '/',
       routes: {
         '/': (context) => const ChatScreen(),

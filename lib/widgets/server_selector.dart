@@ -61,7 +61,7 @@ class ServerSelector extends ConsumerWidget {
                 ref
                     .read(selectedServerProvider.notifier)
                     .selectServer(server);
-                Navigator.pop(context);
+                _closeIfInDrawer(context);
               },
             ),
           ListTile(
@@ -76,10 +76,22 @@ class ServerSelector extends ConsumerWidget {
   }
 
   void _openServersScreen(BuildContext context) {
-    Navigator.pop(context);
+    _closeIfInDrawer(context);
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const ServersScreen()),
     );
+  }
+
+  /// Pop only when this widget is currently mounted inside a Drawer — that
+  /// way picking a server from the chat drawer dismisses the drawer, but
+  /// picking from inside the Settings screen doesn't accidentally pop the
+  /// Settings route itself.
+  void _closeIfInDrawer(BuildContext context) {
+    final scaffold = Scaffold.maybeOf(context);
+    if (scaffold == null) return;
+    if (scaffold.isDrawerOpen || scaffold.isEndDrawerOpen) {
+      Navigator.pop(context);
+    }
   }
 }

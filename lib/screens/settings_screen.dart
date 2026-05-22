@@ -7,6 +7,7 @@ import '../providers/servers_provider.dart';
 import 'admin_console_screen.dart';
 import 'omni_router_screen.dart';
 import 'servers_screen.dart';
+import '../widgets/server_selector.dart';
 import '../widgets/theme_picker.dart';
 
 /// Top-level Settings screen — pure navigation menu. Each row links to a
@@ -31,10 +32,16 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 24),
           const Divider(),
 
+          // ====== Active server picker ======
+          // Same widget the chat drawer uses, so switching the active server
+          // works from either entry point. The "Servers" row below still
+          // links to the full management screen.
+          const ServerSelector(),
+
           // ====== Servers ======
           ListTile(
             leading: Icon(Icons.dns_outlined, color: scheme.primary),
-            title: const Text('Servers'),
+            title: const Text('Manage servers'),
             subtitle: Text(
               servers.isEmpty
                   ? 'No servers configured'
