@@ -63,17 +63,6 @@ class DiscoveredServersNotifier extends StateNotifier<List<DiscoveredServer>> {
     }
   }
 
-  /// Normalise a hostname so cosmetic variants (`Lemonade`, `lemonade`,
-  /// `lemonade.local`, trailing whitespace, etc.) collapse to a single key.
-  /// Without this a server that announces both an mDNS name and a bare host
-  /// fires two banners for what's clearly the same machine.
-  String _hostnameKey(String raw) {
-    var s = raw.trim().toLowerCase();
-    if (s.endsWith('.local')) s = s.substring(0, s.length - '.local'.length);
-    if (s.endsWith('.')) s = s.substring(0, s.length - 1);
-    return s;
-  }
-
   void _handleDiscoveredServer(DiscoveredServer server) {
     // Match by hostname AND url so the same hostname at a different IP shows
     // up as its own list entry (the user can pick which network path to use).
@@ -97,7 +86,7 @@ class DiscoveredServersNotifier extends StateNotifier<List<DiscoveredServer>> {
     // `foo.local` all collapse to the same key. Subsequent IPs for the same
     // host (multi-NIC, VPN + LAN, IP renewal) appear in the discovered list
     // but don't pop another notification.
-    final key = _hostnameKey(server.hostname);
+    final key = server.hostnameKey;
     if (_notifiedHostnames.add(key)) {
       ref.read(pendingBeaconNotificationProvider.notifier).state = server;
     }

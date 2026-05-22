@@ -106,6 +106,89 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     return '${(diff / 3600).floor()}h ago';
   }
 
+  /// Manual IP switcher for a configured server. Lists every currently
+  /// discovered URL whose hostname matches this server's name (case-insensitive,
+  /// `.local` stripped) and lets the user pick one. We only rewrite the
+  /// stored baseUrl when the user explicitly chooses — beacons never inject
+  /// new IPs into a configured server on their own.
+  Future<void> _switchIp(
+    ServerConfig server,
+    List<DiscoveredServer> discovered,
+  ) async {
+    final key = DiscoveredServer.normalizeHostname(server.name);
+    final candidates = discovered
+        .where((d) => d.hostnameKey == key && d.url != server.baseUrl)
+        .toList(growable: false);
+
+    if (candidates.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No other addresses are currently broadcasting for "${server.name}".',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final picked = await showDialog<DiscoveredServer>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('Switch IP for "${server.name}"'),
+        children: [
+          for (final c in candidates)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, c),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.lan_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(c.url, overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (picked == null) return;
+
+    final updated = ServerConfig(
+      name: server.name,
+      baseUrl: picked.url,
+      apiKey: server.apiKey,
+    );
+    await ref.read(serversProvider.notifier).updateServer(server, updated);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Switched "${server.name}" to ${picked.url}')),
+    );
+  }
+
+  /// Collapse multi-NIC beacons into one row per hostname. The canonical
+  /// hostname surfaced is whichever variant arrived first for that key, so
+  /// `lemonade.local` doesn't suddenly switch to `lemonade` mid-session.
+  List<_DiscoveredGroup> _groupByHostname(List<DiscoveredServer> discovered) {
+    final byKey = <String, _DiscoveredGroup>{};
+    for (final d in discovered) {
+      final group = byKey.putIfAbsent(
+        d.hostnameKey,
+        () => _DiscoveredGroup(canonicalHostname: d.hostname, entries: []),
+      );
+      group.entries.add(d);
+    }
+    final groups = byKey.values.toList(growable: false);
+    for (final g in groups) {
+      g.entries.sort((a, b) => a.url.compareTo(b.url));
+    }
+    return groups;
+  }
+
   @override
   Widget build(BuildContext context) {
     final servers = ref.watch(serversProvider);
@@ -193,12 +276,13 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
           else
             Column(
               children: [
-                for (final d in discovered)
+                for (final group in _groupByHostname(discovered))
                   _DiscoveredServerCard(
-                    discovered: d,
-                    alreadyAdded: _isAlreadyAdded(d, servers),
-                    lastSeenText: _lastSeenText(d.lastSeen),
-                    onAutofill: () => _autofillFromDiscovered(d),
+                    hostname: group.canonicalHostname,
+                    entries: group.entries,
+                    alreadyAdded: (d) => _isAlreadyAdded(d, servers),
+                    lastSeenTextOf: (d) => _lastSeenText(d.lastSeen),
+                    onAutofill: _autofillFromDiscovered,
                   ),
               ],
             ),
@@ -226,6 +310,11 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.swap_horiz),
+                        tooltip: 'Switch IP',
+                        onPressed: () => _switchIp(server, discovered),
+                      ),
                       IconButton(
                         icon: const Icon(Icons.check_circle_outline,
                             color: AppColors.serverAlive),
@@ -274,22 +363,31 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// One row per hostname. A multi-NIC server announces from every interface,
+/// so the same hostname can arrive with several IPs — they're consolidated
+/// here and the user picks which path to use.
 class _DiscoveredServerCard extends StatelessWidget {
-  final DiscoveredServer discovered;
-  final bool alreadyAdded;
-  final String lastSeenText;
-  final VoidCallback onAutofill;
+  final String hostname;
+  final List<DiscoveredServer> entries;
+  final bool Function(DiscoveredServer) alreadyAdded;
+  final String Function(DiscoveredServer) lastSeenTextOf;
+  final void Function(DiscoveredServer) onAutofill;
 
   const _DiscoveredServerCard({
-    required this.discovered,
+    required this.hostname,
+    required this.entries,
     required this.alreadyAdded,
-    required this.lastSeenText,
+    required this.lastSeenTextOf,
     required this.onAutofill,
   });
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final mostRecent = entries
+        .reduce((a, b) => a.lastSeen.isAfter(b.lastSeen) ? a : b);
+
     return Card(
       color: isDark
           ? AppColors.beaconCardBackgroundDark
@@ -306,54 +404,102 @@ class _DiscoveredServerCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    discovered.hostname,
+                    hostname,
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 16),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                Text(
+                  '${entries.length} address${entries.length == 1 ? '' : 'es'}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
-              discovered.url,
-              style: const TextStyle(fontSize: 13),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              'Last seen: $lastSeenText',
+              'Last seen: ${lastSeenTextOf(mostRecent)}',
               style: const TextStyle(
                   color: AppColors.hintText, fontSize: 11),
             ),
             const SizedBox(height: 8),
-            if (alreadyAdded)
-              const Align(
-                alignment: Alignment.centerRight,
-                child: Chip(
-                  label: Text('Added', style: TextStyle(fontSize: 12)),
-                  backgroundColor: AppColors.serverAlive,
-                  visualDensity: VisualDensity.compact,
-                ),
-              )
-            else
-              Align(
-                alignment: Alignment.centerRight,
-                child: ElevatedButton.icon(
-                  onPressed: onAutofill,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Use this server'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.beaconActive,
-                    foregroundColor: AppColors.white,
-                  ),
-                ),
+            for (final entry in entries)
+              _DiscoveredEntryRow(
+                entry: entry,
+                alreadyAdded: alreadyAdded(entry),
+                onAutofill: () => onAutofill(entry),
               ),
           ],
         ),
       ),
     );
   }
+}
+
+class _DiscoveredEntryRow extends StatelessWidget {
+  final DiscoveredServer entry;
+  final bool alreadyAdded;
+  final VoidCallback onAutofill;
+
+  const _DiscoveredEntryRow({
+    required this.entry,
+    required this.alreadyAdded,
+    required this.onAutofill,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(Icons.lan_outlined,
+              size: 16, color: scheme.onSurface.withValues(alpha: 0.7)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              entry.url,
+              style: const TextStyle(fontSize: 13),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (alreadyAdded)
+            const Chip(
+              label: Text('Added', style: TextStyle(fontSize: 11)),
+              backgroundColor: AppColors.serverAlive,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+            )
+          else
+            TextButton.icon(
+              onPressed: onAutofill,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Use'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.beaconActive,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiscoveredGroup {
+  final String canonicalHostname;
+  final List<DiscoveredServer> entries;
+  _DiscoveredGroup({
+    required this.canonicalHostname,
+    required this.entries,
+  });
 }

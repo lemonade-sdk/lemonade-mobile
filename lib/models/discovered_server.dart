@@ -11,6 +11,19 @@ class DiscoveredServer {
     required this.address,
   });
 
+  /// Cosmetically-normalized hostname used for grouping. `Lemonade`,
+  /// `lemonade.local`, `lemonade.` all collapse to `lemonade`. Used when
+  /// dedup'ing notifications and when consolidating multi-NIC servers into
+  /// a single row in the UI.
+  String get hostnameKey => normalizeHostname(hostname);
+
+  static String normalizeHostname(String raw) {
+    var s = raw.trim().toLowerCase();
+    if (s.endsWith('.local')) s = s.substring(0, s.length - '.local'.length);
+    if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+    return s;
+  }
+
   DiscoveredServer copyWith({DateTime? lastSeen}) {
     return DiscoveredServer(
       hostname: hostname,
