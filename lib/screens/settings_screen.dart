@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/admin_mode_provider.dart';
+import '../providers/image_resolution_provider.dart';
 import '../providers/omni_router_provider.dart';
 import '../providers/servers_provider.dart';
 import 'admin_console_screen.dart';
@@ -79,6 +80,32 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const OmniRouterScreen()),
+            ),
+          ),
+
+          // ====== Image generation resolution ======
+          // Drives the long-edge size of every AI-generated image (the
+          // LLM-chosen aspect_ratio is applied on top). Higher = better
+          // quality but more compute on the server and not every model
+          // supports the larger presets.
+          ListTile(
+            leading:
+                Icon(Icons.aspect_ratio_outlined, color: scheme.primary),
+            title: const Text('Image generation resolution'),
+            subtitle: Text(
+              ref.watch(imageResolutionProvider).label,
+            ),
+            trailing: DropdownButton<ImageResolutionPreset>(
+              value: ref.watch(imageResolutionProvider),
+              underline: const SizedBox.shrink(),
+              onChanged: (v) {
+                if (v == null) return;
+                ref.read(imageResolutionProvider.notifier).set(v);
+              },
+              items: [
+                for (final p in ImageResolutionPreset.values)
+                  DropdownMenuItem(value: p, child: Text(p.label)),
+              ],
             ),
           ),
 

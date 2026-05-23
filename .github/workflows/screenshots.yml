@@ -1,0 +1,165 @@
+name: Store Screenshots
+
+# Snapshots every screen the Maestro flow visits, across the iOS + Android
+# device sizes Apple and Google require for store listings. Runs:
+#   • on a tag push (your "ship a release" moment), or
+#   • manually via the workflow_dispatch button.
+# Public repo → all runner minutes (including macOS) are free.
+#
+# Outputs:
+#   • One artifact per device profile, containing the PNGs Maestro captured.
+#   • Each PNG is at the simulator/emulator's native resolution, which is
+#     identical to what App Store Connect and Play Console want.
+#
+# To wire fastlane deliver / supply on top of this, add a downstream job
+# that downloads these artifacts and uploads them. Left intentionally out
+# for now so the workflow's first run is safe.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  # -------------------------------------------------------------------------
+  # iOS — iPhone 6.5" / 5.5" + iPad Pro 12.9" / 11"
+  # -------------------------------------------------------------------------
+  ios:
+    name: iOS · ${{ matrix.device.label }}
+    runs-on: macos-14
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - { id: "iPhone 15 Pro Max",           label: "iphone-6.5"   }
+          - { id: "iPhone 8 Plus",               label: "iphone-5.5"   }
+          - { id: "iPad Pro (12.9-inch) (6th generation)", label: "ipad-12.9" }
+          - { id: "iPad Pro (11-inch) (4th generation)",   label: "ipad-11"   }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Disable Flutter SPM (force CocoaPods)
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: pub get
+        run: flutter pub get
+
+      - name: build_runner
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Build iOS simulator app
+        run: flutter build ios --simulator --debug --no-codesign
+
+      - name: Boot simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | jq -r --arg n "${{ matrix.device.id }}" '.devices | to_entries | map(.value[] | select(.name == $n)) | .[0].udid')
+          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
+            echo "No available simulator named '${{ matrix.device.id }}' — listing what we have:"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Install app on simulator
+        run: |
+          APP=$(find build/ios/iphonesimulator -name "*.app" -type d | head -n1)
+          xcrun simctl install "$UDID" "$APP"
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Run Maestro flow
+        run: |
+          mkdir -p out/${{ matrix.device.label }}
+          maestro --udid "$UDID" test .maestro/screenshots.yaml \
+            -e APP_ID=lemonade.mobile \
+            --debug-output out/${{ matrix.device.label }}
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ matrix.device.label }}
+          path: out/${{ matrix.device.label }}/**/*.png
+
+  # -------------------------------------------------------------------------
+  # Android — phone + 7" tablet + 10" tablet
+  # -------------------------------------------------------------------------
+  android:
+    name: Android · ${{ matrix.device.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - { profile: "pixel_7",        api: 34, label: "phone"      }
+          - { profile: "Nexus 7",        api: 34, label: "tablet-7"   }
+          - { profile: "Nexus 10",       api: 34, label: "tablet-10"  }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM (faster emulator)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: pub get
+        run: flutter pub get
+
+      - name: build_runner
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Build APK
+        run: flutter build apk --debug
+
+      - name: Run emulator + Maestro
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.device.api }}
+          target: google_apis
+          arch: x86_64
+          profile: ${{ matrix.device.profile }}
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            adb install -r build/app/outputs/flutter-apk/app-debug.apk
+            curl -fsSL https://get.maestro.mobile.dev | bash
+            export PATH="$HOME/.maestro/bin:$PATH"
+            mkdir -p out/${{ matrix.device.label }}
+            maestro test .maestro/screenshots.yaml \
+              -e APP_ID=com.lemonade.mobile.chat.ai \
+              --debug-output out/${{ matrix.device.label }}
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.device.label }}
+          path: out/${{ matrix.device.label }}/**/*.png

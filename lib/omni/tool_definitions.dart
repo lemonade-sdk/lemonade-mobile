@@ -21,6 +21,13 @@ class OmniToolCatalog {
       "  - transcribe_audio: only when the user provides an audio file or you see "
       "'[User provided audio file #N]' in their message.\n"
       "  - analyze_image: only when the user provides an image (image_url part) and asks about it.\n"
+      "  - web_search: only when the user asks about current/changing information you "
+      "may not know (news, prices, schedules, opening hours, sports scores, recent "
+      "releases). Do NOT use it for definitions, math, or general explanations.\n"
+      "  - find_places: only when the user asks for a place, business, restaurant, "
+      "landmark, or address. You can call both find_places AND web_search in the "
+      "same turn if the user asks something like 'find a pizza place near me and "
+      "tell me the best one' — they will run in parallel.\n"
       "After using any tool, give a short friendly text reply describing what you did. "
       "When in doubt, just talk back — do not invoke any tool.";
 
@@ -48,10 +55,11 @@ class OmniToolCatalog {
           },
           'aspect_ratio': {
             'type': 'string',
-            'enum': ['1:1', '16:9', '9:16'],
+            'enum': ['4:3', '1:1', '16:9', '9:16'],
             'description':
-                "Aspect ratio. Use 9:16 for mobile wallpapers / portraits, 16:9 for landscapes / scenes, "
-                "1:1 as the default.",
+                "Aspect ratio. Use 4:3 as the default for general photos and scenes; "
+                "1:1 for product / portrait close-ups; 16:9 for wide landscapes; "
+                "9:16 for mobile wallpapers / vertical portraits.",
           },
           'style': {
             'type': 'string',
@@ -137,6 +145,60 @@ class OmniToolCatalog {
         'required': <String>[],
       },
       requiresLabels: const ['audio', 'transcription'],
+    ),
+    ToolDefinition(
+      name: 'web_search',
+      description:
+          'Search the live web for up-to-date information. Use this when the '
+          'user asks about news, current events, prices, schedules, sports '
+          'scores, opening hours, product reviews, or anything that may have '
+          'changed after your training data. The tool returns the top web '
+          'results with titles, URLs, and snippets — summarize them in your '
+          'reply and cite the URLs. Do NOT call this for things you already '
+          'know (definitions, general explanations, math).',
+      parameters: const {
+        'type': 'object',
+        'properties': <String, dynamic>{
+          'query': {
+            'type': 'string',
+            'description':
+                'A clear, specific search query in natural language, e.g. '
+                '"weather in Seattle tomorrow" or "latest iPhone 17 release date".',
+          },
+        },
+        'required': <String>['query'],
+      },
+      isAppControl: true,
+    ),
+    ToolDefinition(
+      name: 'find_places',
+      description:
+          'Look up places, businesses, addresses, or points of interest on a '
+          'map. Use this when the user asks for restaurants, shops, '
+          'landmarks, or addresses — anything that has a physical location. '
+          'Returns name, full address, and (when available) coordinates and '
+          'category. Can optionally bias by a "near" location.',
+      parameters: const {
+        'type': 'object',
+        'properties': <String, dynamic>{
+          'query': {
+            'type': 'string',
+            'description':
+                'What to look for, e.g. "pizza", "coffee shop", "Eiffel Tower", '
+                '"123 Main St". Use English unless the user specifically used '
+                'another language.',
+          },
+          'near': {
+            'type': 'string',
+            'description':
+                'Optional location to bias results toward, e.g. "Seattle, WA" '
+                'or "my current location". Leave empty if the user gave an '
+                'absolute place name.',
+          },
+        },
+        'required': <String>['query'],
+      },
+      isAppControl: true,
     ),
     ToolDefinition(
       name: 'end_call',

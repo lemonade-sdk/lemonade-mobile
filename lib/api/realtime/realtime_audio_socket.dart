@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../../models/server_config.dart';
 import '../lemonade_client.dart';
 
 /// Typed wrapper over Lemonade's WebSocket audio-transcription protocol.
@@ -15,7 +16,7 @@ import '../lemonade_client.dart';
 ///
 /// Streams [events] for parsed messages and [state] for connection lifecycle.
 class RealtimeAudioSocket {
-  final LemonadeApiClient _client;
+  final ServerConfig _server;
   WebSocketChannel? _channel;
 
   final _events = StreamController<RealtimeEvent>.broadcast();
@@ -23,7 +24,11 @@ class RealtimeAudioSocket {
 
   RealtimeConnectionState _currentState = RealtimeConnectionState.disconnected;
 
-  RealtimeAudioSocket(this._client);
+  RealtimeAudioSocket(this._server);
+
+  /// Convenience constructor for call sites that already hold a
+  /// [LemonadeApiClient] — pulls the server out of it.
+  RealtimeAudioSocket.forClient(LemonadeApiClient client) : this(client.server);
 
   Stream<RealtimeEvent> get events => _events.stream;
   Stream<RealtimeConnectionState> get state => _state.stream;
@@ -31,7 +36,7 @@ class RealtimeAudioSocket {
 
   Future<void> connect({required String model, int? port}) async {
     _emitState(RealtimeConnectionState.connecting);
-    final apiUri = Uri.parse(_client.server.apiUrl);
+    final apiUri = Uri.parse(_server.apiUrl);
     final scheme = apiUri.scheme == 'https' ? 'wss' : 'ws';
     final httpPort =
         apiUri.hasPort ? apiUri.port : (scheme == 'wss' ? 443 : 80);
@@ -49,7 +54,7 @@ class RealtimeAudioSocket {
     // key is configured. It accepts the key via `Authorization: Bearer …`
     // header OR a `?api_key=` query param; the query param is the only way
     // that works portably with `web_socket_channel` across platforms.
-    final apiKey = _client.server.apiKey ?? 'lemonade';
+    final apiKey = _server.apiKey ?? 'lemonade';
 
     Object? lastError;
     for (final candidatePort in candidates) {

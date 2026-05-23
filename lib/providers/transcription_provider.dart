@@ -396,6 +396,11 @@ class TranscriptionController {
           encoder: AudioEncoder.pcm16bits,
           sampleRate: 16000,
           numChannels: 1,
+          // Hardware AEC + noise suppression so a noisy room doesn't
+          // wreck live transcriptions.
+          androidConfig: AndroidRecordConfig(
+            audioSource: AndroidAudioSource.voiceCommunication,
+          ),
         ),
       );
 

@@ -1,0 +1,77 @@
+# Maestro screenshot flow for App Store / Play Store submissions.
+#
+# Each `takeScreenshot:` writes a PNG into the directory Maestro is invoked
+# with (`--debug-output`). The GitHub Actions workflow runs this flow once
+# per device profile, so the output dir winds up with one PNG per device
+# per screen — exactly what fastlane deliver / supply expects when we
+# wire those up later.
+#
+# Extending: copy any block below and change the navigation steps. The
+# `takeScreenshot:` name becomes the PNG filename (no extension needed).
+#
+# IMPORTANT — server dependency:
+# The chat / OmniRouter / model-picker screens need a reachable Lemonade
+# server. For CI we either (a) stick to screens that work without one
+# (Settings, Servers list, empty Chat), or (b) point at a mock/local
+# server we spin up in the workflow. Today this flow captures the
+# screens that work standalone. Expand as you add fixture data.
+
+# appId is supplied by the runner via `-e APP_ID=…` (CI passes the iOS
+# bundle id on macOS jobs and the Android applicationId on Linux jobs).
+# These differ for this app: `lemonade.mobile` on iOS,
+# `com.lemonade.mobile.chat.ai` on Android.
+appId: ${APP_ID}
+---
+# 01 — App launches into the Chat screen (empty state if no server).
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 01_chat_empty
+
+# 02 — Open the drawer (left menu) so reviewers see chat history + folder UX.
+- tapOn:
+    id: "menu_button"
+    optional: true
+- runFlow:
+    when:
+      visible: "Conversations"
+    commands:
+      - takeScreenshot: 02_drawer
+      - back
+
+# 03 — Settings screen (theme picker + everything).
+- tapOn:
+    id: "menu_button"
+    optional: true
+- tapOn:
+    text: "Settings"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- runFlow:
+    when:
+      visible: "Settings"
+    commands:
+      - takeScreenshot: 03_settings
+      - back
+
+# 04 — Lemonade Omni (the omni router screen).
+- tapOn:
+    id: "menu_button"
+    optional: true
+- tapOn:
+    text: "Settings"
+    optional: true
+- tapOn:
+    text: "Lemonade Omni"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- runFlow:
+    when:
+      visible: "Lemonade Omni"
+    commands:
+      - takeScreenshot: 04_omni_router
+      - back
+      - back

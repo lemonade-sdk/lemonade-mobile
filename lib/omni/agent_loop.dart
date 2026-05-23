@@ -10,8 +10,16 @@ import 'capability_resolver.dart';
 import 'tool_definitions.dart';
 import 'tool_executor.dart';
 
-/// Maximum tool-call iterations per user turn. Mirrors the desktop reference.
-const int kAgentMaxIterations = 5;
+/// Hard upper bound on tool-call iterations per user turn. Set
+/// generously (30) so the model effectively decides when it's done —
+/// it stops whenever it produces a tool_calls-free response. The
+/// ceiling is just a runaway guard for pathological cases (a model
+/// that gets stuck re-issuing the same call), not a tight budget.
+///
+/// Even if the ceiling IS hit, we make one final tool-less chat call
+/// to force a real text reply (see end of [run]), so the user is
+/// never stuck with the canned "ran out of iterations" message.
+const int kAgentMaxIterations = 30;
 
 /// Result emitted by the agent loop on each iteration.
 sealed class AgentEvent {
@@ -125,9 +133,21 @@ class AgentLoop {
         content: lastAssistantText.isEmpty ? null : lastAssistantText,
       ));
 
+      // Tool calls within a single LLM iteration are independent — kick
+      // them off concurrently so research-heavy turns (e.g. two
+      // web_search calls + a find_places) don't serialize. We still
+      // apply results in the original order so the conversation thread
+      // stays deterministic.
+      final inFlight = <Future<ToolExecutionResult>>[];
       for (final tc in toolCalls) {
         yield AgentStatus(_statusForTool(tc.name));
-        final result = await executor.execute(tc, ctx);
+        inFlight.add(executor.execute(tc, ctx));
+      }
+      final results = await Future.wait(inFlight);
+
+      for (var i = 0; i < toolCalls.length; i++) {
+        final tc = toolCalls[i];
+        final result = results[i];
         final summary = _applyResult(result, ctx);
         if (result is ImageResult || result is AudioResult) {
           yield AgentArtifact(ctx.turnArtifacts.last);
@@ -139,10 +159,41 @@ class AgentLoop {
       }
     }
 
+    // We hit the iteration ceiling without the model ever choosing to stop
+    // tool-calling. Common cause: a small/instruction-following LLM keeps
+    // re-issuing tool calls instead of summarizing. Make one last chat
+    // call WITHOUT tools — the model is now forced to produce text, given
+    // the tool history already in `llmMessages`. Most of the time this
+    // produces a perfectly reasonable wrap-up; if the call itself errors
+    // we fall back to the last text we have or a canned message so the
+    // user is never left without a reply.
+    yield const AgentStatus('Wrapping up…');
+    String wrapUpText = lastAssistantText;
+    try {
+      final wrapUp = await client.chat.create(ChatCompletionRequest(
+        model: llmModelId,
+        messages: [
+          ...llmMessages,
+          ApiChatMessage.system(
+            'You have completed your research. Without calling any more '
+            'tools, give the user a short, helpful final reply based on '
+            'what you found above. If you ran into errors, apologize '
+            'briefly and tell them what was missing.',
+          ),
+        ],
+        stream: false,
+      ));
+      final text = wrapUp.message.content?.trim() ?? '';
+      if (text.isNotEmpty) wrapUpText = text;
+    } catch (_) {
+      // Network/model error on the wrap-up — fall through to whatever
+      // lastAssistantText already has, or the canned fallback.
+    }
+
     yield AgentDone(
-      text: lastAssistantText.isEmpty
-          ? 'I ran out of iterations before completing the request.'
-          : _humanizeReactJson(lastAssistantText),
+      text: wrapUpText.isEmpty
+          ? "Sorry — I couldn't find what you were looking for."
+          : _humanizeReactJson(wrapUpText),
       artifacts: ctx.turnArtifacts,
     );
   }

@@ -8,6 +8,7 @@ import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../api/types/image_request.dart';
 import '../api/types/tool_call.dart';
+import 'web_tools.dart';
 
 /// In-conversation context for tool execution. The agent loop populates this
 /// before invoking executors so tools have access to the binary blobs that the
@@ -100,7 +101,17 @@ class OmniToolExecutor {
   /// Maps tool name → model id chosen for that tool.
   final Map<String, String> toolModels;
 
-  OmniToolExecutor({required this.client, required this.toolModels});
+  /// Base resolution (long edge in pixels) for AI-generated images. The
+  /// LLM-supplied `aspect_ratio` is applied on top of this to produce the
+  /// actual width × height. Default of 1024 matches the historical
+  /// behaviour; set higher via Settings → "Image generation resolution".
+  final int imageBaseResolutionPx;
+
+  OmniToolExecutor({
+    required this.client,
+    required this.toolModels,
+    this.imageBaseResolutionPx = 1024,
+  });
 
   Future<ToolExecutionResult> execute(
     ToolCall call,
@@ -132,6 +143,10 @@ class OmniToolExecutor {
         return _analyze(args, ctx);
       case 'end_call':
         return const EndCallResult();
+      case 'web_search':
+        return _webSearch(args);
+      case 'find_places':
+        return _findPlaces(args);
       default:
         return ErrorResult("Unknown tool '${call.name}'");
     }
@@ -193,16 +208,28 @@ class OmniToolExecutor {
   }
 
   /// Translate the LLM-friendly `aspect_ratio` enum into the WxH string the
-  /// image endpoint expects. Defaults to 1:1 when unset / unknown.
+  /// image endpoint expects, scaled by the user's configured base
+  /// resolution. For non-square ratios the *long edge* equals
+  /// [imageBaseResolutionPx]; the short edge is derived. Rounded to the
+  /// nearest multiple of 8 because most diffusion backends quantize
+  /// dimensions to 8 or 64 pixel grids and will silently clamp otherwise.
+  ///
+  /// Default when the LLM doesn't specify or picks an unknown aspect is
+  /// 4:3 landscape — at the 1024 base that's 1024×768, which is a
+  /// familiar / pleasant size for chat-embedded images.
   String _sizeForAspect(String? aspect) {
+    int round8(int n) => (n / 8).round() * 8;
+    final long = imageBaseResolutionPx;
     switch (aspect) {
-      case '16:9':
-        return '1024x576';
-      case '9:16':
-        return '576x1024';
       case '1:1':
+        return '${long}x$long';
+      case '16:9':
+        return '${long}x${round8(long * 9 ~/ 16)}';
+      case '9:16':
+        return '${round8(long * 9 ~/ 16)}x$long';
+      case '4:3':
       default:
-        return '1024x1024';
+        return '${long}x${round8(long * 3 ~/ 4)}';
     }
   }
 
@@ -362,6 +389,72 @@ class OmniToolExecutor {
     if (mime.contains('flac')) return '.flac';
     if (mime.contains('webm')) return '.webm';
     return '.wav';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Research / "look it up on the web" tools
+  // ---------------------------------------------------------------------------
+
+  Future<ToolExecutionResult> _webSearch(Map<String, dynamic> args) async {
+    final query = (args['query'] as String? ?? '').trim();
+    if (query.isEmpty) {
+      return const ErrorResult('web_search requires a non-empty "query".');
+    }
+    final client = WebSearchClient();
+    try {
+      final results = await client.search(query);
+      if (results.isEmpty) {
+        return TextResult('No web results found for "$query".');
+      }
+      final buf = StringBuffer('Top web results for "$query":\n');
+      for (var i = 0; i < results.length; i++) {
+        final r = results[i];
+        buf.writeln('${i + 1}. ${r.title}');
+        buf.writeln('   ${r.url}');
+        if (r.snippet.isNotEmpty) buf.writeln('   ${r.snippet}');
+      }
+      return TextResult(buf.toString().trimRight());
+    } catch (e) {
+      return ErrorResult('Web search failed: $e');
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<ToolExecutionResult> _findPlaces(Map<String, dynamic> args) async {
+    final query = (args['query'] as String? ?? '').trim();
+    final near = (args['near'] as String? ?? '').trim();
+    if (query.isEmpty) {
+      return const ErrorResult('find_places requires a non-empty "query".');
+    }
+    final client = PlacesSearchClient();
+    try {
+      final places = await client.search(query, nearLocation: near);
+      if (places.isEmpty) {
+        final scope = near.isEmpty ? '' : ' near $near';
+        return TextResult('No places found for "$query"$scope.');
+      }
+      final buf = StringBuffer(
+        near.isEmpty
+            ? 'Places matching "$query":\n'
+            : 'Places matching "$query" near $near:\n',
+      );
+      for (var i = 0; i < places.length; i++) {
+        final p = places[i];
+        buf.writeln('${i + 1}. ${p.name}');
+        buf.writeln('   ${p.address}');
+        if (p.type != null) buf.writeln('   type: ${p.type}');
+        if (p.latitude != null && p.longitude != null) {
+          buf.writeln(
+              '   coords: ${p.latitude!.toStringAsFixed(5)}, ${p.longitude!.toStringAsFixed(5)}');
+        }
+      }
+      return TextResult(buf.toString().trimRight());
+    } catch (e) {
+      return ErrorResult('Places lookup failed: $e');
+    } finally {
+      client.close();
+    }
   }
 }
 

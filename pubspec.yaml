@@ -1,7 +1,7 @@
 name: lemonade_mobile
 description: "A chat app for Lemonade AI servers with syntax highlighting and multi-server support"
 publish_to: 'none'
-version: 3.0.0+12
+version: 3.0.1+13
 
 environment:
   sdk: ^3.8.1
@@ -50,10 +50,19 @@ dependencies:
   http_parser: ^4.0.0           # MediaType for multipart uploads
   crypto: ^3.0.0                # sha256 for content-addressed attachments
 
+  # Image actions in the chat bubble fullscreen viewer.
+  share_plus: ^10.0.0    # cross-platform "Share…" sheet
+  gal: ^2.3.0            # save image to Photos / camera roll / Files
+
   # Audio recording & playback
   record: ^6.2.0
   just_audio: ^0.9.39
   mic_stream_recorder: ^1.1.2
+  # Native voice-processing IO unit (iOS) + audio session config.
+  audio_session: ^0.1.25
+  # Silero VAD via ONNX Runtime — replaces our amplitude-only end-of-speech
+  # detector with a model that distinguishes speech from background noise.
+  vad: ^0.0.5
 
   # WebSocket client for realtime transcription
   web_socket_channel: ^3.0.0

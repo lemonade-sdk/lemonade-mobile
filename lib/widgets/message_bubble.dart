@@ -3,28 +3,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:lemonade_mobile/models/chat_message.dart';
 import 'package:lemonade_mobile/constants/messages.dart';
 import 'package:lemonade_mobile/constants/colors.dart';
+import 'package:lemonade_mobile/providers/chat_history_provider.dart';
+import 'package:lemonade_mobile/screens/image_viewer_screen.dart';
 import 'package:lemonade_mobile/widgets/inline_audio_player.dart';
 
-class MessageBubble extends StatelessWidget {
+class MessageBubble extends ConsumerWidget {
   final ChatMessage message;
 
   const MessageBubble({super.key, required this.message});
 
   @override
-  Widget build(BuildContext context) {
-    return _MessageBubbleContent(message: message);
+  Widget build(BuildContext context, WidgetRef ref) {
+    return _MessageBubbleContent(message: message, ref: ref);
   }
 }
 
 class _MessageBubbleContent extends StatelessWidget {
   final ChatMessage message;
+  final WidgetRef ref;
 
   const _MessageBubbleContent({
     required this.message,
+    required this.ref,
   });
 
   void _copyMessage(BuildContext context) {
@@ -293,7 +298,10 @@ class _MessageBubbleContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (hasImage) ...[
-                _buildImage(context, message.imageContent!),
+                GestureDetector(
+                  onTap: () => _openImageViewer(context, message.imageContent!),
+                  child: _buildImage(context, message.imageContent!),
+                ),
                 if (hasText || audios.isNotEmpty) const SizedBox(height: 8),
               ],
               for (final src in audios) ...[
@@ -348,6 +356,67 @@ class _MessageBubbleContent extends StatelessWidget {
             .primary,
       ),
     );
+  }
+
+  /// Push the fullscreen image viewer for [imageValue] (a data URL, file
+  /// path, or network URL — only data URLs and the in-memory cached bytes
+  /// support Share / Download in the viewer; the others are show-only).
+  void _openImageViewer(BuildContext context, String imageValue) {
+    // Pull the bytes from the MessageContent's cache so we don't
+    // re-decode base64 each tap. Only data URLs are supported here for
+    // the action buttons; network URLs and file paths fall back to a
+    // simple Image.network/file in the viewer (caller can extend).
+    final imageContent = message.content.firstWhere(
+      (c) => c.type == MessageContentType.image && c.value == imageValue,
+      orElse: () =>
+          MessageContent(type: MessageContentType.image, value: imageValue),
+    );
+    final bytes = imageContent.getCachedImageBytes();
+    if (bytes == null || bytes.isEmpty) {
+      // Not bytes-backed (file path / URL). Skip the viewer for now —
+      // we'd need a separate code path to load from those sources.
+      return;
+    }
+    // Sniff the mime out of the data URL prefix if present.
+    String mime = 'image/png';
+    if (imageValue.startsWith('data:')) {
+      final semi = imageValue.indexOf(';');
+      if (semi > 5) mime = imageValue.substring(5, semi);
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ImageViewerScreen(
+        bytes: bytes,
+        mime: mime,
+        onDelete: () => _deleteImage(imageValue),
+      ),
+    ));
+  }
+
+  /// Remove the image MessageContent identified by [imageValue] from this
+  /// message and persist the updated chat. Other parts of the message
+  /// (text, audio attachments) stay untouched. If the message ends up
+  /// empty (e.g. it was image-only), it is removed from the chat entirely.
+  Future<void> _deleteImage(String imageValue) async {
+    final history =
+        ref.read(chatHistoryProvider.notifier).getActiveChat()?.messages ??
+            const <ChatMessage>[];
+    final idx = history.indexOf(message);
+    if (idx < 0) return; // Message no longer in active chat — nothing to do.
+    final updatedContent = message.content
+        .where((c) =>
+            !(c.type == MessageContentType.image && c.value == imageValue))
+        .toList(growable: false);
+    final next = List<ChatMessage>.of(history);
+    if (updatedContent.isEmpty) {
+      next.removeAt(idx);
+    } else {
+      next[idx] = ChatMessage(
+        role: message.role,
+        content: updatedContent,
+        timestamp: message.timestamp,
+      );
+    }
+    await ref.read(chatHistoryProvider.notifier).updateActiveChat(next);
   }
 }
 

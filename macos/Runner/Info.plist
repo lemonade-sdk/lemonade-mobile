@@ -30,5 +30,7 @@
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Lemonade Mobile uses the microphone to send your voice to the AI for conversation and transcription.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save AI-generated images from this conversation to your Photos library.</string>
 </dict>
 </plist>

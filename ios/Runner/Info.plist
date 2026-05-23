@@ -49,6 +49,8 @@
 	<string>This app uses the microphone to record audio for transcription by your Lemonade AI server.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app accesses photos from your library for AI image analysis.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save AI-generated images from this conversation to your Photos library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -6,6 +6,7 @@ import '../omni/capability_resolver.dart';
 import '../omni/omni_workflow.dart';
 import '../omni/tool_executor.dart';
 import '../storage/database.dart';
+import 'image_resolution_provider.dart';
 import 'lemonade_client_provider.dart';
 import 'model_defaults_provider.dart';
 import 'models_provider.dart';
@@ -324,5 +325,10 @@ final omniToolExecutorProvider = Provider<OmniToolExecutor?>((ref) {
   final toolModels = <String, String>{
     for (final t in caps.tools) t.definition.name: t.modelId,
   };
-  return OmniToolExecutor(client: client, toolModels: toolModels);
+  final resolution = ref.watch(imageResolutionProvider);
+  return OmniToolExecutor(
+    client: client,
+    toolModels: toolModels,
+    imageBaseResolutionPx: resolution.basePx,
+  );
 });

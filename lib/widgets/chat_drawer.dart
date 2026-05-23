@@ -12,6 +12,7 @@ import '../providers/model_defaults_provider.dart';
 import '../screens/admin_console_screen.dart';
 import '../screens/model_defaults_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/transcription_screen.dart';
 import 'chat_overrides_modal.dart';
 import 'model_selector.dart';
 import 'server_selector.dart';
@@ -105,6 +106,18 @@ class ChatDrawer extends ConsumerWidget {
 
                     const Divider(),
 
+                    ListTile(
+                      leading: const Icon(Icons.mic),
+                      title: const Text(AppMessages.transcription),
+                      subtitle: const Text('Live audio → text'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const TranscriptionScreen()),
+                        );
+                      },
+                    ),
                     ListTile(
                       leading: const Icon(Icons.tune),
                       title: const Text(AppMessages.modelDefaults),

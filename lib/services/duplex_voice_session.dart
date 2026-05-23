@@ -66,7 +66,7 @@ class DuplexVoiceSession {
     required this.history,
     this.capabilities,
     this.executor,
-  }) : _ws = RealtimeAudioSocket(client);
+  }) : _ws = RealtimeAudioSocket.forClient(client);
 
   bool get _toolCallingEnabled =>
       capabilities != null &&
@@ -121,6 +121,11 @@ class DuplexVoiceSession {
       encoder: AudioEncoder.pcm16bits,
       sampleRate: 16000,
       numChannels: 1,
+      // Native hardware AEC + noise suppression on Android. iOS gets the
+      // same via the audio session config done in `voice_mode_provider`.
+      androidConfig: AndroidRecordConfig(
+        audioSource: AndroidAudioSource.voiceCommunication,
+      ),
     ));
     _pcmSub = stream.listen((chunk) {
       _utterancePcm.add(chunk);

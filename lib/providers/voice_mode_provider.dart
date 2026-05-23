@@ -8,9 +8,11 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
+import 'package:vad/vad.dart';
 
 import '../api/realtime/realtime_audio_socket.dart';
 import '../api/types/audio_request.dart';
@@ -21,6 +23,7 @@ import '../omni/agent_loop.dart';
 import '../omni/tool_executor.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/audio_transcription_service.dart';
+import '../services/noise_suppressor.dart';
 import 'chat_history_provider.dart';
 import 'lemonade_client_provider.dart';
 import 'model_defaults_provider.dart';
@@ -71,40 +74,6 @@ class VoiceModeStatus {
 
 const int _amplitudeWindow = 60;
 
-/// Amplitude (0..1) below which we consider the user "silent" for VAD.
-/// Tuned for the dBFS-based normalization in [_amplitudeFromPcm16]: typical
-/// quiet-room noise reads around 0.15-0.25, normal speech is 0.55-0.85.
-const double _silenceThreshold = 0.30;
-
-/// Minimum continuous below-threshold time before we even consider end-of-
-/// utterance. Generous floor so a single beat between words ("um… so…")
-/// doesn't trigger.
-const Duration _minSilenceCutoff = Duration(milliseconds: 2200);
-
-/// Maximum silence we'll allow before committing regardless of how much the
-/// user has been speaking. Hard ceiling so the call doesn't hang forever if
-/// they trail off mid-sentence.
-const Duration _maxSilenceCutoff = Duration(milliseconds: 4500);
-
-/// For longer utterances we grow the silence cutoff: every extra second of
-/// speech buys an extra slice of allowed pause, up to [_maxSilenceCutoff].
-/// Rationale: a one-word question can commit fast, but "yeah … so what I
-/// was thinking about that … is …" gets the breathing room a person needs.
-const double _silenceGrowthRatio = 0.4;
-
-/// Minimum cumulative time above threshold before we'll consider committing.
-/// Prevents committing on a stray cough during the initial connect.
-const Duration _minSpeechDuration = Duration(milliseconds: 400);
-
-Duration _adaptiveSilenceCutoff(Duration spokeFor) {
-  // base + 40% of how long you've been speaking, clamped to [min, max].
-  final extra = (spokeFor.inMilliseconds * _silenceGrowthRatio).round();
-  final total = _minSilenceCutoff.inMilliseconds + extra;
-  if (total <= _minSilenceCutoff.inMilliseconds) return _minSilenceCutoff;
-  if (total >= _maxSilenceCutoff.inMilliseconds) return _maxSilenceCutoff;
-  return Duration(milliseconds: total);
-}
-
 void _log(String message) {
   developer.log(message, name: 'VoiceMode');
   // ignore: avoid_print
@@ -119,6 +88,20 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
   RealtimeAudioSocket? _ws;
   StreamSubscription<RealtimeEvent>? _wsSub;
   AudioPlayer? _player;
+
+  /// Silero VAD. We feed it the PCM stream from `_recorder` and listen on
+  /// its `onSpeechEnd` to drive end-of-utterance commits. This replaces the
+  /// dumb amplitude+timer heuristic — Silero distinguishes speech from
+  /// background noise reliably, so pauses-to-think don't get cut off and a
+  /// truck driving past doesn't trigger a commit.
+  VadHandler? _vadHandler;
+  StreamSubscription<List<double>>? _vadSpeechEndSub;
+  StreamSubscription<dynamic>? _vadSpeechStartSub;
+  StreamSubscription<dynamic>? _vadMisfireSub;
+
+  /// audio_session.configure() is idempotent but only needs to run once per
+  /// process; cache the fact we've done it so subsequent calls skip the work.
+  bool _audioSessionConfigured = false;
 
   /// PCM buffered for the *current* utterance (cleared per commit).
   final List<List<int>> _utterancePcm = <List<int>>[];
@@ -138,9 +121,8 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
 
   String? _asrModel;
 
-  /// VAD bookkeeping for the current utterance.
-  DateTime? _firstVoiceAt;
-  DateTime? _lastVoiceAt;
+  /// Re-entrancy guard so a stray onSpeechEnd during commit doesn't fire
+  /// a second commit. Reset when listening resumes.
   bool _committing = false;
 
   VoiceModeController(this.ref) : super(const VoiceModeStatus());
@@ -212,7 +194,7 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
       final svc = AudioTranscriptionService(client.server);
       final wsPort = await svc.discoverWebSocketPort();
       _log('advertised ws port: $wsPort (will retry on HTTP port if unreachable)');
-      _ws = RealtimeAudioSocket(client);
+      _ws = RealtimeAudioSocket.forClient(client);
       await _ws!.connect(model: asr, port: wsPort);
       _log('ws connected (handshake completed)');
       _wsSub = _ws!.events.listen(_handleAsrEvent);
@@ -256,8 +238,6 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
     _log('_startListening');
     _utterancePcm.clear();
     _accumulatedTranscript = '';
-    _firstVoiceAt = null;
-    _lastVoiceAt = null;
     _committing = false;
     state = state.copyWith(
       phase: VoicePhase.listening,
@@ -265,18 +245,129 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
       amplitudes: const [],
     );
 
+    await _ensureAudioSession();
+
+    // RecordConfig picks the native voice-communication audio source on
+    // Android, which enables hardware AEC + noise suppression at the
+    // platform level (same path FaceTime/Zoom take). On iOS the voice
+    // processing IO unit is engaged by audio_session above.
     final stream = await _recorder!.startStream(const RecordConfig(
       encoder: AudioEncoder.pcm16bits,
       sampleRate: 16000,
       numChannels: 1,
+      androidConfig: AndroidRecordConfig(
+        audioSource: AndroidAudioSource.voiceCommunication,
+      ),
     ));
-    _pcmSub = stream.listen(_handlePcmChunk, onError: (e) {
+
+    // Fan the PCM stream out to both consumers: the WS / commit pipeline
+    // (existing behaviour, still streams live in WS mode) AND the Silero
+    // VAD that will tell us when the user has actually stopped talking.
+    final broadcast = stream.asBroadcastStream();
+    _pcmSub = broadcast.listen(_handlePcmChunk, onError: (e) {
       _log('mic stream error: $e');
       _fail('Mic stream error: $e');
     });
+
+    _vadHandler = VadHandler.create(isDebug: false);
+    _vadSpeechStartSub = _vadHandler!.onSpeechStart.listen((_) {
+      _log('VAD: speech started');
+      // Visual cue only — the live message shows "Listening… speak
+      // naturally" by default; this tightens it so the user sees the
+      // app reacting to their voice.
+      if (state.phase == VoicePhase.listening) {
+        state = state.copyWith(message: 'Hearing you…');
+      }
+    });
+    _vadSpeechEndSub = _vadHandler!.onSpeechEnd.listen((_) {
+      _log('VAD: speech ended → committing');
+      _commitUtterance();
+    });
+    _vadMisfireSub = _vadHandler!.onVADMisfire.listen((_) {
+      // VAD thought it heard speech but the segment was too short to keep.
+      // Just clear the indicator so we don't look stuck on "Hearing you…".
+      _log('VAD: misfire (too short)');
+      if (state.phase == VoicePhase.listening) {
+        state = state.copyWith(message: null);
+      }
+    });
+
+    await _vadHandler!.startListening(
+      // We feed our own PCM (so the recorder above is the single mic
+      // owner). Without this, the package would try to capture audio
+      // itself and we'd have a contention nightmare.
+      audioStream: broadcast,
+      // Slightly looser thresholds: lets quieter speech in, and "real
+      // speech" requires ~3 frames so a stray cough doesn't trigger.
+      positiveSpeechThreshold: 0.45,
+      negativeSpeechThreshold: 0.30,
+      minSpeechFrames: 3,
+      // Allow a longer trailing pause before declaring end-of-speech.
+      // Each frame is 96 ms at the default 1536-sample frame size, so
+      // 24 redemption frames ≈ 2.3 s of silence — natural breathing room.
+      redemptionFrames: 24,
+      model: 'v5',
+    );
+  }
+
+  /// Configure the OS audio session once per process. On iOS this engages
+  /// AVAudioSession voiceChat mode, which routes input through Apple's
+  /// voice-processing IO unit (echo cancellation + noise suppression). On
+  /// Android the equivalent kicks in via `voiceCommunication` audio
+  /// attributes and the recorder's `voiceCommunication` audio source.
+  Future<void> _ensureAudioSession() async {
+    if (_audioSessionConfigured) return;
+    try {
+      final session = await AudioSession.instance;
+      // The `|` operator on AVAudioSessionCategoryOptions is non-const,
+      // so the whole configuration can't be `const`.
+      await session.configure(AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+        avAudioSessionCategoryOptions:
+            AVAudioSessionCategoryOptions.defaultToSpeaker |
+                AVAudioSessionCategoryOptions.allowBluetooth |
+                AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+        avAudioSessionMode: AVAudioSessionMode.voiceChat,
+        avAudioSessionRouteSharingPolicy:
+            AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        androidAudioAttributes: const AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.speech,
+          flags: AndroidAudioFlags.none,
+          usage: AndroidAudioUsage.voiceCommunication,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: false,
+      ));
+      await session.setActive(true);
+      _audioSessionConfigured = true;
+      _log('audio session configured for voice call');
+    } catch (e) {
+      // Non-fatal — the recorder still works, just without OS-level
+      // voice processing on iOS.
+      _log('audio session configure failed (continuing): $e');
+    }
   }
 
   Future<void> _stopMic() async {
+    // Stop Silero first so it doesn't try to process chunks while we're
+    // tearing down the mic underneath it.
+    try {
+      await _vadSpeechStartSub?.cancel();
+      await _vadSpeechEndSub?.cancel();
+      await _vadMisfireSub?.cancel();
+    } catch (_) {}
+    _vadSpeechStartSub = null;
+    _vadSpeechEndSub = null;
+    _vadMisfireSub = null;
+    try {
+      await _vadHandler?.stopListening();
+    } catch (_) {}
+    try {
+      _vadHandler?.dispose();
+    } catch (_) {}
+    _vadHandler = null;
+
     try {
       await _pcmSub?.cancel();
     } catch (_) {}
@@ -288,39 +379,34 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
     } catch (_) {}
   }
 
-  void _handlePcmChunk(Uint8List chunk) {
+  void _handlePcmChunk(Uint8List rawChunk) {
     if (!_callActive) return;
     if (state.phase != VoicePhase.listening) return;
+
+    // Pass through the noise suppressor before anything else looks at the
+    // audio. The default impl is a no-op (zero overhead); when ML denoise
+    // is wired up it kicks in here. Both the WS and the recorded buffer
+    // see the cleaned audio so the server's transcript and the user's
+    // saved chat clip stay consistent.
+    final chunk = NoiseSuppressor.instance.process(rawChunk);
+
     _utterancePcm.add(chunk);
-    // Only stream live to the WS when we actually have one. In HTTP fallback
-    // mode we batch the whole utterance and POST it on commit.
+    // WS mode streams live so the server can emit interim transcript
+    // deltas while the user is still speaking. HTTP mode batches and
+    // POSTs at commit time.
     if (!_httpMode) {
       _ws?.appendAudio(base64Encode(chunk));
     }
 
+    // Drive the waveform UI. End-of-speech detection is now Silero's
+    // job (see `_vadHandler.onSpeechEnd` in `_startListening`), so the
+    // amplitude here is purely cosmetic.
     final amp = _amplitudeFromPcm16(chunk);
     final next = [...state.amplitudes, amp];
     if (next.length > _amplitudeWindow) {
       next.removeRange(0, next.length - _amplitudeWindow);
     }
     state = state.copyWith(amplitudes: next);
-
-    final now = DateTime.now();
-    if (amp >= _silenceThreshold) {
-      _firstVoiceAt ??= now;
-      _lastVoiceAt = now;
-    } else if (_firstVoiceAt != null && _lastVoiceAt != null) {
-      final silentFor = now.difference(_lastVoiceAt!);
-      final spokeFor = _lastVoiceAt!.difference(_firstVoiceAt!);
-      final cutoff = _adaptiveSilenceCutoff(spokeFor);
-      if (silentFor >= cutoff && spokeFor >= _minSpeechDuration) {
-        _log('VAD: end-of-utterance '
-            '(spoke ${spokeFor.inMilliseconds}ms, '
-            'silent ${silentFor.inMilliseconds}ms, '
-            'cutoff ${cutoff.inMilliseconds}ms)');
-        _commitUtterance();
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -701,6 +787,24 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
 
   Future<void> _teardown() async {
     _log('_teardown');
+    // VAD first — same reasoning as `_stopMic`: stop the consumer before
+    // the producer.
+    try {
+      await _vadSpeechStartSub?.cancel();
+      await _vadSpeechEndSub?.cancel();
+      await _vadMisfireSub?.cancel();
+    } catch (_) {}
+    _vadSpeechStartSub = null;
+    _vadSpeechEndSub = null;
+    _vadMisfireSub = null;
+    try {
+      await _vadHandler?.stopListening();
+    } catch (_) {}
+    try {
+      _vadHandler?.dispose();
+    } catch (_) {}
+    _vadHandler = null;
+
     try {
       await _pcmSub?.cancel();
     } catch (_) {}
