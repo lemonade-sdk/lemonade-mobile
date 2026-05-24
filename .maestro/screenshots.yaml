@@ -1,77 +1,162 @@
 # Maestro screenshot flow for App Store / Play Store submissions.
 #
-# Each `takeScreenshot:` writes a PNG into the directory Maestro is invoked
-# with (`--debug-output`). The GitHub Actions workflow runs this flow once
-# per device profile, so the output dir winds up with one PNG per device
-# per screen — exactly what fastlane deliver / supply expects when we
-# wire those up later.
+# `takeScreenshot: <name>` writes `<name>.png` to Maestro's current
+# working directory. The CI workflow `cd`s into out/<device>/ first,
+# so this flow just produces files named per screen — the directory
+# layout is handled outside.
 #
-# Extending: copy any block below and change the navigation steps. The
-# `takeScreenshot:` name becomes the PNG filename (no extension needed).
-#
-# IMPORTANT — server dependency:
-# The chat / OmniRouter / model-picker screens need a reachable Lemonade
-# server. For CI we either (a) stick to screens that work without one
-# (Settings, Servers list, empty Chat), or (b) point at a mock/local
-# server we spin up in the workflow. Today this flow captures the
-# screens that work standalone. Expand as you add fixture data.
+# Server-data caveat: many screens look much better with a connected
+# Lemonade server (models populated, admin console dashboards
+# showing real data). Without one, what reviewers see is the
+# empty-state version. Both still ship — empty states are what a
+# new user experiences anyway.
 
-# appId is supplied by the runner via `-e APP_ID=…` (CI passes the iOS
-# bundle id on macOS jobs and the Android applicationId on Linux jobs).
-# These differ for this app: `lemonade.mobile` on iOS,
-# `com.lemonade.mobile.chat.ai` on Android.
 appId: ${APP_ID}
 ---
-# 01 — App launches into the Chat screen (empty state if no server).
+# 01 — Empty Chat
 - launchApp:
     clearState: true
 - waitForAnimationToEnd:
     timeout: 5000
 - takeScreenshot: 01_chat_empty
 
-# 02 — Open the drawer (left menu) so reviewers see chat history + folder UX.
+# 02 — Drawer open
 - tapOn:
     id: "menu_button"
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: 02_drawer
+
+# 03 — Model defaults (in the drawer's lower section)
+- tapOn:
+    text: "Model defaults"
     optional: true
+- waitForAnimationToEnd:
+    timeout: 2000
 - runFlow:
     when:
-      visible: "Conversations"
+      visible: "Model defaults"
     commands:
-      - takeScreenshot: 02_drawer
+      - takeScreenshot: 03_model_defaults
       - back
 
-# 03 — Settings screen (theme picker + everything).
+# 04 — Transcription tool (from drawer)
 - tapOn:
     id: "menu_button"
     optional: true
+- waitForAnimationToEnd:
+    timeout: 1500
+- tapOn:
+    text: "Transcription"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 2000
+- runFlow:
+    when:
+      visible: "Transcription"
+    commands:
+      - takeScreenshot: 04_transcription
+      - back
+
+# 05 — Settings
+- tapOn:
+    id: "menu_button"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 1500
 - tapOn:
     text: "Settings"
     optional: true
 - waitForAnimationToEnd:
-    timeout: 3000
+    timeout: 2000
+# 05 — Settings screenshot
+- takeScreenshot: 05_settings
+
+# 06 — Servers screen (from Settings → Manage servers)
+- tapOn:
+    text: "Manage servers"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 2000
 - runFlow:
     when:
-      visible: "Settings"
+      visible: "Manage servers"
     commands:
-      - takeScreenshot: 03_settings
+      - takeScreenshot: 06_servers
       - back
 
-# 04 — Lemonade Omni (the omni router screen).
-- tapOn:
-    id: "menu_button"
-    optional: true
-- tapOn:
-    text: "Settings"
-    optional: true
+# 07 — Lemonade Omni
 - tapOn:
     text: "Lemonade Omni"
     optional: true
 - waitForAnimationToEnd:
-    timeout: 3000
+    timeout: 2000
 - runFlow:
     when:
       visible: "Lemonade Omni"
     commands:
-      - takeScreenshot: 04_omni_router
+      - takeScreenshot: 07_omni_router
       - back
+
+# 08 — Settings with Admin Mode enabled (reveals "Open Admin Console")
+- tapOn:
+    text: "Admin Mode"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 1500
+- takeScreenshot: 08_settings_admin_on
+
+# 09–13 — Admin Console tabs
+- tapOn:
+    text: "Open Admin Console"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+
+# Dashboard is the default tab on entry.
+- runFlow:
+    when:
+      visible: "Dashboard"
+    commands:
+      - takeScreenshot: 09_admin_dashboard
+      - tapOn:
+          text: "Models"
+          optional: true
+      - waitForAnimationToEnd:
+          timeout: 1500
+      - takeScreenshot: 10_admin_models
+      - tapOn:
+          text: "Backends"
+          optional: true
+      - waitForAnimationToEnd:
+          timeout: 1500
+      - takeScreenshot: 11_admin_backends
+      - tapOn:
+          text: "System"
+          optional: true
+      - waitForAnimationToEnd:
+          timeout: 1500
+      - takeScreenshot: 12_admin_system
+      - tapOn:
+          text: "Logs"
+          optional: true
+      - waitForAnimationToEnd:
+          timeout: 1500
+      - takeScreenshot: 13_admin_logs
+      - back
+
+# Pop Settings to return to chat for the next capture.
+- back
+
+# 14 — Talk screen (full-screen voice call UI)
+- tapOn:
+    id: "talk_button"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 3000
+- runFlow:
+    when:
+      visible: "Talk"
+    commands:
+      - takeScreenshot: 14_talk_screen
       - back

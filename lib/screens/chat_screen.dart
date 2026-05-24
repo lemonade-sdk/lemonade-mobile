@@ -66,11 +66,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
         actions: [
           const ModelSelector(compact: true),
-          IconButton(
-            icon: const Icon(Icons.call),
-            tooltip: 'Talk',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const TalkScreen()),
+          Semantics(
+            identifier: 'talk_button',
+            child: IconButton(
+              icon: const Icon(Icons.call),
+              tooltip: 'Talk',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const TalkScreen()),
+              ),
             ),
           ),
           IconButton(
