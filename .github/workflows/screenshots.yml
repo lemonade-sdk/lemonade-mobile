@@ -168,11 +168,18 @@ jobs:
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
       - name: Run Maestro flow
+        # Maestro's `takeScreenshot: <name>` writes <name>.png to the
+        # *current working directory*, NOT into `--debug-output` (which
+        # is reserved for Maestro's own diagnostic bundles). So we cd
+        # into the per-device output dir first and run Maestro from
+        # there with a relative path back to the flow file. Without
+        # this, PNGs land at the repo root and the upload glob matches
+        # nothing.
         run: |
           mkdir -p out/${{ matrix.device.label }}
-          maestro --udid "$UDID" test .maestro/screenshots.yaml \
-            -e APP_ID=lemonade.mobile \
-            --debug-output out/${{ matrix.device.label }}
+          cd out/${{ matrix.device.label }}
+          "$HOME/.maestro/bin/maestro" --udid "$UDID" test ../../.maestro/screenshots.yaml \
+            -e APP_ID=lemonade.mobile
 
       - name: Upload screenshots
         if: always()
@@ -227,18 +234,22 @@ jobs:
           # The emulator-runner action executes every line of `script:`
           # as its own `sh -c` invocation. Two consequences we have to
           # work around:
-          #   1. State that LIVES in a shell (e.g. `export PATH=…`) does
-          #      not survive into the next line — so we call Maestro by
-          #      its absolute install path, no PATH dependency.
-          #   2. Backslash line-continuations (`\<newline>`) DO NOT join
-          #      lines, because each line is its own shell. A trailing
-          #      `\` becomes a literal argument. The Maestro invocation
-          #      therefore has to fit on ONE physical line.
+          #   1. State that lives in a shell (cwd from `cd`, PATH from
+          #      `export`) does NOT survive into the next line. We chain
+          #      `cd … && maestro …` so cd + run share one shell, and
+          #      we call Maestro by its absolute install path.
+          #   2. Backslash line-continuations don't join lines — each
+          #      `\<newline>` would leave a literal `\` as a Maestro
+          #      argument. The whole Maestro invocation has to fit on
+          #      ONE physical line.
+          # Why we cd at all: Maestro's `takeScreenshot: <name>` writes
+          # <name>.png to the current working directory, NOT into the
+          # `--debug-output` path. So we cd into out/<device>/ first.
           script: |
             adb install -r apk/app-debug.apk
             curl -fsSL https://get.maestro.mobile.dev | bash
             mkdir -p out/${{ matrix.device.label }}
-            "$HOME/.maestro/bin/maestro" test .maestro/screenshots.yaml -e APP_ID=com.lemonade.mobile.chat.ai --debug-output out/${{ matrix.device.label }}
+            cd out/${{ matrix.device.label }} && "$HOME/.maestro/bin/maestro" test ../../.maestro/screenshots.yaml -e APP_ID=com.lemonade.mobile.chat.ai
 
       - name: Upload screenshots
         if: always()
