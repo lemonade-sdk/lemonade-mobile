@@ -230,17 +230,19 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.device.api }}
-          target: google_apis
+          # `default` instead of `google_apis`: no Play Services and no
+          # Package Verifier, which is what was timing out on Maestro's
+          # driver-APK install on the Nexus 10 profile. Our app doesn't
+          # need any Google services for screenshot testing, so the
+          # smaller image is a net win — faster boot too. Trying to
+          # patch around the verifier with adb settings was both
+          # incomplete (still failed on Nexus 10) and regressed Pixel 7.
+          target: default
           arch: x86_64
           profile: ${{ matrix.device.profile }}
           force-avd-creation: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          # Bump AVD RAM. The default (~2 GB) plus a heavy google_apis
-          # image is enough that the larger tablet profile times out
-          # PackageManager's integrity verifier when Maestro side-loads
-          # its driver APK. 4 GB gives plenty of headroom.
-          ram-size: 4096M
           # The emulator-runner action executes every line of `script:`
           # as its own `sh -c` invocation. Two consequences we have to
           # work around:
@@ -256,8 +258,6 @@ jobs:
           # <name>.png to the current working directory, NOT into the
           # `--debug-output` path. So we cd into out/<device>/ first.
           script: |
-            adb shell settings put global verifier_verify_adb_installs 0
-            adb shell settings put global package_verifier_enable 0
             adb install -r apk/app-debug.apk
             curl -fsSL https://get.maestro.mobile.dev | bash
             mkdir -p out/${{ matrix.device.label }}
