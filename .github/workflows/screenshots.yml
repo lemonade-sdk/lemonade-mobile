@@ -10,9 +10,14 @@ name: Store Screenshots
 #   • tag push (`v*`) — your "ship a release" moment
 #   • workflow_dispatch — the "Run workflow" button
 #
-# Outputs: one PNG-only artifact per (platform, device). Each PNG is
-# at the simulator/emulator's native resolution → drop straight into
-# App Store Connect / Play Console.
+# Outputs:
+#   • one PNG-only artifact per (platform, device), available on the
+#     workflow run page. Each PNG is at the simulator/emulator's
+#     native resolution → drop straight into App Store Connect / Play
+#     Console.
+#   • On tag pushes only, ALSO bundles every per-device artifact into
+#     a single `photos.zip` and attaches it to the GitHub Release for
+#     that tag (see `release-photos` job at the bottom).
 
 on:
   push:
@@ -257,3 +262,62 @@ jobs:
         with:
           name: android-${{ matrix.device.label }}
           path: out/${{ matrix.device.label }}/**/*.png
+
+  # ──────────────────────────────────────────────────────────────────
+  # Bundle every per-device PNG artifact into one zip and attach it
+  # to the GitHub Release for this tag. Tag-push only — manual
+  # workflow_dispatch runs skip this (there's no tag to release
+  # against).
+  # ──────────────────────────────────────────────────────────────────
+
+  release-photos:
+    name: Attach photos.zip to release
+    needs: [ios, android]
+    # `always()` so a single failing device profile doesn't block the
+    # release; we still ship whatever PNGs we managed to capture.
+    if: always() && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download iOS screenshot artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: photos
+          pattern: ios-*
+
+      - name: Download Android screenshot artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: photos
+          pattern: android-*
+
+      - name: Drop build artifacts + bundle photos.zip
+        run: |
+          # The `ios-*` and `android-*` glob patterns above also catch
+          # the per-platform build artifacts (`ios-sim-app`, `android-apk`)
+          # since they share the same prefix. Strip those so the release
+          # zip is screenshots only.
+          rm -rf photos/ios-sim-app photos/android-apk
+
+          # Bail loudly if there are no screenshots at all — better
+          # than silently shipping an empty zip.
+          if [ -z "$(ls -A photos 2>/dev/null)" ]; then
+            echo "No screenshot artifacts to bundle." >&2
+            exit 1
+          fi
+
+          # Each artifact downloaded into its own subdirectory, so the
+          # zip layout is: photos.zip → ios-iphone-6.5/01_chat_empty.png,
+          # android-phone/01_chat_empty.png, etc. Reviewers can open one
+          # file and browse every device.
+          cd photos
+          zip -r ../photos.zip . -x "*.DS_Store"
+          ls -lh ../photos.zip
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Will create the release for this tag if it doesn't exist
+          # yet, or attach the asset to an existing release if it does.
+          files: photos.zip
