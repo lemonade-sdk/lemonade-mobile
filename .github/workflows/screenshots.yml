@@ -224,18 +224,21 @@ jobs:
           force-avd-creation: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
+          # The emulator-runner action executes every line of `script:`
+          # as its own `sh -c` invocation. Two consequences we have to
+          # work around:
+          #   1. State that LIVES in a shell (e.g. `export PATH=…`) does
+          #      not survive into the next line — so we call Maestro by
+          #      its absolute install path, no PATH dependency.
+          #   2. Backslash line-continuations (`\<newline>`) DO NOT join
+          #      lines, because each line is its own shell. A trailing
+          #      `\` becomes a literal argument. The Maestro invocation
+          #      therefore has to fit on ONE physical line.
           script: |
             adb install -r apk/app-debug.apk
             curl -fsSL https://get.maestro.mobile.dev | bash
             mkdir -p out/${{ matrix.device.label }}
-            # The emulator-runner action runs every line of this `script:`
-            # as its own `sh -c`, so `export PATH=…` does NOT persist into
-            # the next line. Use the absolute path Maestro's installer
-            # writes to ($HOME/.maestro/bin/maestro) instead of relying on
-            # PATH.
-            "$HOME/.maestro/bin/maestro" test .maestro/screenshots.yaml \
-              -e APP_ID=com.lemonade.mobile.chat.ai \
-              --debug-output out/${{ matrix.device.label }}
+            "$HOME/.maestro/bin/maestro" test .maestro/screenshots.yaml -e APP_ID=com.lemonade.mobile.chat.ai --debug-output out/${{ matrix.device.label }}
 
       - name: Upload screenshots
         if: always()
