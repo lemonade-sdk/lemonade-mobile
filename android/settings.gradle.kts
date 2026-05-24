@@ -18,7 +18,10 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "8.7.3" apply false
+    // Bumped from 8.7.3 — `androidx.activity:activity-ktx:1.12.4` and the
+    // matching core / navigation libs now require AGP ≥ 8.9.1. Without
+    // this the build fails at `:app:checkDebugAarMetadata`.
+    id("com.android.application") version "8.9.2" apply false
     id("org.jetbrains.kotlin.android") version "2.1.0" apply false
 }
 

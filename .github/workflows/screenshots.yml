@@ -1,19 +1,18 @@
 name: Store Screenshots
 
-# Snapshots every screen the Maestro flow visits, across the iOS + Android
-# device sizes Apple and Google require for store listings. Runs:
-#   • on a tag push (your "ship a release" moment), or
-#   • manually via the workflow_dispatch button.
-# Public repo → all runner minutes (including macOS) are free.
+# Build once per platform, then fan out to one Maestro screenshot job
+# per device profile. The screenshot jobs are pure
+# "install-app-and-tap-around" and re-use the artifact produced by
+# the build job — way faster (and cheaper, especially on macOS-14
+# runners) than running `flutter build` 7 separate times.
 #
-# Outputs:
-#   • One artifact per device profile, containing the PNGs Maestro captured.
-#   • Each PNG is at the simulator/emulator's native resolution, which is
-#     identical to what App Store Connect and Play Console want.
+# Triggers:
+#   • tag push (`v*`) — your "ship a release" moment
+#   • workflow_dispatch — the "Run workflow" button
 #
-# To wire fastlane deliver / supply on top of this, add a downstream job
-# that downloads these artifacts and uploads them. Left intentionally out
-# for now so the workflow's first run is safe.
+# Outputs: one PNG-only artifact per (platform, device). Each PNG is
+# at the simulator/emulator's native resolution → drop straight into
+# App Store Connect / Play Console.
 
 on:
   push:
@@ -22,25 +21,47 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  # -------------------------------------------------------------------------
-  # iOS — iPhone 6.5" / 5.5" + iPad Pro 12.9" / 11"
-  # -------------------------------------------------------------------------
-  ios:
-    name: iOS · ${{ matrix.device.label }}
+  # ──────────────────────────────────────────────────────────────────
+  # Single-shot builds. Producer jobs for the screenshot matrices.
+  # ──────────────────────────────────────────────────────────────────
+
+  build-android:
+    name: Build · Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Codegen
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - run: flutter build apk --debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 1
+          if-no-files-found: error
+
+  build-ios:
+    name: Build · iOS simulator app
     runs-on: macos-14
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        device:
-          - { id: "iPhone 15 Pro Max",           label: "iphone-6.5"   }
-          # iPhone 8 Plus was dropped from current Xcode simulators —
-          # SE (3rd gen) is the small iPhone Apple still ships, and the
-          # App Store now accepts 6.5" screenshots for the 5.5" slot
-          # anyway, so this matrix entry is mostly belt-and-suspenders.
-          - { id: "iPhone SE (3rd generation)",  label: "iphone-se"    }
-          - { id: "iPad Pro (12.9-inch) (6th generation)", label: "ipad-12.9" }
-          - { id: "iPad Pro (11-inch) (4th generation)",   label: "ipad-11"   }
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -53,14 +74,61 @@ jobs:
       - name: Disable Flutter SPM (force CocoaPods)
         run: flutter config --no-enable-swift-package-manager
 
-      - name: pub get
-        run: flutter pub get
+      - run: flutter pub get
 
-      - name: build_runner
+      - name: Codegen
         run: dart run build_runner build --delete-conflicting-outputs
 
-      - name: Build iOS simulator app
-        run: flutter build ios --simulator --debug --no-codesign
+      - run: flutter build ios --simulator --debug --no-codesign
+
+      - name: Locate built .app
+        id: locate
+        run: |
+          APP=$(find build/ios/iphonesimulator -name "*.app" -type d | head -n1)
+          if [ -z "$APP" ]; then
+            echo "No .app found under build/ios/iphonesimulator" >&2
+            exit 1
+          fi
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-sim-app
+          # actions/upload-artifact handles directories transparently
+          # (zips them on the way up, unzips on download).
+          path: ${{ steps.locate.outputs.app }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────
+  # Screenshot fan-out. One job per device profile per platform.
+  # ──────────────────────────────────────────────────────────────────
+
+  ios:
+    name: iOS · ${{ matrix.device.label }}
+    needs: build-ios
+    runs-on: macos-14
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - { id: "iPhone 15 Pro Max",                       label: "iphone-6.5"  }
+          # 8 Plus was dropped from current Xcode simulators — SE 3rd
+          # gen is the small iPhone Apple still ships, and the App
+          # Store accepts 6.5" screenshots in the 5.5" slot anyway.
+          - { id: "iPhone SE (3rd generation)",              label: "iphone-se"   }
+          - { id: "iPad Pro (12.9-inch) (6th generation)",   label: "ipad-12.9"   }
+          - { id: "iPad Pro (11-inch) (4th generation)",     label: "ipad-11"     }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download .app bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-sim-app
+          path: app-bundle
 
       - name: Boot simulator
         run: |
@@ -74,9 +142,14 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
 
-      - name: Install app on simulator
+      - name: Install app
         run: |
-          APP=$(find build/ios/iphonesimulator -name "*.app" -type d | head -n1)
+          APP=$(find app-bundle -maxdepth 4 -name "*.app" -type d | head -n1)
+          if [ -z "$APP" ]; then
+            echo "No .app inside the downloaded artifact:" >&2
+            find app-bundle | head >&2
+            exit 1
+          fi
           xcrun simctl install "$UDID" "$APP"
 
       - name: Install Maestro
@@ -98,20 +171,18 @@ jobs:
           name: ios-${{ matrix.device.label }}
           path: out/${{ matrix.device.label }}/**/*.png
 
-  # -------------------------------------------------------------------------
-  # Android — phone + 7" tablet + 10" tablet
-  # -------------------------------------------------------------------------
   android:
     name: Android · ${{ matrix.device.label }}
+    needs: build-android
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         device:
-          - { profile: "pixel_7",        api: 34, label: "phone"      }
-          - { profile: "Nexus 7",        api: 34, label: "tablet-7"   }
-          - { profile: "Nexus 10",       api: 34, label: "tablet-10"  }
+          - { profile: "pixel_7",  api: 34, label: "phone"      }
+          - { profile: "Nexus 7",  api: 34, label: "tablet-7"   }
+          - { profile: "Nexus 10", api: 34, label: "tablet-10"  }
     steps:
       - uses: actions/checkout@v4
 
@@ -127,20 +198,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Flutter
-        uses: subosito/flutter-action@v2
+      - name: Download APK
+        uses: actions/download-artifact@v4
         with:
-          channel: stable
-          cache: true
-
-      - name: pub get
-        run: flutter pub get
-
-      - name: build_runner
-        run: dart run build_runner build --delete-conflicting-outputs
-
-      - name: Build APK
-        run: flutter build apk --debug
+          name: android-apk
+          path: apk
 
       - name: Run emulator + Maestro
         uses: reactivecircus/android-emulator-runner@v2
@@ -153,7 +215,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: |
-            adb install -r build/app/outputs/flutter-apk/app-debug.apk
+            adb install -r apk/app-debug.apk
             curl -fsSL https://get.maestro.mobile.dev | bash
             export PATH="$HOME/.maestro/bin:$PATH"
             mkdir -p out/${{ matrix.device.label }}
