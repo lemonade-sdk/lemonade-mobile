@@ -53,9 +53,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       appBar: AppBar(
         title: const Text('Lemonade Chat'),
         leading: Builder(
-          builder: (context) => IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () => Scaffold.of(context).openDrawer(),
+          builder: (context) => Semantics(
+            // Stable identifier so the Maestro screenshot flow can find
+            // the drawer button regardless of locale / icon changes.
+            // Has no visible UI effect.
+            identifier: 'menu_button',
+            child: IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => Scaffold.of(context).openDrawer(),
+            ),
           ),
         ),
         actions: [
