@@ -34,7 +34,11 @@ jobs:
       matrix:
         device:
           - { id: "iPhone 15 Pro Max",           label: "iphone-6.5"   }
-          - { id: "iPhone 8 Plus",               label: "iphone-5.5"   }
+          # iPhone 8 Plus was dropped from current Xcode simulators —
+          # SE (3rd gen) is the small iPhone Apple still ships, and the
+          # App Store now accepts 6.5" screenshots for the 5.5" slot
+          # anyway, so this matrix entry is mostly belt-and-suspenders.
+          - { id: "iPhone SE (3rd generation)",  label: "iphone-se"    }
           - { id: "iPad Pro (12.9-inch) (6th generation)", label: "ipad-12.9" }
           - { id: "iPad Pro (11-inch) (4th generation)",   label: "ipad-11"   }
     steps:

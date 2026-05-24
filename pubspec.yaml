@@ -23,8 +23,13 @@ dependencies:
 
   # Persistence
   shared_preferences: ^2.0.0          # legacy keys + simple scalar prefs
-  isar: ^3.1.0+1                      # primary database (chats, messages, attachments, folders, transcriptions)
-  isar_flutter_libs: ^3.1.0+1
+  # Community fork of Isar 3 — the original Isar was abandoned in 2023
+  # before the Android 15 / Google Play 16KB page-size requirement, so
+  # `isar_flutter_libs` 3.1.0+1's prebuilt .so files fail the Play
+  # alignment check. `isar_community` is a same-API drop-in fork with
+  # 16KB-aligned binaries.
+  isar_community: ^3.3.0
+  isar_community_flutter_libs: ^3.3.0
   flutter_secure_storage: ^9.0.0      # API keys / auth tokens
   path: ^1.8.0
 
@@ -74,7 +79,7 @@ dev_dependencies:
   flutter_launcher_icons: ^0.13.1
 
   # Isar code generation
-  isar_generator: ^3.1.0+1
+  isar_community_generator: ^3.3.0
   build_runner: ^2.4.0
 
   # The "flutter_lints" package below contains a set of recommended lints to

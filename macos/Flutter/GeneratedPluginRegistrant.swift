@@ -10,7 +10,7 @@ import file_picker
 import file_selector_macos
 import flutter_secure_storage_macos
 import gal
-import isar_flutter_libs
+import isar_community_flutter_libs
 import just_audio
 import path_provider_foundation
 import record_macos
