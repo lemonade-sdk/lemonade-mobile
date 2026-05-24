@@ -81,23 +81,27 @@ jobs:
 
       - run: flutter build ios --simulator --debug --no-codesign
 
-      - name: Locate built .app
-        id: locate
+      - name: Archive .app bundle
+        # upload-artifact with `path: …/Runner.app` uploads the
+        # *contents* of the .app, not the .app directory itself, so the
+        # downloader can't find a `*.app` directory to install. Pre-zip
+        # with `ditto --keepParent` so the wrapper survives the round
+        # trip; unzip on the consumer side.
         run: |
           APP=$(find build/ios/iphonesimulator -name "*.app" -type d | head -n1)
           if [ -z "$APP" ]; then
             echo "No .app found under build/ios/iphonesimulator" >&2
+            find build/ios -maxdepth 4 >&2
             exit 1
           fi
-          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" sim-app.zip
+          ls -l sim-app.zip
 
       - name: Upload .app bundle
         uses: actions/upload-artifact@v4
         with:
           name: ios-sim-app
-          # actions/upload-artifact handles directories transparently
-          # (zips them on the way up, unzips on download).
-          path: ${{ steps.locate.outputs.app }}
+          path: sim-app.zip
           retention-days: 1
           if-no-files-found: error
 
@@ -130,6 +134,19 @@ jobs:
           name: ios-sim-app
           path: app-bundle
 
+      - name: Unpack .app
+        run: |
+          # build-ios uploads `sim-app.zip` (made with `ditto --keepParent`),
+          # so unzipping restores the Runner.app/ directory wrapper.
+          ditto -x -k app-bundle/sim-app.zip app-unpacked/
+          APP=$(find app-unpacked -maxdepth 3 -name "*.app" -type d | head -n1)
+          if [ -z "$APP" ]; then
+            echo "No .app inside the downloaded artifact:" >&2
+            find app-unpacked | head >&2
+            exit 1
+          fi
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
       - name: Boot simulator
         run: |
           UDID=$(xcrun simctl list devices available -j | jq -r --arg n "${{ matrix.device.id }}" '.devices | to_entries | map(.value[] | select(.name == $n)) | .[0].udid')
@@ -143,14 +160,7 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
 
       - name: Install app
-        run: |
-          APP=$(find app-bundle -maxdepth 4 -name "*.app" -type d | head -n1)
-          if [ -z "$APP" ]; then
-            echo "No .app inside the downloaded artifact:" >&2
-            find app-bundle | head >&2
-            exit 1
-          fi
-          xcrun simctl install "$UDID" "$APP"
+        run: xcrun simctl install "$UDID" "$APP_PATH"
 
       - name: Install Maestro
         run: |
@@ -217,9 +227,13 @@ jobs:
           script: |
             adb install -r apk/app-debug.apk
             curl -fsSL https://get.maestro.mobile.dev | bash
-            export PATH="$HOME/.maestro/bin:$PATH"
             mkdir -p out/${{ matrix.device.label }}
-            maestro test .maestro/screenshots.yaml \
+            # The emulator-runner action runs every line of this `script:`
+            # as its own `sh -c`, so `export PATH=…` does NOT persist into
+            # the next line. Use the absolute path Maestro's installer
+            # writes to ($HOME/.maestro/bin/maestro) instead of relying on
+            # PATH.
+            "$HOME/.maestro/bin/maestro" test .maestro/screenshots.yaml \
               -e APP_ID=com.lemonade.mobile.chat.ai \
               --debug-output out/${{ matrix.device.label }}
 
