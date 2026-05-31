@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
 
 import '../api/nexus/nexus_account_models.dart';
 
@@ -19,6 +20,21 @@ class SecureKeyStore {
   );
 
   static String _key(String serverName) => 'apikey/$serverName';
+
+  // ── Device identity ─────────────────────────────────────────────────
+  // A stable, opaque per-install id used as the Nexus token ROTATION KEY
+  // (per-device token minting). Generated once on first use and reused on every
+  // sign-in; never regenerated on logout/login. Persists across logout (it is
+  // NOT cleared by clearAccount).
+  static const _deviceIdKey = 'nexus/device_id';
+
+  static Future<String> deviceId() async {
+    final existing = await _store.read(key: _deviceIdKey);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final id = const Uuid().v4();
+    await _store.write(key: _deviceIdKey, value: id);
+    return id;
+  }
 
   // ── Nexus account credential ────────────────────────────────────────
   // The subscription bearer token + a cached copy of the user/client JSON so

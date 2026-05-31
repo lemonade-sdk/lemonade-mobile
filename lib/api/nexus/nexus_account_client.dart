@@ -26,6 +26,11 @@ import 'nexus_account_models.dart';
 /// The managed subscription gateway. Hardcoded: this is not a local AI server.
 const String kNexusGatewayBaseUrl = 'https://api.nexus-projects.ai';
 
+/// Stable app name reported to the gateway as `app_name`. Part of the router's
+/// per-device token rotation bucket (user, device_id, app_name) and shown in the
+/// account's tokens UI. Keep it constant — changing it re-buckets tokens.
+const String kNexusAppName = 'Omni AI Chat';
+
 class NexusAccountClient {
   /// Account bearer token (`nxr_<prefix>_<secret>`). Null for unauthenticated
   /// calls (register / login / plans).
@@ -73,29 +78,64 @@ class NexusAccountClient {
 
   /// POST /auth/register → AuthResult (token + user + client). 400 surfaces the
   /// server's validation messages (e.g. weak password) via ServerException.
+  ///
+  /// The optional [deviceId]/[deviceName]/[appName] enable per-device tokens
+  /// (multiple devices stay signed in at once). Omitting them is the legacy
+  /// single-token behavior.
   Future<AuthResult> register({
     required String clientName,
     required String email,
     required String password,
+    String? deviceId,
+    String? deviceName,
+    String? appName,
   }) async {
     final json = await _postJson(_uri('/auth/register'), {
       'client_name': clientName,
       'email': email,
       'password': password,
+      ..._deviceFields(deviceId, deviceName, appName),
     });
     return AuthResult.fromJson(json);
   }
 
   /// POST /auth/login → AuthResult. 401 → UnauthorizedException.
+  ///
+  /// See [register] for the optional per-device fields. Re-logging in with the
+  /// same [deviceId]+[appName] rotates only this device's token.
   Future<AuthResult> login({
     required String email,
     required String password,
+    String? deviceId,
+    String? deviceName,
+    String? appName,
   }) async {
     final json = await _postJson(_uri('/auth/login'), {
       'email': email,
       'password': password,
+      ..._deviceFields(deviceId, deviceName, appName),
     });
     return AuthResult.fromJson(json);
+  }
+
+  /// snake_case device identity fields, omitting any that are blank (≤200 chars
+  /// each per the router contract).
+  Map<String, String> _deviceFields(
+      String? deviceId, String? deviceName, String? appName) {
+    String? clip(String? v) {
+      final t = v?.trim();
+      if (t == null || t.isEmpty) return null;
+      return t.length > 200 ? t.substring(0, 200) : t;
+    }
+
+    final id = clip(deviceId);
+    final name = clip(deviceName);
+    final app = clip(appName);
+    return {
+      if (id != null) 'device_id': id,
+      if (name != null) 'device_name': name,
+      if (app != null) 'app_name': app,
+    };
   }
 
   // ── Billing / Plans ─────────────────────────────────────────────────

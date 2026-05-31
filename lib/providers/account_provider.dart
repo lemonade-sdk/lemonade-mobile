@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -74,11 +76,18 @@ class _AuthNotifier extends StateNotifier<AuthState> {
   }
 
   /// Sign in. If this device already holds a Nexus app token, reuse it instead
-  /// of minting a new one; only mint (POST /auth/login) when none exists.
+  /// of minting a new one; only mint (POST /auth/login) when none exists. When
+  /// minting, sends this device's identity so the token is per-device.
   Future<void> login({required String email, required String password}) async {
     if (await _reuseExistingToken()) return;
-    final result =
-        await NexusAccountClient().login(email: email, password: password);
+    final device = await _deviceContext();
+    final result = await NexusAccountClient().login(
+      email: email,
+      password: password,
+      deviceId: device.id,
+      deviceName: device.name,
+      appName: kNexusAppName,
+    );
     await _persist(result);
   }
 
@@ -89,9 +98,34 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     required String password,
   }) async {
     if (await _reuseExistingToken()) return;
-    final result = await NexusAccountClient()
-        .register(clientName: clientName, email: email, password: password);
+    final device = await _deviceContext();
+    final result = await NexusAccountClient().register(
+      clientName: clientName,
+      email: email,
+      password: password,
+      deviceId: device.id,
+      deviceName: device.name,
+      appName: kNexusAppName,
+    );
     await _persist(result);
+  }
+
+  /// The stable per-device id (rotation key) + a friendly display label. The id
+  /// is generated once and persisted; the label is best-effort.
+  Future<({String id, String name})> _deviceContext() async {
+    final id = await SecureKeyStore.deviceId();
+    String name = '';
+    try {
+      name = Platform.localHostname;
+    } catch (_) {
+      // localHostname can throw on some platforms — fall back to the OS name.
+    }
+    if (name.isEmpty || name == 'localhost') {
+      try {
+        name = Platform.operatingSystem;
+      } catch (_) {}
+    }
+    return (id: id, name: name);
   }
 
   /// If a Nexus app token is already stored on this device, adopt it (and the
