@@ -10,6 +10,12 @@ class SecureKeyStore {
   static const _store = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+    // macOS: use the legacy file-based keychain. The modern data-protection
+    // keychain requires a keychain-access-groups entitlement that Flutter's
+    // ad-hoc-signed debug builds can't carry, which fails with
+    // errSecMissingEntitlement (-34018). The legacy keychain needs no
+    // entitlement and works in both debug and signed release builds.
+    mOptions: MacOsOptions(useDataProtectionKeyChain: false),
   );
 
   static String _key(String serverName) => 'apikey/$serverName';

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/exceptions.dart';
@@ -55,15 +56,15 @@ class _AuthNotifier extends StateNotifier<AuthState> {
       final token = await SecureKeyStore.readAccountToken();
       final identity = await SecureKeyStore.readAccountIdentity();
       if (token != null && token.isNotEmpty) {
-        // The subscription server itself rehydrates from the DB on its own
-        // (ServersNotifier loads it + its token from secure storage), so no
-        // re-provisioning is needed here.
         state = AuthState(
           token: token,
           user: identity?.user,
           client: identity?.client,
           busy: false,
         );
+        // Make sure the subscription server is present in the list on every
+        // cold start (it may not have been added, or may have been removed).
+        await _provisionSubscriptionServer(token, select: false);
         return;
       }
     } catch (_) {
@@ -72,22 +73,47 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthState(busy: false);
   }
 
-  /// POST /auth/login, persist token + identity, provision the routed server.
+  /// Sign in. If this device already holds a Nexus app token, reuse it instead
+  /// of minting a new one; only mint (POST /auth/login) when none exists.
   Future<void> login({required String email, required String password}) async {
+    if (await _reuseExistingToken()) return;
     final result =
         await NexusAccountClient().login(email: email, password: password);
     await _persist(result);
   }
 
-  /// POST /auth/register, then same as [login].
+  /// Register. Same reuse-then-mint rule as [login].
   Future<void> register({
     required String clientName,
     required String email,
     required String password,
   }) async {
+    if (await _reuseExistingToken()) return;
     final result = await NexusAccountClient()
         .register(clientName: clientName, email: email, password: password);
     await _persist(result);
+  }
+
+  /// If a Nexus app token is already stored on this device, adopt it (and the
+  /// cached identity) and provision the subscription server — no new token is
+  /// minted. Returns true when an existing token was used.
+  Future<bool> _reuseExistingToken() async {
+    String? existing;
+    try {
+      existing = await SecureKeyStore.readAccountToken();
+    } catch (_) {
+      return false;
+    }
+    if (existing == null || existing.isEmpty) return false;
+    final identity = await SecureKeyStore.readAccountIdentity();
+    state = AuthState(
+      token: existing,
+      user: identity?.user,
+      client: identity?.client,
+      busy: false,
+    );
+    await _provisionSubscriptionServer(existing, select: true);
+    return true;
   }
 
   Future<void> _persist(AuthResult result) async {
@@ -99,21 +125,41 @@ class _AuthNotifier extends StateNotifier<AuthState> {
       client: result.client,
       busy: false,
     );
-    await _provisionSubscriptionServer(result.token);
+    await _provisionSubscriptionServer(result.token, select: true);
   }
 
-  /// Clear the credential and remove the routed server.
+  /// Clear the credential and remove the routed server. State is cleared FIRST
+  /// so the UI flips to signed-out immediately even if cleanup hiccups.
   Future<void> logout() async {
-    await SecureKeyStore.clearAccount();
-    await _deprovisionSubscriptionServer();
     state = const AuthState(busy: false);
+    try {
+      await SecureKeyStore.clearAccount();
+    } catch (e) {
+      debugPrint('[Account] clearAccount failed: $e');
+    }
+    try {
+      await _deprovisionSubscriptionServer();
+    } catch (e) {
+      debugPrint('[Account] deprovision failed: $e');
+    }
+  }
+
+  /// Called by the UI when an authenticated call returns 401 — the token was
+  /// rotated/revoked server-side (every login mints a new app token), so there
+  /// is nothing to refresh: drop the session and let the user sign in again.
+  Future<void> handleUnauthorized() async {
+    if (!state.isSignedIn) return;
+    await logout();
   }
 
   // ── Routed server provisioning ──────────────────────────────────────
 
-  /// Upsert the subscription server into the list and make it the active server.
-  /// Best-effort: a provisioning failure never blocks a successful sign-in.
-  Future<void> _provisionSubscriptionServer(String token) async {
+  /// Upsert the subscription server into the list. [select] makes it the active
+  /// server (done on a fresh sign-in). Best-effort and idempotent — a failure
+  /// never blocks sign-in, and it tolerates the row already existing in the DB
+  /// even before the in-memory server list has finished loading.
+  Future<void> _provisionSubscriptionServer(String token,
+      {required bool select}) async {
     final serversNotifier = ref.read(serversProvider.notifier);
     final cfg = ServerConfig(
       name: kSubscriptionServerName,
@@ -122,19 +168,25 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     );
 
     try {
-      ServerConfig? existing;
-      for (final s in ref.read(serversProvider)) {
-        if (s.name == kSubscriptionServerName) existing = s;
-      }
-      if (existing != null) {
-        await serversNotifier.updateServer(existing, cfg);
+      final exists = ref
+          .read(serversProvider)
+          .any((s) => s.name == kSubscriptionServerName);
+      if (exists) {
+        await serversNotifier.updateServer(cfg, cfg);
       } else {
-        await serversNotifier.addServer(cfg);
+        try {
+          await serversNotifier.addServer(cfg);
+        } catch (_) {
+          // Row already in the DB (added in a prior run but not yet loaded into
+          // the in-memory list) — update it in place instead.
+          await serversNotifier.updateServer(cfg, cfg);
+        }
       }
-      await ref.read(selectedServerProvider.notifier).selectServer(cfg);
-    } catch (_) {
-      // Server list unavailable (e.g. DB closed). The account is still signed
-      // in; the user can add/select the server manually later.
+      if (select) {
+        await ref.read(selectedServerProvider.notifier).selectServer(cfg);
+      }
+    } catch (e) {
+      debugPrint('[Account] provision subscription server failed: $e');
     }
   }
 
@@ -179,17 +231,9 @@ final accountSummaryProvider =
   return NexusAccountClient(token: auth.token).fetchAccount();
 });
 
-/// GET /usage — current-period usage vs. entitlements (auth required).
-final usageSnapshotProvider =
-    FutureProvider.autoDispose<UsageSnapshot>((ref) async {
-  final auth = ref.watch(authProvider);
-  if (!auth.isSignedIn) {
-    throw UnauthorizedException('Not signed in', endpoint: '/usage');
-  }
-  return NexusAccountClient(token: auth.token).fetchUsage();
-});
-
-/// GET /usage/agents — per-agent cost history for the current period.
+/// GET /usage/agents — per-agent cost + token history for the current period.
+/// This is also the source of "tokens used" — summed across agents — since the
+/// router has no standalone /usage endpoint; capacity/limits come from /account.
 final agentUsageProvider =
     FutureProvider.autoDispose<AgentUsageReport>((ref) async {
   final auth = ref.watch(authProvider);

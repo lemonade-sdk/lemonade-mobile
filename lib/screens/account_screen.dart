@@ -248,18 +248,25 @@ class _AccountDashboard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
     final account = ref.watch(accountSummaryProvider);
-    final usage = ref.watch(usageSnapshotProvider);
+    final agentUsage = ref.watch(agentUsageProvider);
+
+    // A 401 on the authenticated calls means the app token was rotated/revoked
+    // server-side (each login mints a fresh one). There is no refresh — drop the
+    // session so the user is shown the sign-in form again.
+    ref.listen(accountSummaryProvider, (_, next) {
+      if (next.hasError && next.error is UnauthorizedException) {
+        ref.read(authProvider.notifier).handleUnauthorized();
+      }
+    });
 
     return RefreshIndicator(
       onRefresh: () async {
         ref.invalidate(accountSummaryProvider);
-        ref.invalidate(usageSnapshotProvider);
         ref.invalidate(agentUsageProvider);
         ref.invalidate(plansProvider);
-        await Future.wait([
-          ref.read(accountSummaryProvider.future).catchError((_) => _noAccount),
-          ref.read(usageSnapshotProvider.future).catchError((_) => _noUsage),
-        ]);
+        await ref
+            .read(accountSummaryProvider.future)
+            .catchError((_) => _noAccount);
       },
       child: ListView(
         padding: const EdgeInsets.all(16),
@@ -272,12 +279,16 @@ class _AccountDashboard extends ConsumerWidget {
           ),
           const SizedBox(height: 20),
 
-          // Usage meters.
-          _SectionTitle('Usage this period', icon: Icons.donut_large_outlined),
-          usage.when(
-            data: (u) => _UsageCard(u),
+          // Usage vs. capacity — "used" is summed from /usage/agents, the
+          // limits come from /account (the router has no /usage endpoint).
+          _SectionTitle('Tokens & capacity', icon: Icons.donut_large_outlined),
+          account.when(
+            data: (a) => _UsageCard(
+              subscription: a.subscription,
+              usage: agentUsage.asData?.value,
+            ),
             loading: () => const _LoadingCard(),
-            error: (e, _) => _ErrorBanner(_msg(e)),
+            error: (e, _) => _AuthAwareError(e),
           ),
           const SizedBox(height: 20),
 
@@ -286,7 +297,7 @@ class _AccountDashboard extends ConsumerWidget {
           account.when(
             data: (a) => _SubscriptionCard(a.subscription),
             loading: () => const _LoadingCard(),
-            error: (e, _) => _ErrorBanner(_msg(e)),
+            error: (e, _) => _AuthAwareError(e),
           ),
           const SizedBox(height: 12),
           _BillingButtons(token: auth.token!),
@@ -314,13 +325,6 @@ class _AccountDashboard extends ConsumerWidget {
     client: NexusClient(id: 0, name: ''),
     subscription: Subscription(
         status: 'None', tokenLimit: 0, imageLimit: 0, agentLimit: 0),
-  );
-  static final UsageSnapshot _noUsage = UsageSnapshot(
-    status: '',
-    tokens: const UsageMeter(used: 0, limit: 0, remaining: 0, percent: 0),
-    images: const UsageMeter(used: 0, limit: 0, remaining: 0, percent: 0),
-    maxConcurrentConnections: 0,
-    throttled: false,
   );
 }
 
@@ -374,38 +378,59 @@ class _IdentityHeader extends StatelessWidget {
   }
 }
 
+/// Tokens used vs. capacity. "Used" is summed from the per-agent usage report
+/// (the router has no /usage endpoint); limits come from the subscription.
 class _UsageCard extends StatelessWidget {
-  final UsageSnapshot usage;
-  const _UsageCard(this.usage);
+  final Subscription subscription;
+  final AgentUsageReport? usage;
+  const _UsageCard({required this.subscription, this.usage});
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final usedTokens =
+        usage?.agents.fold<int>(0, (sum, a) => sum + a.totalTokens) ?? 0;
     return _Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (usage.throttled)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _ThrottleBadge(usage.throttleTps),
-            ),
           _Meter(
             label: 'Tokens',
-            meter: usage.tokens,
             icon: Icons.toll_outlined,
+            used: usedTokens,
+            limit: subscription.tokenLimit,
+            knownUsed: usage != null,
           ),
-          const SizedBox(height: 16),
-          _Meter(
-            label: 'Images',
-            meter: usage.images,
+          const SizedBox(height: 14),
+          _CapacityRow(
             icon: Icons.image_outlined,
+            label: 'Image capacity',
+            value: _fmtInt(subscription.imageLimit),
           ),
-          if (usage.periodEnd != null) ...[
-            const SizedBox(height: 12),
-            Text('Resets ${_fmtDate(usage.periodEnd!)}',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 8),
+          _CapacityRow(
+            icon: Icons.smart_toy_outlined,
+            label: 'Agent sessions',
+            value: _fmtInt(subscription.agentLimit),
+          ),
+          if (usage != null) ...[
+            const Divider(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Spend this period',
+                      style: TextStyle(color: scheme.onSurfaceVariant)),
+                ),
+                Text('\$${usage!.totalCost.toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ],
+          if (subscription.currentPeriodEnd != null) ...[
+            const SizedBox(height: 10),
+            Text('Resets ${_fmtDate(subscription.currentPeriodEnd!)}',
+                style:
+                    TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
           ],
         ],
       ),
@@ -415,15 +440,29 @@ class _UsageCard extends StatelessWidget {
 
 class _Meter extends StatelessWidget {
   final String label;
-  final UsageMeter meter;
   final IconData icon;
-  const _Meter({required this.label, required this.meter, required this.icon});
+  final int used;
+  final int limit;
+
+  /// When false the "used" figure isn't available yet (usage still loading).
+  final bool knownUsed;
+
+  const _Meter({
+    required this.label,
+    required this.icon,
+    required this.used,
+    required this.limit,
+    this.knownUsed = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final over = meter.percent >= 100;
+    final frac = limit > 0 ? (used / limit).clamp(0.0, 1.0) : 0.0;
+    final pct = limit > 0 ? (used / limit * 100) : 0.0;
+    final over = limit > 0 && used > limit;
     final color = over ? scheme.error : scheme.primary;
+    final remaining = (limit - used) > 0 ? (limit - used) : 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -434,7 +473,9 @@ class _Meter extends StatelessWidget {
             Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
             const Spacer(),
             Text(
-              '${_fmtInt(meter.used)} / ${_fmtInt(meter.limit)}',
+              knownUsed
+                  ? '${_fmtInt(used)} / ${_fmtInt(limit)}'
+                  : '— / ${_fmtInt(limit)}',
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
           ],
@@ -443,7 +484,7 @@ class _Meter extends StatelessWidget {
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: LinearProgressIndicator(
-            value: meter.fraction,
+            value: frac,
             minHeight: 8,
             backgroundColor: scheme.surfaceContainerHighest,
             valueColor: AlwaysStoppedAnimation(color),
@@ -451,9 +492,11 @@ class _Meter extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          over
-              ? '${meter.percent.toStringAsFixed(0)}% — over limit'
-              : '${_fmtInt(meter.remaining)} remaining (${meter.percent.toStringAsFixed(1)}%)',
+          !knownUsed
+              ? 'Capacity ${_fmtInt(limit)} tokens'
+              : over
+                  ? '${pct.toStringAsFixed(0)}% — over limit'
+                  : '${_fmtInt(remaining)} remaining (${pct.toStringAsFixed(1)}%)',
           style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
         ),
       ],
@@ -461,32 +504,39 @@ class _Meter extends StatelessWidget {
   }
 }
 
-class _ThrottleBadge extends StatelessWidget {
-  final int? tps;
-  const _ThrottleBadge(this.tps);
+class _CapacityRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _CapacityRow(
+      {required this.icon, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.speed, size: 16, color: scheme.onErrorContainer),
-          const SizedBox(width: 6),
-          Text(
-            tps != null ? 'Throttled · $tps tps' : 'Throttled',
-            style: TextStyle(
-                color: scheme.onErrorContainer, fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Expanded(child: Text(label)),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
     );
+  }
+}
+
+/// Renders a friendly "session expired" message for 401s, otherwise the error.
+class _AuthAwareError extends StatelessWidget {
+  final Object error;
+  const _AuthAwareError(this.error);
+
+  @override
+  Widget build(BuildContext context) {
+    if (error is UnauthorizedException) {
+      return const _ErrorBanner(
+          'Your session has expired. Please sign in again.');
+    }
+    return _ErrorBanner(_msg(error));
   }
 }
 

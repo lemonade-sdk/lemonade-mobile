@@ -126,11 +126,9 @@ class NexusAccountClient {
 
   // ── Usage / Account ─────────────────────────────────────────────────
 
-  /// GET /usage (auth) → current-period usage vs. entitlements.
-  Future<UsageSnapshot> fetchUsage() async {
-    final json = await _getJson(_uri('/usage'));
-    return UsageSnapshot.fromJson(json);
-  }
+  // NOTE: the router has no standalone GET /usage endpoint. Capacity/limits
+  // come from GET /account (subscription.*), and consumption comes from
+  // GET /usage/agents (summed token totals).
 
   /// GET /account (auth) → account + subscription summary.
   Future<AccountSummary> fetchAccount() async {
