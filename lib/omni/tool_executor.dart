@@ -238,21 +238,33 @@ class OmniToolExecutor {
     final model = toolModels['edit_image'] ?? toolModels['generate_image'];
     if (model == null) return const ErrorResult('No image model is loaded.');
 
-    // Source: the most recent image in turn artifacts, then prior conversation.
-    final source = [...ctx.turnArtifacts, ...ctx.sourceArtifacts]
+    // Source priority: an image generated this turn, then a prior assistant
+    // image, then a USER-UPLOADED photo. The last fallback is what lets people
+    // upload a picture into the chat and ask to edit it.
+    final artifactSource = [...ctx.turnArtifacts, ...ctx.sourceArtifacts]
         .where((a) => a.kind == ArtifactKind.image)
         .lastOrNull;
-    if (source == null) {
+
+    final Uint8List bytes;
+    final String sourceMime;
+    if (artifactSource != null) {
+      bytes = base64Decode(artifactSource.base64Data);
+      sourceMime = artifactSource.mime;
+    } else if (ctx.extractedImages.isNotEmpty &&
+        ctx.extractedImages.last.base64.isNotEmpty) {
+      final uploaded = ctx.extractedImages.last;
+      bytes = base64Decode(uploaded.base64);
+      sourceMime = uploaded.mime;
+    } else {
       return const ErrorResult('No image in this conversation to edit.');
     }
 
-    final bytes = base64Decode(source.base64Data);
     final req = ImageEditRequest(
       model: model,
       prompt: args['prompt'] as String? ?? '',
       sourceImageBytes: bytes,
-      sourceImageMime: source.mime,
-      sourceFilename: 'image.${source.mime.split('/').last}',
+      sourceImageMime: sourceMime,
+      sourceFilename: 'image.${sourceMime.split('/').last}',
       size: args['size'] as String?,
     );
     try {

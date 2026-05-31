@@ -324,7 +324,13 @@ class _ChatInputState extends ConsumerState<ChatInput> {
     final voice = ref.watch(voiceModeProvider);
     final voiceActive = voice.active;
 
-    return Container(
+    // SafeArea(top: false) keeps the input bar above the Android
+    // navigation/gesture bar in edge-to-edge mode (compile/targetSdk 36) so the
+    // text field and buttons stay tappable. The keyboard inset is still handled
+    // by the Scaffold's resizeToAvoidBottomInset.
+    return SafeArea(
+      top: false,
+      child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
@@ -365,6 +371,10 @@ class _ChatInputState extends ConsumerState<ChatInput> {
             child: voiceActive
                 ? _VoiceModeIndicator(status: voice)
                 : Container(
+                    // Clip the child so the TextField's rectangular focus /
+                    // selection highlight doesn't poke square corners through
+                    // the rounded border.
+                    clipBehavior: Clip.antiAlias,
                     decoration: BoxDecoration(
                       color: theme.colorScheme.surfaceContainerHighest
                           .withValues(alpha: 0.5),
@@ -434,6 +444,7 @@ class _ChatInputState extends ConsumerState<ChatInput> {
             ),
           ],
         ],
+      ),
       ),
     );
   }

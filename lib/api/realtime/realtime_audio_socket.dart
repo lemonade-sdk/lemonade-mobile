@@ -58,11 +58,15 @@ class RealtimeAudioSocket {
 
     Object? lastError;
     for (final candidatePort in candidates) {
+      // Lemonade serves realtime transcription at `/realtime` on the
+      // dynamically-assigned websocket_port (NOT the root path, and NOT under
+      // the HTTP `/api/v1` base). See the Lemonade OpenAI-compat docs:
+      //   ws://<host>:<websocket_port>/realtime?model=<model>
       final uri = Uri(
         scheme: scheme,
         host: apiUri.host,
         port: candidatePort,
-        path: '/',
+        path: '/realtime',
         queryParameters: {
           'model': model,
           'api_key': apiKey,

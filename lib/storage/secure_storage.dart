@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../api/nexus/nexus_account_models.dart';
 
 /// Thin wrapper around flutter_secure_storage. API keys are keyed by server name.
 /// Plaintext API keys never touch SharedPreferences or Isar.
@@ -9,6 +13,51 @@ class SecureKeyStore {
   );
 
   static String _key(String serverName) => 'apikey/$serverName';
+
+  // ── Nexus account credential ────────────────────────────────────────
+  // The subscription bearer token + a cached copy of the user/client JSON so
+  // the UI can hydrate on launch without a round-trip. Never touches Isar.
+  static const _accountTokenKey = 'nexus/account_token';
+  static const _accountIdentityKey = 'nexus/account_identity';
+
+  static Future<String?> readAccountToken() =>
+      _store.read(key: _accountTokenKey);
+
+  static Future<void> writeAccountToken(String token) =>
+      _store.write(key: _accountTokenKey, value: token);
+
+  static Future<void> deleteAccountToken() =>
+      _store.delete(key: _accountTokenKey);
+
+  /// Persist a compact JSON of the signed-in user + client for fast hydration.
+  static Future<void> writeAccountIdentity(NexusUser user, NexusClient client) {
+    final json = jsonEncode({'user': user.toJson(), 'client': client.toJson()});
+    return _store.write(key: _accountIdentityKey, value: json);
+  }
+
+  /// Reads the cached identity, or null if absent/corrupt.
+  static Future<({NexusUser user, NexusClient client})?>
+      readAccountIdentity() async {
+    final raw = await _store.read(key: _accountIdentityKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final user =
+            NexusUser.fromJson(Map<String, dynamic>.from(decoded['user'] as Map));
+        final client = NexusClient.fromJson(
+            Map<String, dynamic>.from(decoded['client'] as Map));
+        return (user: user, client: client);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Clear all account credentials on sign-out.
+  static Future<void> clearAccount() async {
+    await deleteAccountToken();
+    await _store.delete(key: _accountIdentityKey);
+  }
 
   static Future<String?> readApiKey(String serverName) {
     return _store.read(key: _key(serverName));

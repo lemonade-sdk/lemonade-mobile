@@ -80,8 +80,9 @@ class OmniToolCatalog {
           '"add a hat to her", "make it brighter", "remove the background", "change the dress to blue", '
           '"edit the image to include a child". '
           'Do NOT call this when the user names a different subject — that is generate_image. '
-          'Do NOT call this for general chat. The most recently generated image is used automatically as the source '
-          '— do not pass an image_url.',
+          'Do NOT call this for general chat. The most recently generated OR user-uploaded image is used '
+          'automatically as the source — do not pass an image_url. This works on photos the user uploads into '
+          'the chat, not just images you generated.',
       parameters: const {
         'type': 'object',
         'properties': {

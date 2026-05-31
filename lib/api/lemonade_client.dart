@@ -71,6 +71,9 @@ class LemonadeApiClient {
 
   Map<String, String> get _authHeaders => {
         'Authorization': 'Bearer ${server.apiKey ?? "lemonade"}',
+        // Per-feature cost attribution for the Nexus Router (≤128 chars).
+        // Local Lemonade servers ignore the unknown header.
+        'X-Nexus-Agent': 'lemonade_mobile',
       };
 
   Map<String, String> get jsonHeaders => {

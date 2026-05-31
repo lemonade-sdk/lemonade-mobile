@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:just_audio/just_audio.dart';
@@ -53,6 +54,22 @@ class DuplexVoiceSession {
   bool _disposed = false;
   String _liveTranscript = '';
 
+  // ── Non-WebSocket fallback ──────────────────────────────────────────
+  // When the server doesn't expose the realtime `/realtime` WS (or it's
+  // unreachable), we downgrade to local utterance detection + HTTP
+  // transcription via `/audio/transcriptions`.
+  bool _httpFallback = false;
+  AudioTranscriptionService? _transcriber;
+  bool _speechDetected = false;
+  int _silentSamples = 0;
+  bool _finishing = false;
+
+  /// RMS energy (PCM16) above which a chunk is treated as speech.
+  static const double _fallbackSpeechRms = 600;
+
+  /// Trailing silence that ends an utterance (~0.9s at 16 kHz mono).
+  static const int _fallbackSilenceSamples = 14400;
+
   /// PCM16 chunks captured during the current utterance. Cleared at the start
   /// of every listening turn and consumed when ASR completion fires, so the
   /// in-chat voice mode can persist the user's audio alongside the transcript.
@@ -81,9 +98,16 @@ class DuplexVoiceSession {
     _running = true;
     _emitState(DuplexState.connecting);
     final svc = AudioTranscriptionService(client.server);
-    final wsPort = await svc.discoverWebSocketPort();
-    await _ws.connect(model: asrModel, port: wsPort);
-    _eventsSub = _ws.events.listen(_handleAsrEvent);
+    _transcriber = svc;
+    try {
+      final wsPort = await svc.discoverWebSocketPort();
+      await _ws.connect(model: asrModel, port: wsPort);
+      _eventsSub = _ws.events.listen(_handleAsrEvent);
+    } catch (e) {
+      // The realtime WS doesn't exist here or couldn't be opened — downgrade
+      // to non-WS: detect each utterance locally and transcribe over HTTP.
+      _httpFallback = true;
+    }
     await _beginListening();
   }
 
@@ -114,6 +138,9 @@ class DuplexVoiceSession {
     if (!_running) return;
     _liveTranscript = '';
     _utterancePcm.clear();
+    _speechDetected = false;
+    _silentSamples = 0;
+    _finishing = false;
     _emitEvent(DuplexEvent.transcriptUpdate(''));
     _emitState(DuplexState.listening);
 
@@ -129,8 +156,77 @@ class DuplexVoiceSession {
     ));
     _pcmSub = stream.listen((chunk) {
       _utterancePcm.add(chunk);
-      _ws.appendAudio(base64Encode(chunk));
+      if (_httpFallback) {
+        _detectUtterance(chunk);
+      } else {
+        _ws.appendAudio(base64Encode(chunk));
+      }
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Non-WebSocket fallback: local end-of-utterance detection + HTTP transcribe
+  // ---------------------------------------------------------------------------
+
+  /// RMS energy of a little-endian PCM16 chunk.
+  double _rms16(List<int> bytes) {
+    final n = bytes.length ~/ 2;
+    if (n == 0) return 0;
+    double sumSq = 0;
+    for (int i = 0; i + 1 < bytes.length; i += 2) {
+      int s = bytes[i] | (bytes[i + 1] << 8);
+      if (s >= 0x8000) s -= 0x10000;
+      sumSq += s.toDouble() * s.toDouble();
+    }
+    return math.sqrt(sumSq / n);
+  }
+
+  /// Detect speech, then end the utterance after a trailing silence window.
+  void _detectUtterance(List<int> chunk) {
+    final rms = _rms16(chunk);
+    final samples = chunk.length ~/ 2;
+    if (rms > _fallbackSpeechRms) {
+      _speechDetected = true;
+      _silentSamples = 0;
+    } else if (_speechDetected) {
+      _silentSamples += samples;
+      if (_silentSamples >= _fallbackSilenceSamples) {
+        unawaited(_finishHttpUtterance());
+      }
+    }
+  }
+
+  Future<void> _finishHttpUtterance() async {
+    if (_finishing || !_running) return;
+    _finishing = true;
+    await _stopListening();
+
+    final pcm = List<List<int>>.from(_utterancePcm);
+    _utterancePcm.clear();
+    if (pcm.isEmpty) {
+      if (_running) await _beginListening();
+      return;
+    }
+
+    final wav = AudioRecorderService.buildWavBytes(pcm);
+    String text = '';
+    try {
+      text = await _transcriber!.transcribeWavBytes(wav, model: asrModel);
+    } catch (e) {
+      _emitEvent(DuplexEvent.error('Transcription error: $e'));
+    }
+
+    if (text.trim().isEmpty) {
+      if (_running) await _beginListening();
+      return;
+    }
+
+    _emitEvent(DuplexUserSpoke(
+      text,
+      audioBase64: base64Encode(wav),
+      audioMime: 'audio/wav',
+    ));
+    await _runTurn(text);
   }
 
   Future<void> _stopListening() async {

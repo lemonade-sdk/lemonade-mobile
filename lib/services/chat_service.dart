@@ -84,7 +84,7 @@ class ChatService {
     required String llmModel,
     required List<ui.ChatMessage> history,
   }) async* {
-    final apiMessages = history.map(_toApiMessage).toList(growable: false);
+    final apiMessages = _buildApiHistory(history);
 
     final stream = client.chat.stream(ChatCompletionRequest(
       model: llmModel,
@@ -122,9 +122,33 @@ class ChatService {
     return AgentMessage(role: role, parts: parts);
   }
 
-  ApiChatMessage _toApiMessage(ui.ChatMessage m) {
+  /// Build the wire history for plain chat, keeping the (large) base64 image
+  /// parts ONLY on the most recent image-bearing message. Older images collapse
+  /// to a text placeholder so the request payload doesn't grow unbounded across
+  /// turns — re-sending every image each round is a common cause of server 500s.
+  List<ApiChatMessage> _buildApiHistory(List<ui.ChatMessage> history) {
+    int lastImageIdx = -1;
+    for (int i = 0; i < history.length; i++) {
+      if (history[i].hasImages) lastImageIdx = i;
+    }
+    return [
+      for (int i = 0; i < history.length; i++)
+        _toApiMessage(history[i], keepImages: i == lastImageIdx),
+    ];
+  }
+
+  ApiChatMessage _toApiMessage(ui.ChatMessage m, {bool keepImages = true}) {
     if (!m.hasImages) {
       return m.isUser ? ApiChatMessage.user(m.textContent) : ApiChatMessage.assistant(m.textContent);
+    }
+    if (!keepImages) {
+      // Drop the base64 image(s) from older turns; leave a marker so the
+      // conversation still reads coherently.
+      final placeholder =
+          m.textContent.isEmpty ? '[image]' : '${m.textContent} [image]';
+      return m.isUser
+          ? ApiChatMessage.user(placeholder)
+          : ApiChatMessage.assistant(placeholder);
     }
     final parts = <ApiContentPart>[];
     if (m.textContent.isNotEmpty) parts.add(ApiContentPart.text(m.textContent));

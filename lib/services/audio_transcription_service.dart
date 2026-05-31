@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
 
 class AudioTranscriptionService {
@@ -20,6 +21,33 @@ class AudioTranscriptionService {
     request.headers['Authorization'] = _authHeader;
 
     request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    request.fields['model'] = (model != null && model.isNotEmpty) ? model : 'whisper-1';
+    request.fields['response_format'] = 'json';
+
+    final streamedResponse = await request.send().timeout(const Duration(minutes: 5));
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode != 200) {
+      throw Exception('Transcription failed with status ${response.statusCode}: ${response.body}');
+    }
+
+    final data = jsonDecode(response.body);
+    return data['text'] as String? ?? '';
+  }
+
+  /// Transcribe in-memory WAV [bytes] via HTTP POST multipart/form-data.
+  /// Used by the non-WebSocket call-mode fallback. Returns the transcript.
+  Future<String> transcribeWavBytes(List<int> bytes, {String? model}) async {
+    final url = Uri.parse('$_apiUrl/audio/transcriptions');
+
+    final request = http.MultipartRequest('POST', url);
+    request.headers['Authorization'] = _authHeader;
+    request.files.add(http.MultipartFile.fromBytes(
+      'file',
+      bytes,
+      filename: 'audio.wav',
+      contentType: MediaType('audio', 'wav'),
+    ));
     request.fields['model'] = (model != null && model.isNotEmpty) ? model : 'whisper-1';
     request.fields['response_format'] = 'json';
 

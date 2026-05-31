@@ -5,10 +5,12 @@ import '../constants/messages.dart';
 import '../models/chat_history.dart';
 import '../models/folder.dart';
 import '../models/model_defaults.dart';
+import '../providers/account_provider.dart';
 import '../providers/admin_mode_provider.dart';
 import '../providers/chat_history_provider.dart';
 import '../providers/folders_provider.dart';
 import '../providers/model_defaults_provider.dart';
+import '../screens/account_screen.dart';
 import '../screens/admin_console_screen.dart';
 import '../screens/model_defaults_screen.dart';
 import '../screens/settings_screen.dart';
@@ -106,6 +108,53 @@ class ChatDrawer extends ConsumerWidget {
 
                     const Divider(),
 
+                    // ── Account / subscription (optional) ──
+                    Builder(builder: (context) {
+                      final auth = ref.watch(authProvider);
+                      return Column(
+                        children: [
+                          ListTile(
+                            leading: const Icon(Icons.account_circle_outlined),
+                            title: const Text('Account'),
+                            subtitle: Text(
+                              auth.isSignedIn
+                                  ? (auth.user?.email ?? 'Signed in')
+                                  : 'Billing, plans & usage',
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const AccountScreen()),
+                              );
+                            },
+                          ),
+                          if (auth.isSignedIn)
+                            ListTile(
+                              leading: const Icon(Icons.logout),
+                              title: const Text('Log out'),
+                              onTap: () => _confirmLogout(context, ref),
+                            )
+                          else
+                            ListTile(
+                              leading: const Icon(Icons.login),
+                              title: const Text('Log in / Register'),
+                              onTap: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => const AccountScreen()),
+                                );
+                              },
+                            ),
+                        ],
+                      );
+                    }),
+
+                    const Divider(),
+
                     ListTile(
                       leading: const Icon(Icons.mic),
                       title: const Text(AppMessages.transcription),
@@ -188,6 +237,30 @@ class ChatDrawer extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Log out?'),
+        content: const Text(
+            'Your subscription server will be removed from the server list. '
+            'Local servers are unaffected.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Log out')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(authProvider.notifier).logout();
+      if (context.mounted) Navigator.pop(context);
+    }
   }
 
   Future<void> _newFolder(BuildContext context, WidgetRef ref) async {
