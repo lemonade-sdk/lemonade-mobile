@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        just_audio plays StreamAudioSource / data: sources on Android by
+        serving the bytes through a local HTTP proxy on the loopback address.
+        Android blocks cleartext HTTP by default (targetSdk >= 28), which makes
+        ExoPlayer fail with "(0) Source error" during TTS playback. Allow
+        cleartext only for the loopback proxy so this keeps working without
+        opening up cleartext traffic app-wide.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
