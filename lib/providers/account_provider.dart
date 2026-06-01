@@ -8,6 +8,7 @@ import '../api/nexus/nexus_account_client.dart';
 import '../api/nexus/nexus_account_models.dart';
 import '../models/server_config.dart';
 import '../storage/secure_storage.dart';
+import 'models_provider.dart';
 import 'servers_provider.dart';
 
 /// Display name of the auto-provisioned subscription inference server. It lives
@@ -218,6 +219,10 @@ class _AuthNotifier extends StateNotifier<AuthState> {
       }
       if (select) {
         await ref.read(selectedServerProvider.notifier).selectServer(cfg);
+        // Pull the subscription server's model list now and default to the
+        // preferred Halo collection, so the main screen is ready right after
+        // sign-in instead of showing an empty/stale model picker.
+        await ref.read(modelsProvider.notifier).refreshAndSelectPreferred();
       }
     } catch (e) {
       debugPrint('[Account] provision subscription server failed: $e');

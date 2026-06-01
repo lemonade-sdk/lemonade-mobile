@@ -91,26 +91,61 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
           saved != null && modelInfos.any((m) => m.id == saved);
 
       if (!savedStillValid) {
-        // Prefer a chat-shaped model — `modelInfos.first` is whatever the
-        // server returned first, which is often an image-gen / TTS / ASR
-        // model and would cause /chat/completions to 400 on first chat.
-        final chatModel = modelInfos.firstWhere(
-          (m) =>
-              !m.supportsTts &&
-              !m.supportsAudio &&
-              !m.supportsImageGeneration,
-          orElse: () => modelInfos.isNotEmpty
-              ? modelInfos.first
-              : ModelInfo('', const []),
-        );
-        if (chatModel.id.isNotEmpty) {
-          await selectedModelNotifier.selectModel(chatModel.id);
+        // Prefer the default Halo collection; otherwise fall back to a
+        // chat-shaped model — `modelInfos.first` is whatever the server
+        // returned first, which is often an image-gen / TTS / ASR model and
+        // would cause /chat/completions to 400 on first chat.
+        final pick = preferredDefault(modelInfos) ??
+            modelInfos.firstWhere(
+              (m) =>
+                  !m.supportsTts &&
+                  !m.supportsAudio &&
+                  !m.supportsImageGeneration,
+              orElse: () => modelInfos.isNotEmpty
+                  ? modelInfos.first
+                  : ModelInfo('', const []),
+            );
+        if (pick.id.isNotEmpty) {
+          await selectedModelNotifier.selectModel(pick.id);
         }
       }
     } catch (_) {
       state = [];
     } finally {
       client.close();
+    }
+  }
+
+  /// The preferred default model: a Halo-Lite collection first, then any Halo
+  /// collection, then any Halo-Lite model, then any Halo model. Null if none
+  /// match. Collections are preferred so Omni multimodal routing is on by
+  /// default.
+  ModelInfo? preferredDefault(List<ModelInfo> models) {
+    bool idHas(ModelInfo m, String needle) =>
+        m.id.toLowerCase().contains(needle);
+    for (final m in models) {
+      if (m.isCollection && idHas(m, 'halo-lite')) return m;
+    }
+    for (final m in models) {
+      if (m.isCollection && idHas(m, 'halo')) return m;
+    }
+    for (final m in models) {
+      if (idHas(m, 'halo-lite')) return m;
+    }
+    for (final m in models) {
+      if (idHas(m, 'halo')) return m;
+    }
+    return null;
+  }
+
+  /// Refresh the model list for the current server, then force-select the
+  /// preferred default collection. Called right after a subscription sign-in so
+  /// the main screen shows the model list and a sensible default immediately.
+  Future<void> refreshAndSelectPreferred() async {
+    await fetchModels();
+    final preferred = preferredDefault(state);
+    if (preferred != null) {
+      await ref.read(selectedModelProvider.notifier).selectModel(preferred.id);
     }
   }
 }
