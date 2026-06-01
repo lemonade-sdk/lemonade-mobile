@@ -5,12 +5,12 @@ import '../constants/messages.dart';
 import '../models/chat_history.dart';
 import '../models/folder.dart';
 import '../models/model_defaults.dart';
-import '../providers/account_provider.dart';
+// import '../providers/account_provider.dart'; // account UI temporarily disabled
 import '../providers/admin_mode_provider.dart';
 import '../providers/chat_history_provider.dart';
 import '../providers/folders_provider.dart';
 import '../providers/model_defaults_provider.dart';
-import '../screens/account_screen.dart';
+// import '../screens/account_screen.dart'; // account UI temporarily disabled
 import '../screens/admin_console_screen.dart';
 import '../screens/model_defaults_screen.dart';
 import '../screens/settings_screen.dart';
@@ -108,7 +108,10 @@ class ChatDrawer extends ConsumerWidget {
 
                     const Divider(),
 
-                    // ── Account / subscription (optional) ──
+                    // ── Account / subscription (temporarily disabled) ──
+                    // Account / Log in / Register entry points are hidden for now.
+                    // To re-enable, uncomment the Builder block below.
+                    /*
                     Builder(builder: (context) {
                       final auth = ref.watch(authProvider);
                       return Column(
@@ -154,6 +157,7 @@ class ChatDrawer extends ConsumerWidget {
                     }),
 
                     const Divider(),
+                    */
 
                     ListTile(
                       leading: const Icon(Icons.mic),
@@ -239,6 +243,8 @@ class ChatDrawer extends ConsumerWidget {
     );
   }
 
+  // Logout flow temporarily disabled along with the account UI above.
+  /*
   Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -262,6 +268,7 @@ class ChatDrawer extends ConsumerWidget {
       if (context.mounted) Navigator.pop(context);
     }
   }
+  */
 
   Future<void> _newFolder(BuildContext context, WidgetRef ref) async {
     final controller = TextEditingController();
