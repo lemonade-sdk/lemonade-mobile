@@ -164,6 +164,24 @@ class NexusAccountClient {
     return (json['url'] ?? '') as String;
   }
 
+  // ── In-app plan management (already-subscribed accounts) ─────────────
+  // Immediate proration; the server re-syncs entitlements inline. Throws on
+  // 409 no_subscription (→ run checkout) and 400 audience.
+
+  /// POST /billing/change-plan — upgrade OR downgrade the AI tier.
+  Future<void> changePlan(String plan) =>
+      _postJson(_uri('/billing/change-plan'), {'plan': plan}).then((_) {});
+
+  /// POST /billing/add-package — add a Business add-on (e.g. `phone_system`) or
+  /// bump its quantity. Numbers use the numbers flow, not this.
+  Future<void> addPackage(String key, {int quantity = 1}) =>
+      _postJson(_uri('/billing/add-package'), {'key': key, 'quantity': quantity})
+          .then((_) {});
+
+  /// POST /billing/remove-package — drop an add-on line.
+  Future<void> removePackage(String key) =>
+      _postJson(_uri('/billing/remove-package'), {'key': key}).then((_) {});
+
   // ── Usage / Account ─────────────────────────────────────────────────
 
   // NOTE: the router has no standalone GET /usage endpoint. Capacity/limits

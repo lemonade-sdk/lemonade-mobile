@@ -1,7 +1,7 @@
 name: lemonade_mobile
 description: "A chat app for Lemonade AI servers with syntax highlighting and multi-server support"
 publish_to: 'none'
-version: 3.1.4+20
+version: 3.4.0+23
 
 environment:
   sdk: ^3.8.1
@@ -72,6 +72,11 @@ dependencies:
   # WebSocket client for realtime transcription
   web_socket_channel: ^3.0.0
   url_launcher: ^6.3.2
+
+  # Nexus AI Mobile redesign — typography (Inter Tight + IBM Plex Mono) and the
+  # design's inline SVG iconography.
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.10+1
 
 dev_dependencies:
   flutter_test:

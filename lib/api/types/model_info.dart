@@ -8,6 +8,10 @@ class ApiModelInfo {
   final String? checkpoint;
   final bool suggested;
 
+  /// Static model-supported context window (`max_context_window`), when the
+  /// server knows it; 0 otherwise.
+  final int maxContextWindow;
+
   ApiModelInfo({
     required this.id,
     required this.labels,
@@ -16,6 +20,7 @@ class ApiModelInfo {
     this.downloaded,
     this.checkpoint,
     this.suggested = false,
+    this.maxContextWindow = 0,
   });
 
   /// True when this is a Lemonade Omni Model — a bundle whose `recipe` is
@@ -55,6 +60,7 @@ class ApiModelInfo {
       downloaded: json['downloaded'] as bool?,
       checkpoint: json['checkpoint'] as String?,
       suggested: json['suggested'] as bool? ?? false,
+      maxContextWindow: (json['max_context_window'] as num?)?.toInt() ?? 0,
     );
   }
 }

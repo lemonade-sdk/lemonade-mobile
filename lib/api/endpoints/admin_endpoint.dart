@@ -38,6 +38,12 @@ class AdminEndpoint {
     return _client.getJson(_client.apiUriFor('/system-info'));
   }
 
+  /// `GET /v1/system-stats` — live device utilization:
+  /// `cpu_percent`, `memory_gb`, `gpu_percent`, `vram_gb`, `npu_percent`.
+  Future<Map<String, dynamic>> systemStats() {
+    return _client.getJson(_client.apiUriFor('/system-stats'));
+  }
+
   // ---------------------------------------------------------------------------
   // Model lifecycle
   // ---------------------------------------------------------------------------

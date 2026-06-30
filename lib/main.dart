@@ -2,16 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lemonade_mobile/providers/account_provider.dart';
 import 'package:lemonade_mobile/providers/beacon_provider.dart';
+import 'package:lemonade_mobile/providers/billing_providers.dart';
+import 'package:lemonade_mobile/providers/nav_provider.dart';
 import 'package:lemonade_mobile/providers/theme_provider.dart';
-import 'package:lemonade_mobile/screens/chat_screen.dart';
-import 'package:lemonade_mobile/screens/settings_screen.dart';
 import 'package:lemonade_mobile/screens/transcription_screen.dart';
 import 'package:lemonade_mobile/screens/model_defaults_screen.dart';
+import 'package:lemonade_mobile/shell/nexus_shell.dart';
 import 'package:lemonade_mobile/storage/database.dart';
 import 'package:lemonade_mobile/storage/legacy_migration.dart';
 import 'package:lemonade_mobile/utils/constants.dart';
-import 'package:lemonade_mobile/widgets/ai_super_hack_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,9 +43,26 @@ class MyApp extends ConsumerStatefulWidget {
   ConsumerState<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends ConsumerState<MyApp> {
+class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Capabilities / balance can change off-device (Stripe webhooks, top-ups);
+    // refresh the billing source-of-truth when the app returns to foreground.
+    if (state == AppLifecycleState.resumed) {
+      ref.invalidate(entitlementsProvider);
+      ref.invalidate(walletBalanceProvider);
+      ref.invalidate(accountSummaryProvider);
+    }
+  }
 
   // Currently-visible beacon snackbar, if any. ScaffoldMessenger queues
   // snackbars by default, so without tracking and dismissing the previous
@@ -57,6 +75,7 @@ class _MyAppState extends ConsumerState<MyApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _beaconSnackBarDismissTimer?.cancel();
     super.dispose();
   }
@@ -98,7 +117,8 @@ class _MyAppState extends ConsumerState<MyApp> {
             label: 'View',
             textColor: AppColors.white,
             onPressed: () {
-              _navigatorKey.currentState?.pushNamed('/settings');
+              // Jump to the Settings tab (server management lives there now).
+              ref.read(navTabProvider.notifier).state = NexusTab.settings;
             },
           ),
           backgroundColor: AppColors.beaconNotification,
@@ -122,28 +142,16 @@ class _MyAppState extends ConsumerState<MyApp> {
     });
 
     final activeTheme = ref.watch(themeProvider);
-    final decorations = activeTheme.decorations;
 
     return MaterialApp(
       navigatorKey: _navigatorKey,
       scaffoldMessengerKey: _scaffoldMessengerKey,
-      title: 'Lemonade Chat',
+      title: 'Lemonade Mobile',
       theme: activeTheme.buildTheme(),
-      // `builder` stays set unconditionally so the element tree shape above
-      // the navigator is identical across themes. Toggling between null and
-      // a wrapper function during a theme switch reshaped MaterialApp's
-      // descendants and tripped a `_elements.contains(element)` assertion in
-      // _InactiveElements.remove the next frame. The overlay itself is a
-      // cheap passthrough when scanlines are off.
-      builder: (ctx, child) => AiSuperHackOverlay(
-        glowColor: decorations.glowColor ?? const Color(0xFF39FF14),
-        enabled: decorations.useScanlines,
-        child: child ?? const SizedBox.shrink(),
-      ),
-      initialRoute: '/',
+      home: const NexusShell(),
       routes: {
-        '/': (context) => const ChatScreen(),
-        '/settings': (context) => const SettingsScreen(),
+        // Secondary screens still reachable via Navigator.push from the
+        // redesigned Settings tab.
         '/transcription': (context) => const TranscriptionScreen(),
         '/model-defaults': (context) => const ModelDefaultsScreen(),
       },

@@ -19,6 +19,57 @@ class SecureKeyStore {
     mOptions: MacOsOptions(useDataProtectionKeyChain: false),
   );
 
+  // ── In-memory cache ─────────────────────────────────────────────────
+  // Every distinct `_store.read()` on the macOS keychain pops its own
+  // "allow access" password prompt (and on ad-hoc-signed debug builds the
+  // "Always Allow" choice doesn't stick across rebuilds). Launch touches the
+  // device id, account token + identity, and each server's API key — that's a
+  // pile of prompts. Loading the whole keychain ONCE via `readAll()` collapses
+  // that to a single prompt; everything else is served from this cache.
+  static Map<String, String> _cache = {};
+  static Future<void>? _loading;
+
+  static Future<void> _ensureLoaded() => _loading ??= _load();
+
+  static Future<void> _load() async {
+    try {
+      _cache = await _store.readAll();
+    } catch (_) {
+      _cache = {};
+    }
+  }
+
+  /// Read a key: cache first, then a direct keychain read as a fallback. The
+  /// macOS legacy keychain doesn't reliably enumerate items via `readAll()`, so
+  /// a value that's genuinely stored (e.g. the account token) can be absent from
+  /// the cache — without this fallback the app would look logged out on launch
+  /// even though the token persisted.
+  static Future<String?> _get(String key) async {
+    await _ensureLoaded();
+    if (_cache.containsKey(key)) return _cache[key];
+    try {
+      final v = await _store.read(key: key);
+      if (v != null) _cache[key] = v;
+      return v;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Write through the store and update the cache.
+  static Future<void> _put(String key, String value) async {
+    await _ensureLoaded();
+    await _store.write(key: key, value: value);
+    _cache[key] = value;
+  }
+
+  /// Delete from the store and the cache.
+  static Future<void> _remove(String key) async {
+    await _ensureLoaded();
+    await _store.delete(key: key);
+    _cache.remove(key);
+  }
+
   static String _key(String serverName) => 'apikey/$serverName';
 
   // ── Device identity ─────────────────────────────────────────────────
@@ -29,10 +80,10 @@ class SecureKeyStore {
   static const _deviceIdKey = 'nexus/device_id';
 
   static Future<String> deviceId() async {
-    final existing = await _store.read(key: _deviceIdKey);
+    final existing = await _get(_deviceIdKey);
     if (existing != null && existing.isNotEmpty) return existing;
     final id = const Uuid().v4();
-    await _store.write(key: _deviceIdKey, value: id);
+    await _put(_deviceIdKey, id);
     return id;
   }
 
@@ -42,25 +93,23 @@ class SecureKeyStore {
   static const _accountTokenKey = 'nexus/account_token';
   static const _accountIdentityKey = 'nexus/account_identity';
 
-  static Future<String?> readAccountToken() =>
-      _store.read(key: _accountTokenKey);
+  static Future<String?> readAccountToken() => _get(_accountTokenKey);
 
   static Future<void> writeAccountToken(String token) =>
-      _store.write(key: _accountTokenKey, value: token);
+      _put(_accountTokenKey, token);
 
-  static Future<void> deleteAccountToken() =>
-      _store.delete(key: _accountTokenKey);
+  static Future<void> deleteAccountToken() => _remove(_accountTokenKey);
 
   /// Persist a compact JSON of the signed-in user + client for fast hydration.
   static Future<void> writeAccountIdentity(NexusUser user, NexusClient client) {
     final json = jsonEncode({'user': user.toJson(), 'client': client.toJson()});
-    return _store.write(key: _accountIdentityKey, value: json);
+    return _put(_accountIdentityKey, json);
   }
 
   /// Reads the cached identity, or null if absent/corrupt.
   static Future<({NexusUser user, NexusClient client})?>
       readAccountIdentity() async {
-    final raw = await _store.read(key: _accountIdentityKey);
+    final raw = await _get(_accountIdentityKey);
     if (raw == null || raw.isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -77,20 +126,19 @@ class SecureKeyStore {
 
   /// Clear all account credentials on sign-out.
   static Future<void> clearAccount() async {
-    await deleteAccountToken();
-    await _store.delete(key: _accountIdentityKey);
+    await _remove(_accountTokenKey);
+    await _remove(_accountIdentityKey);
   }
 
-  static Future<String?> readApiKey(String serverName) {
-    return _store.read(key: _key(serverName));
-  }
+  static Future<String?> readApiKey(String serverName) =>
+      _get(_key(serverName));
 
   static Future<void> writeApiKey(String serverName, String apiKey) {
-    return _store.write(key: _key(serverName), value: apiKey);
+    return _put(_key(serverName), apiKey);
   }
 
   static Future<void> deleteApiKey(String serverName) {
-    return _store.delete(key: _key(serverName));
+    return _remove(_key(serverName));
   }
 
   /// Rename the secure-storage entry when a server is renamed.

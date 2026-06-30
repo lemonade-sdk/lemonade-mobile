@@ -7,8 +7,9 @@ part 'app_prefs_entity.g.dart';
 class AppPrefsEntity {
   Id id = 0;
 
-  /// Theme registry id: 'light' | 'medium' | 'dark' | 'ai_super_hack'
-  String themeId = 'dark';
+  /// Theme registry id: 'nexus_dark' | 'nexus_light'. Fresh installs default to
+  /// the redesign's dark-navy surface; any legacy id falls back to it.
+  String themeId = 'nexus_dark';
 
   /// Persisted UI selections.
   String? selectedServerName;

@@ -97,6 +97,9 @@ class Plan {
   final int agentSessions;
   final int sortOrder;
 
+  /// "Both" | "Personal" | "Business" — which segment this tier targets.
+  final String audience;
+
   const Plan({
     required this.key,
     required this.name,
@@ -106,6 +109,7 @@ class Plan {
     required this.monthlyImages,
     required this.agentSessions,
     required this.sortOrder,
+    this.audience = 'Both',
   });
 
   factory Plan.fromJson(Map<String, dynamic> json) {
@@ -118,6 +122,7 @@ class Plan {
       monthlyImages: _asInt(json['monthly_images']) ?? 0,
       agentSessions: _asInt(json['agent_sessions']) ?? 0,
       sortOrder: _asInt(json['sort_order']) ?? 0,
+      audience: (json['audience'] ?? 'Both') as String,
     );
   }
 }
@@ -131,6 +136,7 @@ class AddOn {
   final int bonusImages;
   final int bonusAgentSessions;
   final int sortOrder;
+  final String audience;
 
   const AddOn({
     required this.key,
@@ -141,6 +147,7 @@ class AddOn {
     required this.bonusImages,
     required this.bonusAgentSessions,
     required this.sortOrder,
+    this.audience = 'Both',
   });
 
   factory AddOn.fromJson(Map<String, dynamic> json) {
@@ -153,6 +160,7 @@ class AddOn {
       bonusImages: _asInt(json['bonus_images']) ?? 0,
       bonusAgentSessions: _asInt(json['bonus_agent_sessions']) ?? 0,
       sortOrder: _asInt(json['sort_order']) ?? 0,
+      audience: (json['audience'] ?? 'Both') as String,
     );
   }
 }
