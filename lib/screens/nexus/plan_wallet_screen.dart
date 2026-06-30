@@ -3,15 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/exceptions.dart';
-import '../../api/nexus/nexus_account_client.dart';
 import '../../api/nexus/nexus_billing_models.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/billing_providers.dart';
-import '../../providers/nav_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
+import '../../widgets/nexus/plan_picker.dart';
 
 /// Plan & wallet. Personal → prepaid wallet (balance, top-up, memberships,
 /// ledger). Business → Stripe subscription summary + manage.
@@ -82,19 +81,6 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
     try {
       await client.cancelMembership(id);
       _refresh();
-    } catch (e) {
-      _toast('$e');
-    }
-  }
-
-  Future<void> _portal() async {
-    final token = ref.read(authProvider).token;
-    if (token == null) return;
-    try {
-      final url = await NexusAccountClient(token: token).openBillingPortal();
-      if (url.isNotEmpty) {
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      }
     } catch (e) {
       _toast('$e');
     }
@@ -245,6 +231,14 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
             ),
       ],
       const SizedBox(height: 18),
+      const NexusSectionLabel('Subscription plans'),
+      const SizedBox(height: 4),
+      Text(
+          'AI subscription tiers (tokens, images & agent sessions) — billed via card, separate from your wallet.',
+          style: TextStyle(fontSize: 12, height: 1.4, color: t.muted)),
+      const SizedBox(height: 12),
+      const PlanPicker(showHeader: false, includePersonalAudience: false),
+      const SizedBox(height: 18),
       const NexusSectionLabel('Recent activity'),
       const SizedBox(height: 9),
       if (txns.isEmpty)
@@ -342,15 +336,9 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
         ),
       ),
       const SizedBox(height: 16),
-      if (subscribed)
-        NexusButton(
-            label: 'Manage plan & add-ons (Stripe portal)', onTap: _portal)
-      else
-        NexusButton(
-            label: 'Choose a plan',
-            onTap: () => ref
-                .read(overlayProvider.notifier)
-                .openSubSheet(section: 'plan')),
+      const NexusSectionLabel('Plans & add-ons'),
+      const SizedBox(height: 12),
+      const PlanPicker(showHeader: false, includePersonalAudience: false),
     ];
   }
 
