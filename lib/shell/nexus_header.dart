@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/account_provider.dart';
 import '../providers/app_mode_provider.dart';
+import '../providers/beacon_provider.dart';
 import '../providers/device_stats_provider.dart';
 import '../providers/nav_provider.dart';
 import '../providers/servers_provider.dart';
@@ -146,8 +147,19 @@ class NexusHeader extends ConsumerWidget {
         return _Status(t.warn, 'Subscription · sign in to route', 'signed out');
       case AppMode.local:
         final server = ref.watch(selectedServerProvider);
-        if (server == null) {
-          return _Status(t.warn, 'Local AI · no server selected', 'add server');
+        // The local server is discovered/selected asynchronously, so right after
+        // switching modes the previous (gateway) selection can linger for a beat.
+        // Treat "no local server yet" as a search-in-progress state instead of
+        // showing the subscription/gateway name.
+        final onLocalServer =
+            server != null && !server.baseUrl.contains('nexus-projects.ai');
+        if (!onLocalServer) {
+          final found = ref.watch(discoveredServersProvider).length;
+          if (found > 0) {
+            return _Status(t.accent2, 'Local AI · $found found nearby',
+                'tap to choose a server');
+          }
+          return _Status(t.warn, 'Local AI · Searching…', 'looking for servers');
         }
         final stats = ref.watch(systemStatsProvider).valueOrNull;
         final parts = <String>[];
