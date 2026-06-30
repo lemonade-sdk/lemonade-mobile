@@ -61,6 +61,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ref.invalidate(entitlementsProvider);
       ref.invalidate(walletBalanceProvider);
       ref.invalidate(accountSummaryProvider);
+      ref.invalidate(subscriptionDetailProvider);
     }
   }
 

@@ -178,9 +178,25 @@ class NexusAccountClient {
       _postJson(_uri('/billing/add-package'), {'key': key, 'quantity': quantity})
           .then((_) {});
 
-  /// POST /billing/remove-package — drop an add-on line.
+  /// POST /billing/remove-package — drop an add-on line. 404 not_on_subscription
+  /// if the package isn't on the subscription.
   Future<void> removePackage(String key) =>
       _postJson(_uri('/billing/remove-package'), {'key': key}).then((_) {});
+
+  /// GET /billing/subscription — current plan + the ACTIVE add-on lines. Source
+  /// of truth for which add-ons are on the subscription (so the picker shows an
+  /// accurate Add/Remove state per add-on, not a heuristic).
+  Future<SubscriptionDetail> fetchSubscription() async {
+    final json = await _getJson(_uri('/billing/subscription'));
+    return SubscriptionDetail.fromJson(json);
+  }
+
+  /// POST /billing/cancel — cancel the WHOLE subscription. [atPeriodEnd] true
+  /// (default) keeps access until the paid period ends; false ends it now.
+  /// 409 no_subscription if there's nothing to cancel.
+  Future<void> cancelSubscription({bool atPeriodEnd = true}) =>
+      _postJson(_uri('/billing/cancel'), {'atPeriodEnd': atPeriodEnd})
+          .then((_) {});
 
   // ── Usage / Account ─────────────────────────────────────────────────
 

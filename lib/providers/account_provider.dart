@@ -286,3 +286,13 @@ final agentUsageProvider =
 final plansProvider = FutureProvider.autoDispose<PlanCatalog>((ref) async {
   return NexusAccountClient().fetchPlans();
 });
+
+/// GET /billing/subscription — current plan + ACTIVE add-on lines. Null when
+/// signed out. Drives accurate per-add-on Add/Remove state in the plan picker.
+/// Invalidate after any plan/add-on/cancel change.
+final subscriptionDetailProvider =
+    FutureProvider.autoDispose<SubscriptionDetail?>((ref) async {
+  final auth = ref.watch(authProvider);
+  if (!auth.isSignedIn) return null;
+  return NexusAccountClient(token: auth.token).fetchSubscription();
+});

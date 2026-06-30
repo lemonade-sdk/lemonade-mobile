@@ -52,13 +52,17 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
     return audience == 'Both' || segment == null || audience == segment;
   }
 
-  /// Whether an add-on appears to already be on the subscription. Only the PBX
-  /// `phone_system` is reliably inferable (from the `pbx` capability).
-  bool _activeAddon(String key, NexusCapabilities caps) =>
-      key == 'phone_system' && caps.pbx;
+  /// Whether an add-on is currently on the subscription. Uses the authoritative
+  /// active-add-on list from GET /billing/subscription; before it loads, falls
+  /// back to inferring the PBX `phone_system` add-on from the `pbx` capability.
+  bool _activeAddon(String key, SubscriptionDetail? detail, NexusCapabilities caps) {
+    if (detail != null) return detail.activeAddonKeys.contains(key);
+    return key == 'phone_system' && caps.pbx;
+  }
 
   void _refresh() {
     ref.invalidate(accountSummaryProvider);
+    ref.invalidate(subscriptionDetailProvider);
     ref.invalidate(entitlementsProvider);
     ref.invalidate(walletBalanceProvider);
   }
@@ -84,6 +88,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
     final ent = ref.watch(entitlementsProvider).valueOrNull;
     final segment = ent?.segment;
     final caps = ent?.capabilities ?? const NexusCapabilities();
+    final detail = ref.watch(subscriptionDetailProvider).valueOrNull;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -136,29 +141,17 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
                           color: t.faint)),
                   const SizedBox(height: 10),
                   for (final a in addons)
-                    _addonCard(context, a, subscribed, caps),
+                    _addonCard(context, a, subscribed, detail, caps),
                 ],
                 const SizedBox(height: 6),
                 if (!subscribed)
                   _checkoutCta(context)
-                else
-                  GestureDetector(
-                    onTap: _openPortal,
-                    child: Container(
-                      width: double.infinity,
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      decoration: BoxDecoration(
-                          color: t.surface,
-                          borderRadius: BorderRadius.circular(13),
-                          border: Border.all(color: t.line2)),
-                      child: Text('Cancel / payment method (portal)',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: t.accent2)),
-                    ),
-                  ),
+                else ...[
+                  _cancelButton(context, detail),
+                  const SizedBox(height: 9),
+                  _portalButton(
+                      context, 'Manage billing / payment method (portal)'),
+                ],
               ],
             );
           },
@@ -180,6 +173,54 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
       busy: _busy,
       color: ready ? null : t.surface2,
       onTap: ready ? () => _checkout(_selectedPlan!) : null,
+    );
+  }
+
+  Widget _portalButton(BuildContext context, String label,
+      {bool danger = false}) {
+    final t = context.nexus;
+    return GestureDetector(
+      onTap: _openPortal,
+      child: Container(
+        width: double.infinity,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          color: t.surface,
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+              color: danger ? t.danger.withValues(alpha: 0.5) : t.line2),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: danger ? t.danger : t.accent2)),
+      ),
+    );
+  }
+
+  Widget _cancelButton(BuildContext context, SubscriptionDetail? detail) {
+    final t = context.nexus;
+    final scheduled = detail?.cancelAtPeriodEnd ?? false;
+    return GestureDetector(
+      onTap: _busy ? null : () => _confirmCancel(detail),
+      child: Container(
+        width: double.infinity,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          color: t.surface,
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: t.danger.withValues(alpha: 0.5)),
+        ),
+        child: Text(
+            scheduled
+                ? 'Cancellation scheduled at period end'
+                : 'Cancel subscription',
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w600, color: t.danger)),
+      ),
     );
   }
 
@@ -272,8 +313,8 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
     );
   }
 
-  Widget _addonCard(
-      BuildContext context, AddOn a, bool subscribed, NexusCapabilities caps) {
+  Widget _addonCard(BuildContext context, AddOn a, bool subscribed,
+      SubscriptionDetail? detail, NexusCapabilities caps) {
     final t = context.nexus;
     final price =
         '\$${(a.priceCents / 100).toStringAsFixed(a.priceCents % 100 == 0 ? 0 : 2)}';
@@ -282,7 +323,8 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
       if (a.bonusImages > 0) '+${a.bonusImages} images',
       if (a.bonusAgentSessions > 0) '+${a.bonusAgentSessions} sessions',
     ];
-    final active = _activeAddon(a.key, caps);
+    final active = _activeAddon(a.key, detail, caps);
+    final qty = detail?.addon(a.key)?.quantity ?? 1;
     final selectedForCheckout = _selectedAddons.contains(a.key);
     final busy = _busyKey == a.key;
 
@@ -300,6 +342,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
           height: 18,
           child: CircularProgressIndicator(strokeWidth: 2));
     } else {
+      // Add & remove are both immediate/prorated in-app.
       trailing = GestureDetector(
         onTap: () => active ? _removePackage(a.key) : _addPackage(a.key),
         child: Container(
@@ -351,6 +394,21 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
                             fontWeight: FontWeight.w700,
                             color: t.text)),
                   ),
+                  if (active && qty > 1) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                          color: t.surface2,
+                          borderRadius: BorderRadius.circular(5)),
+                      child: Text('×$qty',
+                          style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: t.accent2)),
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   Text('$price/mo',
                       style: TextStyle(
@@ -465,6 +523,62 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
       _toast('$e');
     } finally {
       if (mounted) setState(() => _busyKey = null);
+    }
+  }
+
+  String _fmtDate(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec' //
+    ];
+    final l = d.toLocal();
+    return '${months[l.month - 1]} ${l.day}, ${l.year}';
+  }
+
+  /// Cancel the whole subscription. Offers period-end (keep access) or now.
+  Future<void> _confirmCancel(SubscriptionDetail? detail) async {
+    final t = context.nexus;
+    final end = detail?.currentPeriodEnd;
+    final endLabel = end != null ? _fmtDate(end) : 'the end of the billing period';
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: t.bg2,
+        title: Text('Cancel subscription?',
+            style: TextStyle(color: t.text, fontWeight: FontWeight.w700)),
+        content: Text(
+            'Cancel at period end keeps full access until $endLabel. '
+            'End now stops it immediately.',
+            style: TextStyle(color: t.muted, fontSize: 13, height: 1.4)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Keep plan', style: TextStyle(color: t.muted))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, 'now'),
+              child: Text('End now', style: TextStyle(color: t.danger))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, 'period'),
+              child: Text('At period end',
+                  style: TextStyle(color: t.accent2))),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final token = ref.read(authProvider).token;
+    if (token == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await NexusAccountClient(token: token)
+          .cancelSubscription(atPeriodEnd: choice == 'period');
+      _refresh();
+      _toast(choice == 'period'
+          ? 'Subscription will cancel at period end.'
+          : 'Subscription canceled.');
+    } catch (e) {
+      _toast('$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 

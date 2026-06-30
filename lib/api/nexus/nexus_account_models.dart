@@ -312,6 +312,91 @@ class AccountSummary {
   }
 }
 
+/// One active add-on line on the subscription (GET /billing/subscription →
+/// `addons[]`). `key` is what you pass to /billing/remove-package.
+class SubscriptionAddon {
+  final String key;
+  final String name;
+  final int priceCents;
+  final int quantity;
+  final bool suspended;
+
+  const SubscriptionAddon({
+    required this.key,
+    this.name = '',
+    this.priceCents = 0,
+    this.quantity = 1,
+    this.suspended = false,
+  });
+
+  factory SubscriptionAddon.fromJson(Map<String, dynamic> json) {
+    return SubscriptionAddon(
+      key: (json['key'] ?? '') as String,
+      name: (json['name'] ?? '') as String,
+      priceCents: _asInt(json['priceCents'] ?? json['price_cents']) ?? 0,
+      quantity: _asInt(json['quantity']) ?? 1,
+      suspended: (json['suspended'] ?? false) as bool,
+    );
+  }
+}
+
+/// GET /billing/subscription — current plan + the ACTIVE add-on lines, the
+/// source of truth for in-app add-on management (the public /plans catalog only
+/// lists what's *available*, not what's *on* the subscription).
+class SubscriptionDetail {
+  final String status;
+  final bool hasSubscription;
+  final DateTime? currentPeriodEnd;
+  final bool cancelAtPeriodEnd;
+  final String? planKey;
+  final String? planName;
+  final int planPriceCents;
+  final List<SubscriptionAddon> addons;
+
+  const SubscriptionDetail({
+    this.status = 'None',
+    this.hasSubscription = false,
+    this.currentPeriodEnd,
+    this.cancelAtPeriodEnd = false,
+    this.planKey,
+    this.planName,
+    this.planPriceCents = 0,
+    this.addons = const [],
+  });
+
+  /// Keys of add-ons currently on the subscription — drives accurate
+  /// Add/Remove state per add-on in the picker.
+  Set<String> get activeAddonKeys => addons.map((a) => a.key).toSet();
+
+  SubscriptionAddon? addon(String key) {
+    for (final a in addons) {
+      if (a.key == key) return a;
+    }
+    return null;
+  }
+
+  factory SubscriptionDetail.fromJson(Map<String, dynamic> json) {
+    final plan = _asMap(json['plan']);
+    return SubscriptionDetail(
+      status: (json['status'] ?? 'None') as String,
+      hasSubscription: (json['has_subscription'] ??
+          json['hasSubscription'] ??
+          false) as bool,
+      currentPeriodEnd:
+          _asDate(json['current_period_end'] ?? json['currentPeriodEnd']),
+      cancelAtPeriodEnd: (json['cancel_at_period_end'] ??
+          json['cancelAtPeriodEnd'] ??
+          false) as bool,
+      planKey: plan['key'] as String?,
+      planName: plan['name'] as String?,
+      planPriceCents: _asInt(plan['priceCents'] ?? plan['price_cents']) ?? 0,
+      addons: _asList(json['addons'])
+          .map((e) => SubscriptionAddon.fromJson(_asMap(e)))
+          .toList(),
+    );
+  }
+}
+
 /// One agent's usage roll-up from GET /usage/agents. `agent` is the
 /// X-Nexus-Agent label, or "(unattributed)" for calls sent without it.
 class AgentUsageRow {

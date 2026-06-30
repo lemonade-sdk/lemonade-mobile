@@ -37,6 +37,7 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
     ref.invalidate(walletTransactionsProvider);
     ref.invalidate(availableMembershipsProvider);
     ref.invalidate(accountSummaryProvider);
+    ref.invalidate(subscriptionDetailProvider);
   }
 
   Future<void> _topup(int amountCents) async {
