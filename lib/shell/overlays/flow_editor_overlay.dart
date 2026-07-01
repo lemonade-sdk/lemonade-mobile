@@ -45,6 +45,7 @@ class FlowEditorOverlay extends ConsumerStatefulWidget {
 
 class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
   final _name = TextEditingController(text: 'New flow');
+  final _scroll = ScrollController();
   final List<_Node> _nodes = [];
   final Map<String, TextEditingController> _ctrls = {};
   String? _entryId;
@@ -82,6 +83,7 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
   @override
   void dispose() {
     _name.dispose();
+    _scroll.dispose();
     for (final c in _ctrls.values) {
       c.dispose();
     }
@@ -183,6 +185,14 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
   Future<void> _save() async {
     final client = ref.read(nexusVoiceClientProvider);
     if (client == null || _saving) return;
+    if (_nodes.isEmpty) {
+      _toast('Add at least one node before saving.');
+      return;
+    }
+    if (_entryId == null || !_nodes.any((n) => n.id == _entryId)) {
+      _toast('Set an entry node before saving.');
+      return;
+    }
     setState(() => _saving = true);
     try {
       final json = _toJson();
@@ -220,45 +230,49 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
     final type = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: t.bg2,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Add a node',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: t.text)),
-              const SizedBox(height: 13),
-              Wrap(
-                spacing: 9,
-                runSpacing: 9,
-                children: [
-                  for (final e in _typeMeta.entries)
-                    GestureDetector(
-                      onTap: () => Navigator.pop(ctx, e.key),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 12),
-                        decoration: BoxDecoration(
-                            color: t.surface,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: t.line2)),
-                        child: Text(e.value.name,
-                            style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: t.text)),
+        // Scrollable so the chip grid doesn't clip on short screens.
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Add a node',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: t.text)),
+                const SizedBox(height: 13),
+                Wrap(
+                  spacing: 9,
+                  runSpacing: 9,
+                  children: [
+                    for (final e in _typeMeta.entries)
+                      GestureDetector(
+                        onTap: () => Navigator.pop(ctx, e.key),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                              color: t.surface,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: t.line2)),
+                          child: Text(e.value.name,
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: t.text)),
+                        ),
                       ),
-                    ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -285,46 +299,50 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        for (final n in _nodes) _nodeCard(context, n),
-                        GestureDetector(
-                          onTap: _addNode,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: t.line2, width: 1.5),
+                  : Scrollbar(
+                      controller: _scroll,
+                      child: ListView(
+                        controller: _scroll,
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          for (final n in _nodes) _nodeCard(context, n),
+                          GestureDetector(
+                            onTap: _addNode,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: t.line2, width: 1.5),
+                              ),
+                              child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.add, size: 16, color: t.accent2),
+                                    const SizedBox(width: 8),
+                                    Text('Add node',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: t.accent2)),
+                                  ]),
                             ),
-                            child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.add, size: 16, color: t.accent2),
-                                  const SizedBox(width: 8),
-                                  Text('Add node',
-                                      style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: t.accent2)),
-                                ]),
                           ),
-                        ),
-                        if (widget.flowId != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 18),
-                            child: GestureDetector(
-                              onTap: _deleteFlow,
-                              child: Center(
-                                child: Text('Delete this flow',
-                                    style: TextStyle(
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w600,
-                                        color: t.danger)),
+                          if (widget.flowId != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 18),
+                              child: GestureDetector(
+                                onTap: _deleteFlow,
+                                child: Center(
+                                  child: Text('Delete this flow',
+                                      style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: t.danger)),
+                                ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
             ),
           ],

@@ -16,18 +16,9 @@ import '../../screens/nexus/team_screen.dart';
 import '../../screens/omni_router_screen.dart';
 import '../../screens/servers_screen.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../widgets/nexus/gateway_gate.dart';
 import '../../widgets/nexus/model_manager.dart';
 import '../../widgets/nexus/nexus_ui.dart';
-
-/// Local cosmetic toggles that have no backend yet (notifications, e2e, etc.).
-/// Kept in memory; the IndexedStack keeps the tab alive so they persist for the
-/// session.
-final _localToggles = StateProvider<Map<String, bool>>((ref) => {
-      'notif': true,
-      'e2e': true,
-      'callRecord': true,
-      'liveTranscribe': true,
-    });
 
 class SettingsTab extends ConsumerWidget {
   const SettingsTab({super.key});
@@ -107,16 +98,11 @@ class SettingsTab extends ConsumerWidget {
     final auth = ref.watch(authProvider);
     final omni = ref.watch(omniRouterEnabledProvider);
     final theme = ref.watch(themeProvider);
-    final toggles = ref.watch(_localToggles);
     final voiceSettings = mode == AppMode.subscription
         ? ref.watch(voiceSettingsProvider).valueOrNull
         : null;
     final hasPbx = mode == AppMode.subscription &&
         ref.watch(hasCapabilityProvider('pbx'));
-
-    void setToggle(String key, bool v) {
-      ref.read(_localToggles.notifier).state = {...toggles, key: v};
-    }
 
     return [
       // Account / subscription only belongs in Subscription mode.
@@ -139,6 +125,8 @@ class SettingsTab extends ConsumerWidget {
             onTap: () {
               if (auth.isSignedIn) {
                 ref.read(authProvider.notifier).logout();
+              } else {
+                SignInScreen.push(context);
               }
             },
           ),
@@ -174,7 +162,12 @@ class SettingsTab extends ConsumerWidget {
                 try {
                   await client.updateSettings(recordCalls: v);
                   ref.invalidate(voiceSettingsProvider);
-                } catch (_) {}
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text('Couldn’t update recording: $e')));
+                  }
+                }
               }),
           if (voiceSettings != null)
             _valueRow(context, 'Channels',
@@ -199,12 +192,11 @@ class SettingsTab extends ConsumerWidget {
                   builder: (_) => const KnowledgePagesScreen()))),
         ]),
       _group(context, 'Privacy & notifications', [
+        // Not wired to a backend yet — disabled so they don't read as real.
         _toggleRow(context, 'End-to-end encryption',
-            value: toggles['e2e'] ?? true,
-            onChanged: (v) => setToggle('e2e', v)),
+            sub: 'Coming soon', value: false, onChanged: null),
         _toggleRow(context, 'Push notifications',
-            value: toggles['notif'] ?? true,
-            onChanged: (v) => setToggle('notif', v)),
+            sub: 'Coming soon', value: false, onChanged: null),
       ]),
       _group(context, 'Appearance', [
         _valueRow(context, 'Theme', theme.displayName),
@@ -263,7 +255,9 @@ class SettingsTab extends ConsumerWidget {
   }
 
   Widget _toggleRow(BuildContext context, String label,
-      {String? sub, required bool value, required ValueChanged<bool> onChanged}) {
+      {String? sub,
+      required bool value,
+      required ValueChanged<bool>? onChanged}) {
     return _rowShell(
       context,
       child: Row(children: [

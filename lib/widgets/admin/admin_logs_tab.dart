@@ -99,6 +99,9 @@ class _AdminLogsTabState extends ConsumerState<AdminLogsTab> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Filter once per build — doing it per row made the list O(n²) with up to
+    // 5000 buffered entries.
+    final visible = _visible().toList();
     return Column(
       children: [
         Padding(
@@ -157,10 +160,9 @@ class _AdminLogsTabState extends ConsumerState<AdminLogsTab> {
         Expanded(
           child: ListView.builder(
             reverse: true,
-            itemCount: _visible().length,
+            itemCount: visible.length,
             itemBuilder: (context, idx) {
-              final list = _visible().toList();
-              final entry = list[list.length - 1 - idx];
+              final entry = visible[visible.length - 1 - idx];
               return _LogRow(entry: entry);
             },
           ),

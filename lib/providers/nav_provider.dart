@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 enum NexusTab { chat, projects, calls, pbx, docs, settings }
 
 /// PBX sub-navigation.
-enum PbxSection { numbers, extensions, flows, voicemail }
+enum PbxSection { numbers, extensions, flows, voicemail, history }
 
 /// Currently selected bottom-nav tab.
 final navTabProvider = StateProvider<NexusTab>((ref) => NexusTab.chat);
@@ -22,7 +22,6 @@ enum NexusOverlayKind {
   conversationsDrawer,
   modeSheet,
   subSheet,
-  voiceCall,
   liveCall,
   flowEditor,
   numberRouting,
@@ -78,9 +77,6 @@ class _OverlayNotifier extends StateNotifier<NexusOverlayState> {
 
   void openSubSheet({String section = 'plan'}) => state =
       NexusOverlayState(kind: NexusOverlayKind.subSheet, subSheetSection: section);
-
-  void openVoiceCall() =>
-      state = const NexusOverlayState(kind: NexusOverlayKind.voiceCall);
 
   void openLiveCall(int taskId) =>
       state = NexusOverlayState(kind: NexusOverlayKind.liveCall, taskId: taskId);

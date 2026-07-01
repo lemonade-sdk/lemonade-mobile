@@ -44,8 +44,10 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
   String? _installing; // variant name being installed
   double _installPct = 0;
   // backends
+  final Set<String> _expandedRecipes = {}; // recipe groups open in the UI
   Map<String, dynamic>? _systemInfo;
   bool _loadedSysInfo = false;
+  String? _backendBusy; // "recipe/backend" currently installing/removing
 
   @override
   void initState() {
@@ -607,6 +609,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
   }
 
   Widget _backends(BuildContext context) {
+    final t = context.nexus;
     if (!_loadedSysInfo) {
       return const Padding(
           padding: EdgeInsets.symmetric(vertical: 12),
@@ -615,36 +618,169 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     final recipes = (_systemInfo?['recipes'] as Map?) ?? const {};
     if (recipes.isEmpty) return const SizedBox.shrink();
 
-    // Flatten recipe → backend entries, showing only backends this machine can
-    // actually run. Each backend has a `state`: unsupported | installable |
-    // update_required | installed — anything `unsupported` (or missing) is not
-    // available on this hardware and is hidden.
-    final rows = <Widget>[];
+    // Group backends by recipe instead of one flat wall of rows. Only
+    // backends this machine can actually run are shown. Each backend has a
+    // `state`: unsupported | installable | update_required | installed —
+    // anything `unsupported` (or missing) is hidden.
+    final groups = <_BackendGroup>[];
     recipes.forEach((recipe, info) {
       if (info is! Map) return;
       final backends = (info['backends'] as Map?) ?? const {};
+      final entries = <_BackendEntry>[];
       backends.forEach((backend, binfo) {
         if (binfo is! Map) return;
         final state = (binfo['state'] ?? '').toString();
         if (state.isEmpty || state == 'unsupported') return;
         final device = (binfo['device'] ?? binfo['status'] ?? '').toString();
-        rows.add(_backendRow(context, '$recipe', '$backend', device, state));
+        entries.add(_BackendEntry('$backend', device, state));
       });
+      if (entries.isEmpty) return;
+      // Installed first, then updates, then installable; alphabetical within.
+      int rank(_BackendEntry e) => e.state == 'installed'
+          ? 0
+          : e.state == 'update_required'
+              ? 1
+              : 2;
+      entries.sort((a, b) {
+        final r = rank(a).compareTo(rank(b));
+        return r != 0 ? r : a.backend.compareTo(b.backend);
+      });
+      groups.add(_BackendGroup('$recipe', entries));
     });
-    if (rows.isEmpty) return const SizedBox.shrink();
+    if (groups.isEmpty) return const SizedBox.shrink();
+
+    // Recipes with something installed float to the top.
+    groups.sort((a, b) {
+      final r = (b.installedCount > 0 ? 1 : 0) -
+          (a.installedCount > 0 ? 1 : 0);
+      return r != 0 ? r : a.recipe.compareTo(b.recipe);
+    });
+    final totalInstalled =
+        groups.fold<int>(0, (n, g) => n + g.installedCount);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const NexusSectionLabel('Inference backends'),
-        const SizedBox(height: 10),
-        NexusCard(
-          padding: EdgeInsets.zero,
-          radius: 15,
-          child: Column(children: rows),
+        Row(
+          children: [
+            const NexusSectionLabel('Inference backends'),
+            const Spacer(),
+            Text(
+                '$totalInstalled installed · '
+                '${groups.length} engine${groups.length == 1 ? '' : 's'}',
+                style: TextStyle(fontSize: 11, color: t.muted)),
+          ],
         ),
+        const SizedBox(height: 10),
+        for (final g in groups) ...[
+          _recipeGroup(context, g),
+          const SizedBox(height: 8),
+        ],
       ],
     );
+  }
+
+  Widget _recipeGroup(BuildContext context, _BackendGroup g) {
+    final t = context.nexus;
+    final expanded = _expandedRecipes.contains(g.recipe) ||
+        // Keep the group open while one of its backends is installing.
+        (_backendBusy?.startsWith('${g.recipe}/') ?? false);
+    final updates = g.updateCount;
+
+    return NexusCard(
+      padding: EdgeInsets.zero,
+      radius: 15,
+      child: Column(children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(15),
+          onTap: () => setState(() {
+            expanded
+                ? _expandedRecipes.remove(g.recipe)
+                : _expandedRecipes.add(g.recipe);
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            child: Row(children: [
+              if (g.installedCount > 0) ...[
+                NexusStatusDot(color: t.good, size: 6, pulse: false),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(g.recipe,
+                        style: nexusMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: t.text)),
+                    const SizedBox(height: 2),
+                    Text(
+                        g.installedCount > 0
+                            ? '${g.installedCount} of ${g.entries.length} installed'
+                            : '${g.entries.length} available',
+                        style: TextStyle(fontSize: 11, color: t.muted)),
+                  ],
+                ),
+              ),
+              if (updates > 0)
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: t.accentSoft,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                      updates == 1 ? 'update' : '$updates updates',
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: t.warn)),
+                ),
+              AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: Icon(Icons.expand_more, size: 19, color: t.faint),
+              ),
+            ]),
+          ),
+        ),
+        AnimatedCrossFade(
+          duration: const Duration(milliseconds: 180),
+          crossFadeState: expanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          firstChild: const SizedBox(width: double.infinity),
+          secondChild: Column(children: [
+            Divider(color: t.line, height: 1),
+            for (final e in g.entries)
+              _backendRow(context, g.recipe, e.backend, e.device, e.state),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _backendAction(
+      String recipe, String backend, bool installed, bool needsUpdate) async {
+    final admin = _admin;
+    if (admin == null || _backendBusy != null) return;
+    setState(() => _backendBusy = '$recipe/$backend');
+    try {
+      if (installed) {
+        await admin.uninstall(recipe: recipe, backend: backend);
+      } else {
+        await admin.install(
+            recipe: recipe, backend: backend, force: needsUpdate);
+      }
+      await _fetchSystemInfo();
+    } catch (e) {
+      _toast('$e');
+    } finally {
+      if (mounted) setState(() => _backendBusy = null);
+    }
   }
 
   Widget _backendRow(BuildContext context, String recipe, String backend,
@@ -652,66 +788,67 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     final t = context.nexus;
     final installed = state == 'installed';
     final needsUpdate = state == 'update_required';
+    final busy = _backendBusy == '$recipe/$backend';
     final (label, color, bg, border) = installed
         ? ('Remove', t.danger, t.surface2, true)
         : needsUpdate
             ? ('Update', t.warn, t.accentSoft, false)
             : ('Install', t.accent2, t.accentSoft, false);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      child: Row(children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Flexible(
-                  child: Text('$recipe · $backend',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: nexusMono(
-                          fontSize: 13,
+    return Opacity(
+      opacity: busy ? 0.6 : 1,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: Row(children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Flexible(
+                    child: Text(backend,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: nexusMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: t.text)),
+                  ),
+                  if (installed) ...[
+                    const SizedBox(width: 7),
+                    NexusStatusDot(color: t.good, size: 6, pulse: false),
+                  ],
+                ]),
+                if (device.isNotEmpty)
+                  Text(device, style: TextStyle(fontSize: 11, color: t.muted)),
+              ],
+            ),
+          ),
+          GestureDetector(
+            // One backend operation at a time; the busy row shows a spinner.
+            onTap: _backendBusy != null
+                ? null
+                : () => _backendAction(recipe, backend, installed, needsUpdate),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+              decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: border ? Border.all(color: t.line2) : null),
+              child: busy
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: color))
+                  : Text(label,
+                      style: TextStyle(
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: t.text)),
-                ),
-                if (installed) ...[
-                  const SizedBox(width: 7),
-                  NexusStatusDot(color: t.good, size: 6, pulse: false),
-                ],
-              ]),
-              if (device.isNotEmpty)
-                Text(device, style: TextStyle(fontSize: 11, color: t.muted)),
-            ],
+                          color: color)),
+            ),
           ),
-        ),
-        GestureDetector(
-          onTap: () async {
-            final admin = _admin;
-            if (admin == null) return;
-            try {
-              if (installed) {
-                await admin.uninstall(recipe: recipe, backend: backend);
-              } else {
-                await admin.install(
-                    recipe: recipe, backend: backend, force: needsUpdate);
-              }
-              _fetchSystemInfo();
-            } catch (e) {
-              _toast('$e');
-            }
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-            decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.circular(10),
-                border: border ? Border.all(color: t.line2) : null),
-            child: Text(label,
-                style: TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w600, color: color)),
-          ),
-        ),
-      ]),
+        ]),
+      ),
     );
   }
 
@@ -766,4 +903,23 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
               style: TextStyle(fontSize: 12.5, color: t.muted))),
     );
   }
+}
+
+/// One recipe's runnable backends, pre-sorted for display.
+class _BackendGroup {
+  final String recipe;
+  final List<_BackendEntry> entries;
+  _BackendGroup(this.recipe, this.entries);
+
+  int get installedCount =>
+      entries.where((e) => e.state == 'installed').length;
+  int get updateCount =>
+      entries.where((e) => e.state == 'update_required').length;
+}
+
+class _BackendEntry {
+  final String backend;
+  final String device;
+  final String state;
+  _BackendEntry(this.backend, this.device, this.state);
 }

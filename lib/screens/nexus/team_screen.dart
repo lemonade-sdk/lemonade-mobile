@@ -20,17 +20,36 @@ class TeamScreen extends ConsumerWidget {
       title: 'Team',
       body: team.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) =>
-            Center(child: Text('$e', style: TextStyle(color: t.danger))),
+        error: (e, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('$e',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: t.danger)),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => ref.invalidate(voiceTeamProvider),
+                  child: Text('Retry', style: TextStyle(color: t.accent2)),
+                ),
+              ],
+            ),
+          ),
+        ),
         data: (members) => members.isEmpty
             ? Center(
                 child: Text('No team members.',
                     style: TextStyle(color: t.muted)))
-            : ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemCount: members.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (_, i) => _row(context, members[i]),
+            : Scrollbar(
+                child: ListView.separated(
+                  padding: EdgeInsets.fromLTRB(
+                      16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+                  itemCount: members.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (_, i) => _row(context, members[i]),
+                ),
               ),
       ),
     );

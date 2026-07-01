@@ -7,6 +7,7 @@ import '../widgets/admin/admin_dashboard_tab.dart';
 import '../widgets/admin/admin_logs_tab.dart';
 import '../widgets/admin/admin_models_tab.dart';
 import '../widgets/admin/admin_system_info_tab.dart';
+import 'servers_screen.dart';
 
 /// Five-tab console for managing the connected Lemonade server.
 class AdminConsoleScreen extends ConsumerWidget {
@@ -19,12 +20,24 @@ class AdminConsoleScreen extends ConsumerWidget {
     if (client == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Admin')),
-        body: const Center(
+        body: Center(
           child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'Select a server first to access admin features.',
-              textAlign: TextAlign.center,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Select a server first to access admin features.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const ServersScreen())),
+                  icon: const Icon(Icons.dns_outlined),
+                  label: const Text('Manage servers'),
+                ),
+              ],
             ),
           ),
         ),

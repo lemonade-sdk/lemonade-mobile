@@ -34,7 +34,8 @@ class AgentsScreen extends ConsumerWidget {
                 child: Text('No agents yet — tap + to create one.',
                     style: TextStyle(color: t.muted)))
             : ListView.separated(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
                 itemCount: list.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (_, i) => _row(context, list[i]),
@@ -103,6 +104,7 @@ class _AgentEditorState extends ConsumerState<AgentEditor> {
   final _webhookUrl = TextEditingController();
   final _webhookSecret = TextEditingController();
   final _test = TextEditingController();
+  final _scroll = ScrollController();
 
   bool _enabled = true;
   bool _allowThinking = false;
@@ -137,6 +139,7 @@ class _AgentEditorState extends ConsumerState<AgentEditor> {
     ]) {
       c.dispose();
     }
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -214,6 +217,25 @@ class _AgentEditorState extends ConsumerState<AgentEditor> {
   Future<void> _delete() async {
     final client = ref.read(nexusAgentsClientProvider);
     if (client == null || widget.agentId == null) return;
+    final name = _name.text.trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete agent?'),
+        content: Text(
+            'Delete ${name.isEmpty ? 'this agent' : '"$name"'}? This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Delete',
+                  style: TextStyle(color: ctx.nexus.danger))),
+        ],
+      ),
+    );
+    if (ok != true) return;
     try {
       await client.deleteAgent(widget.agentId!);
       ref.invalidate(agentsProvider);
@@ -250,119 +272,126 @@ class _AgentEditorState extends ConsumerState<AgentEditor> {
   @override
   Widget build(BuildContext context) {
     final t = context.nexus;
-    final options = ref.watch(agentOptionsProvider).valueOrNull ??
-        const NexusAgentOptions();
+    final optionsAsync = ref.watch(agentOptionsProvider);
+    final options = optionsAsync.valueOrNull ?? const NexusAgentOptions();
     final tools = ref.watch(httpToolsProvider).valueOrNull ?? const [];
 
     return NexusPage(
       title: widget.agentId == null ? 'New agent' : 'Edit agent',
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                NexusField(label: 'Name', controller: _name, hint: 'Ava'),
-                NexusField(
-                    label: 'System prompt',
-                    controller: _prompt,
-                    hint: 'You are a helpful receptionist for…',
-                    lines: 5),
-                NexusField(
-                    label: 'Greeting',
-                    controller: _greeting,
-                    hint: 'Thanks for calling…',
-                    lines: 2),
-                _modelPicker(context, options),
-                Row(children: [
-                  Expanded(
-                      child: NexusField(
-                          label: 'TTS voice',
-                          controller: _ttsVoice,
-                          hint: 'af_heart')),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                      width: 110,
-                      child: NexusField(
-                          label: 'Max turns',
-                          controller: _maxTurns,
-                          keyboard: TextInputType.number)),
-                ]),
-                const NexusSectionLabel('Capabilities'),
-                const SizedBox(height: 6),
-                _cap('Thinking', _allowThinking, (v) => _allowThinking = v),
-                _cap('Transfer calls', _allowTransfer, (v) => _allowTransfer = v),
-                _cap('Screened transfer', _allowScreenedTransfer,
-                    (v) => _allowScreenedTransfer = v),
-                _cap('Voicemail', _allowVoicemail, (v) => _allowVoicemail = v),
-                _cap('Take a message', _allowTakeMessage,
-                    (v) => _allowTakeMessage = v),
-                _cap('Send SMS', _allowSms, (v) => _allowSms = v),
-                _cap('Web search', _allowWebSearch, (v) => _allowWebSearch = v),
-                const SizedBox(height: 14),
-                if (tools.isNotEmpty) ...[
-                  const NexusSectionLabel('HTTP tools'),
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 7, runSpacing: 7, children: [
-                    for (final tool in tools)
-                      _chip(context, tool.name, _toolIds.contains(tool.id),
-                          () => setState(() => _toolIds.contains(tool.id)
-                              ? _toolIds.remove(tool.id)
-                              : _toolIds.add(tool.id))),
+          : Scrollbar(
+              controller: _scroll,
+              child: ListView(
+                controller: _scroll,
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+                children: [
+                  NexusField(label: 'Name', controller: _name, hint: 'Ava'),
+                  NexusField(
+                      label: 'System prompt',
+                      controller: _prompt,
+                      hint: 'You are a helpful receptionist for…',
+                      lines: 5),
+                  NexusField(
+                      label: 'Greeting',
+                      controller: _greeting,
+                      hint: 'Thanks for calling…',
+                      lines: 2),
+                  _modelPicker(context, optionsAsync),
+                  Row(children: [
+                    Expanded(
+                        child: NexusField(
+                            label: 'TTS voice',
+                            controller: _ttsVoice,
+                            hint: 'af_heart')),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                        width: 110,
+                        child: NexusField(
+                            label: 'Max turns',
+                            controller: _maxTurns,
+                            keyboard: TextInputType.number)),
                   ]),
+                  const NexusSectionLabel('Capabilities'),
+                  const SizedBox(height: 6),
+                  _cap('Thinking', _allowThinking, (v) => _allowThinking = v),
+                  _cap('Transfer calls', _allowTransfer,
+                      (v) => _allowTransfer = v),
+                  _cap('Screened transfer', _allowScreenedTransfer,
+                      (v) => _allowScreenedTransfer = v),
+                  _cap('Voicemail', _allowVoicemail, (v) => _allowVoicemail = v),
+                  _cap('Take a message', _allowTakeMessage,
+                      (v) => _allowTakeMessage = v),
+                  _cap('Send SMS', _allowSms, (v) => _allowSms = v),
+                  _cap('Web search', _allowWebSearch,
+                      (v) => _allowWebSearch = v),
                   const SizedBox(height: 14),
-                ],
-                if (options.collections.isNotEmpty) ...[
-                  const NexusSectionLabel('Knowledge collections'),
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 7, runSpacing: 7, children: [
-                    for (final c in options.collections)
-                      _chip(context, '${c.name} (${c.documentCount})',
-                          _collectionIds.contains(c.id),
-                          () => setState(() => _collectionIds.contains(c.id)
-                              ? _collectionIds.remove(c.id)
-                              : _collectionIds.add(c.id))),
-                  ]),
-                  const SizedBox(height: 14),
-                ],
-                const NexusSectionLabel('SMS & webhook'),
-                const SizedBox(height: 10),
-                _smsFromPicker(context, options),
-                NexusField(
-                    label: 'Notify SMS number',
-                    controller: _notifySms,
-                    hint: '+1 415 555 0148'),
-                NexusField(
-                    label: 'Webhook URL',
-                    controller: _webhookUrl,
-                    hint: 'https://…'),
-                NexusField(
-                    label: _hasSecret
-                        ? 'Webhook secret (set — blank keeps it)'
-                        : 'Webhook secret',
-                    controller: _webhookSecret,
-                    hint: '••••'),
-                NexusToggleTile(
-                    label: 'Enabled',
-                    value: _enabled,
-                    onChanged: (v) => setState(() => _enabled = v)),
-                const SizedBox(height: 16),
-                NexusButton(label: 'Save agent', busy: _saving, onTap: _save),
-                if (widget.agentId != null) ...[
-                  const SizedBox(height: 18),
-                  _testChat(context),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 14),
-                    child: GestureDetector(
-                      onTap: _delete,
-                      child: Center(
-                          child: Text('Delete agent',
-                              style: TextStyle(
-                                  color: t.danger,
-                                  fontWeight: FontWeight.w600))),
+                  if (tools.isNotEmpty) ...[
+                    const NexusSectionLabel('HTTP tools'),
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 7, runSpacing: 7, children: [
+                      for (final tool in tools)
+                        _chip(context, tool.name, _toolIds.contains(tool.id),
+                            () => setState(() => _toolIds.contains(tool.id)
+                                ? _toolIds.remove(tool.id)
+                                : _toolIds.add(tool.id))),
+                    ]),
+                    const SizedBox(height: 14),
+                  ],
+                  if (options.collections.isNotEmpty) ...[
+                    const NexusSectionLabel('Knowledge collections'),
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 7, runSpacing: 7, children: [
+                      for (final c in options.collections)
+                        _chip(context, '${c.name} (${c.documentCount})',
+                            _collectionIds.contains(c.id),
+                            () => setState(() => _collectionIds.contains(c.id)
+                                ? _collectionIds.remove(c.id)
+                                : _collectionIds.add(c.id))),
+                    ]),
+                    const SizedBox(height: 14),
+                  ],
+                  const NexusSectionLabel('SMS & webhook'),
+                  const SizedBox(height: 10),
+                  _smsFromPicker(context, options),
+                  NexusField(
+                      label: 'Notify SMS number',
+                      controller: _notifySms,
+                      hint: '+1 415 555 0148'),
+                  NexusField(
+                      label: 'Webhook URL',
+                      controller: _webhookUrl,
+                      hint: 'https://…'),
+                  NexusField(
+                      label: _hasSecret
+                          ? 'Webhook secret (set — blank keeps it)'
+                          : 'Webhook secret',
+                      controller: _webhookSecret,
+                      hint: '••••'),
+                  NexusToggleTile(
+                      label: 'Enabled',
+                      value: _enabled,
+                      onChanged: (v) => setState(() => _enabled = v)),
+                  const SizedBox(height: 16),
+                  NexusButton(label: 'Save agent', busy: _saving, onTap: _save),
+                  if (widget.agentId != null) ...[
+                    const SizedBox(height: 18),
+                    _testChat(context),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: GestureDetector(
+                        onTap: _delete,
+                        child: Center(
+                            child: Text('Delete agent',
+                                style: TextStyle(
+                                    color: t.danger,
+                                    fontWeight: FontWeight.w600))),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
     );
   }
@@ -371,10 +400,9 @@ class _AgentEditorState extends ConsumerState<AgentEditor> {
       NexusToggleTile(
           label: label, value: value, onChanged: (v) => setState(() => set(v)));
 
-  Widget _modelPicker(BuildContext context, NexusAgentOptions o) {
+  Widget _modelPicker(
+      BuildContext context, AsyncValue<NexusAgentOptions> optionsAsync) {
     final t = context.nexus;
-    final models = o.chatModels;
-    final value = models.contains(_chatModel) ? _chatModel : null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 13),
       child: Column(
@@ -389,32 +417,86 @@ class _AgentEditorState extends ConsumerState<AgentEditor> {
                     letterSpacing: 0.5,
                     color: t.faint)),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-                color: t.bg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: t.line2)),
-            child: DropdownButton<String>(
-              value: value,
-              isExpanded: true,
-              dropdownColor: t.bg2,
-              underline: const SizedBox.shrink(),
-              hint: Text(
-                  _chatModel.isEmpty ? 'Select a model' : _chatModel,
-                  style: TextStyle(color: t.muted, fontSize: 13)),
-              items: [
-                for (final m in models)
-                  DropdownMenuItem(
-                      value: m,
-                      child: Text(m,
-                          style: nexusMono(fontSize: 13, color: t.text)))
-              ],
-              onChanged: (v) => setState(() => _chatModel = v ?? ''),
+          // Surface loading/error instead of an empty dropdown.
+          optionsAsync.when(
+            loading: () => _pickerShell(
+              context,
+              Row(children: [
+                const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 10),
+                Text('Loading models…',
+                    style: TextStyle(color: t.muted, fontSize: 13)),
+              ]),
             ),
+            error: (e, _) => _pickerShell(
+              context,
+              Row(children: [
+                Expanded(
+                  child: Text('Couldn’t load models',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: t.danger, fontSize: 13)),
+                ),
+                GestureDetector(
+                  onTap: () => ref.invalidate(agentOptionsProvider),
+                  child: Text('Retry',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: t.accent2)),
+                ),
+              ]),
+            ),
+            data: (o) {
+              final models = o.chatModels;
+              final value = models.contains(_chatModel) ? _chatModel : null;
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                    color: t.bg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: t.line2)),
+                child: DropdownButton<String>(
+                  value: value,
+                  isExpanded: true,
+                  dropdownColor: t.bg2,
+                  underline: const SizedBox.shrink(),
+                  hint: Text(
+                      _chatModel.isEmpty
+                          ? (models.isEmpty
+                              ? 'No models available'
+                              : 'Select a model')
+                          : _chatModel,
+                      style: TextStyle(color: t.muted, fontSize: 13)),
+                  items: [
+                    for (final m in models)
+                      DropdownMenuItem(
+                          value: m,
+                          child: Text(m,
+                              style: nexusMono(fontSize: 13, color: t.text)))
+                  ],
+                  onChanged: (v) => setState(() => _chatModel = v ?? ''),
+                ),
+              );
+            },
           ),
         ],
       ),
+    );
+  }
+
+  Widget _pickerShell(BuildContext context, Widget child) {
+    final t = context.nexus;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+          color: t.bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: t.line2)),
+      child: child,
     );
   }
 

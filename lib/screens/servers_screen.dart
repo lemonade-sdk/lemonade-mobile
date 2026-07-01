@@ -21,6 +21,7 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
   final _nameController = TextEditingController();
   final _urlController = TextEditingController();
   final _apiKeyController = TextEditingController();
+  final _scrollController = ScrollController();
   bool _isTestingServer = false;
 
   @override
@@ -28,6 +29,7 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     _nameController.dispose();
     _urlController.dispose();
     _apiKeyController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -35,7 +37,14 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     final name = _nameController.text.trim();
     final url = _urlController.text.trim();
     final apiKey = _apiKeyController.text.trim();
-    if (name.isEmpty || url.isEmpty) return;
+    if (name.isEmpty || url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(name.isEmpty
+            ? 'Enter a server name first.'
+            : 'Enter the server\'s base URL first.'),
+      ));
+      return;
+    }
 
     final server = ServerConfig(
       name: name,
@@ -43,9 +52,21 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
       apiKey: apiKey.isNotEmpty ? apiKey : null,
     );
     ref.read(serversProvider.notifier).addServer(server);
+    // Auto-select the first server so the app is usable right away — testers
+    // didn't realize a separate "select" step existed.
+    if (ref.read(selectedServerProvider) == null) {
+      ref.read(selectedServerProvider.notifier).selectServer(server);
+    }
     _nameController.clear();
     _urlController.clear();
     _apiKeyController.clear();
+    // Drop the keyboard so the confirmation (and the new row in "Configured
+    // Servers") isn't hidden behind it — testers thought the form just
+    // cleared itself and nothing happened.
+    FocusManager.instance.primaryFocus?.unfocus();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Server "$name" added.')),
+    );
   }
 
   void _autofillFromDiscovered(DiscoveredServer discovered) {
@@ -189,153 +210,204 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     return groups;
   }
 
+  Future<void> _confirmDelete(ServerConfig server) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove "${server.name}"?'),
+        content: const Text(
+            'The server and its saved API key will be removed from this device.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Remove',
+                  style: TextStyle(color: AppColors.serverDead))),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(serversProvider.notifier).removeServer(server);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final servers = ref.watch(serversProvider);
+    final selected = ref.watch(selectedServerProvider);
     final discovered = ref.watch(discoveredServersProvider);
     final beaconService = ref.watch(beaconServiceProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Servers')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // ====== Add server ======
-          _SectionHeader(icon: Icons.add_circle_outline, title: 'Add Server'),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Server name',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _urlController,
-                    decoration: const InputDecoration(
-                      labelText: 'Base URL',
-                      hintText: 'http://localhost:13305',
-                      helperText: '/api/v1 is added automatically',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _apiKeyController,
-                    decoration: const InputDecoration(
-                      labelText: 'API key (optional)',
-                      border: OutlineInputBorder(),
-                    ),
-                    obscureText: true,
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: _addServer,
-                    icon: const Icon(Icons.save),
-                    label: const Text('Add server'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // ====== Discovered ======
-          _SectionHeader(
-            icon: beaconService.isListening ? Icons.sensors : Icons.wifi_off,
-            title: 'Discovered on network',
-            iconColor:
-                beaconService.isListening ? AppColors.beaconActive : null,
-          ),
-          const SizedBox(height: 8),
-          if (!beaconService.isListening)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-              child: Text(
-                'Beacon listener is not active. If a Lemonade server is running '
-                'on this same machine, the port is already taken — discovery only '
-                'works for servers on other devices.',
-                style: TextStyle(color: AppColors.hintText),
-              ),
-            )
-          else if (discovered.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-              child: Text(
-                'Listening for Lemonade beacons…',
-                style: TextStyle(color: AppColors.hintText),
-              ),
-            )
-          else
-            Column(
-              children: [
-                for (final group in _groupByHostname(discovered))
-                  _DiscoveredServerCard(
-                    hostname: group.canonicalHostname,
-                    entries: group.entries,
-                    alreadyAdded: (d) => _isAlreadyAdded(d, servers),
-                    lastSeenTextOf: (d) => _lastSeenText(d.lastSeen),
-                    onAutofill: _autofillFromDiscovered,
-                  ),
-              ],
-            ),
-          const SizedBox(height: 24),
-
-          // ====== Configured ======
-          _SectionHeader(
-              icon: Icons.cloud_done_outlined, title: 'Configured Servers'),
-          const SizedBox(height: 8),
-          if (servers.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Text(
-                'No servers added yet.',
-                style: TextStyle(color: AppColors.hintText),
-              ),
-            )
-          else
-            for (final server in servers)
-              Card(
-                child: ListTile(
-                  title: Text(server.name),
-                  subtitle: Text(server.baseUrl,
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.swap_horiz),
-                        tooltip: 'Switch IP',
-                        onPressed: () => _switchIp(server, discovered),
+      body: Scrollbar(
+        controller: _scrollController,
+        child: ListView(
+          controller: _scrollController,
+          padding: EdgeInsets.fromLTRB(
+              16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+          children: [
+            // ====== Add server ======
+            _SectionHeader(icon: Icons.add_circle_outline, title: 'Add Server'),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Server name',
+                        border: OutlineInputBorder(),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.check_circle_outline,
-                            color: AppColors.serverAlive),
-                        tooltip: 'Test',
-                        onPressed: _isTestingServer
-                            ? null
-                            : () => _testServer(server),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _urlController,
+                      decoration: const InputDecoration(
+                        labelText: 'Base URL',
+                        hintText: 'http://localhost:13305',
+                        helperText: '/api/v1 is added automatically',
+                        border: OutlineInputBorder(),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline,
-                            color: AppColors.serverDead),
-                        tooltip: 'Delete',
-                        onPressed: () => ref
-                            .read(serversProvider.notifier)
-                            .removeServer(server),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _apiKeyController,
+                      decoration: const InputDecoration(
+                        labelText: 'API key (optional)',
+                        border: OutlineInputBorder(),
                       ),
-                    ],
-                  ),
+                      obscureText: true,
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: _addServer,
+                      icon: const Icon(Icons.save),
+                      label: const Text('Add server'),
+                    ),
+                  ],
                 ),
               ),
-        ],
+            ),
+            const SizedBox(height: 24),
+
+            // ====== Discovered ======
+            _SectionHeader(
+              icon: beaconService.isListening ? Icons.sensors : Icons.wifi_off,
+              title: 'Discovered on network',
+              iconColor:
+                  beaconService.isListening ? AppColors.beaconActive : null,
+            ),
+            const SizedBox(height: 8),
+            if (!beaconService.isListening)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Text(
+                  'Beacon listener is not active. If a Lemonade server is running '
+                  'on this same machine, the port is already taken — discovery only '
+                  'works for servers on other devices.',
+                  style: TextStyle(color: AppColors.hintText),
+                ),
+              )
+            else if (discovered.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Text(
+                  'Listening for Lemonade beacons…',
+                  style: TextStyle(color: AppColors.hintText),
+                ),
+              )
+            else
+              Column(
+                children: [
+                  for (final group in _groupByHostname(discovered))
+                    _DiscoveredServerCard(
+                      hostname: group.canonicalHostname,
+                      entries: group.entries,
+                      alreadyAdded: (d) => _isAlreadyAdded(d, servers),
+                      lastSeenTextOf: (d) => _lastSeenText(d.lastSeen),
+                      onAutofill: _autofillFromDiscovered,
+                    ),
+                ],
+              ),
+            const SizedBox(height: 24),
+
+            // ====== Configured ======
+            _SectionHeader(
+                icon: Icons.cloud_done_outlined, title: 'Configured Servers'),
+            const SizedBox(height: 8),
+            if (servers.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  'No servers added yet.',
+                  style: TextStyle(color: AppColors.hintText),
+                ),
+              )
+            else
+              for (final server in servers)
+                Card(
+                  child: ListTile(
+                    // Tap the row to make this the active server. Testers
+                    // couldn't find how to select one — the row itself is now
+                    // the affordance, with an explicit Active/"Tap to use"
+                    // label.
+                    onTap: () {
+                      ref
+                          .read(selectedServerProvider.notifier)
+                          .selectServer(server);
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('Now using "${server.name}".')));
+                    },
+                    selected: selected?.baseUrl == server.baseUrl,
+                    leading: Icon(
+                      selected?.baseUrl == server.baseUrl
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color: selected?.baseUrl == server.baseUrl
+                          ? AppColors.serverAlive
+                          : null,
+                    ),
+                    title: Text(server.name),
+                    subtitle: Text(
+                        selected?.baseUrl == server.baseUrl
+                            ? '${server.baseUrl} · Active'
+                            : '${server.baseUrl} · Tap to use',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.swap_horiz),
+                          tooltip: 'Switch IP',
+                          onPressed: () => _switchIp(server, discovered),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.network_check,
+                              color: AppColors.serverAlive),
+                          tooltip: 'Test connection',
+                          onPressed: _isTestingServer
+                              ? null
+                              : () => _testServer(server),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline,
+                              color: AppColors.serverDead),
+                          tooltip: 'Delete',
+                          onPressed: () => _confirmDelete(server),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+          ],
+        ),
       ),
     );
   }

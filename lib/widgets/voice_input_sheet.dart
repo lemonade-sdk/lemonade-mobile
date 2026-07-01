@@ -61,6 +61,7 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
 
   Future<void> _startRecording() async {
     final ok = await _recorder.hasPermission();
+    if (!mounted) return;
     if (!ok) {
       setState(() {
         _stage = _Stage.error;
@@ -74,12 +75,14 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
       // ourselves until the stop call returns the persisted path.
       // ignore: unnecessary_statements
       path;
+      if (!mounted) return;
       setState(() {
         _stage = _Stage.recording;
         _transcript = null;
         _error = null;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _stage = _Stage.error;
         _error = 'Failed to start recording: $e';
@@ -91,6 +94,7 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
     setState(() => _stage = _Stage.processing);
     try {
       final tempPath = await _recorder.stopFileRecording();
+      if (!mounted) return;
       if (tempPath == null) {
         setState(() {
           _stage = _Stage.error;
@@ -99,6 +103,7 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
         return;
       }
       final persisted = await _recorder.persistRecording(tempPath);
+      if (!mounted) return;
 
       final server = ref.read(selectedServerProvider);
       if (server == null) {
@@ -112,6 +117,7 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
       final asrModel = ref.read(effectiveAudioModelProvider);
       final svc = AudioTranscriptionService(server);
       final text = await svc.transcribeFile(persisted, model: asrModel);
+      if (!mounted) return;
       setState(() {
         _stage = _Stage.ready;
         _transcript = text;
@@ -126,6 +132,7 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
             audioFilePath: persisted,
           );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _stage = _Stage.error;
         _error = 'Transcription failed: $e';
@@ -136,11 +143,14 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
   Future<void> _sendAsMessage() async {
     final text = _transcript;
     if (text == null || text.isEmpty) return;
+    // Grab the notifier before popping — the sheet unmounts and `ref` becomes
+    // unusable once the route is gone.
+    final chat = ref.read(chatProvider.notifier);
     Navigator.of(context).pop();
-    await ref.read(chatProvider.notifier).sendMessage(
-          text,
-          scrollController: widget.chatScrollController,
-        );
+    await chat.sendMessage(
+      text,
+      scrollController: widget.chatScrollController,
+    );
   }
 
   Future<void> _sendAsImagePrompt() async {
@@ -154,10 +164,13 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
       ));
       return;
     }
+    // Grab everything we need from `ref` before popping — the sheet unmounts
+    // and `ref` becomes unusable once the route is gone. The generation flow
+    // below intentionally continues after the sheet closes.
+    final notifier = ref.read(chatHistoryProvider.notifier);
     Navigator.of(context).pop();
 
     // Append a user note + assistant placeholder, run generate_image, fill in.
-    final notifier = ref.read(chatHistoryProvider.notifier);
     final history = notifier.getActiveChat()?.messages ?? const <ChatMessage>[];
 
     final userMsg = ChatMessage.text(
@@ -235,7 +248,12 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
         left: 16,
         right: 16,
         top: 8,
-        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+        // viewInsets = keyboard; padding = system nav bar / gesture area
+        // (Flutter zeroes padding.bottom while the keyboard is up, so the two
+        // never double-count).
+        bottom: 16 +
+            MediaQuery.of(context).viewInsets.bottom +
+            MediaQuery.of(context).padding.bottom,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

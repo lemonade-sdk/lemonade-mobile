@@ -74,3 +74,15 @@ final voicemailProvider =
   if (client == null) return const [];
   return client.listVoicemail();
 });
+
+/// Terminated call detail records (GET /voice/cdrs) — the PBX call history.
+final cdrProvider =
+    FutureProvider.autoDispose<List<NexusCall>>((ref) async {
+  final client = ref.watch(nexusVoiceClientProvider);
+  if (client == null) return const [];
+  final cdrs = await client.listCdrs();
+  // Newest first regardless of server ordering.
+  cdrs.sort((a, b) => (b.startedAt ?? DateTime(0))
+      .compareTo(a.startedAt ?? DateTime(0)));
+  return cdrs;
+});

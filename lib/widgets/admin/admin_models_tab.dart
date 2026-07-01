@@ -44,14 +44,14 @@ class _AdminModelsTabState extends ConsumerState<AdminModelsTab> {
       setState(() {
         _models = list;
         _loaded = loaded;
-        _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
+      setState(() => _error = e.toString());
+    } finally {
+      // Also covers the `client == null` early return above, which used to
+      // leave the tab spinning forever.
+      if (mounted) setState(() => _loading = false);
     }
   }
 

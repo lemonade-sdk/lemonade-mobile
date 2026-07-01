@@ -82,20 +82,23 @@ class ConversationsDrawer extends ConsumerWidget {
                               child: Text('No conversations yet.',
                                   style:
                                       TextStyle(fontSize: 13, color: t.muted)))
-                          : ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                              itemCount: chats.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 8),
-                              itemBuilder: (_, i) => _tile(
-                                  context, ref, chats[i],
-                                  isActive: chats[i].id == active?.id,
-                                  onTap: () {
-                                    ref
-                                        .read(chatHistoryProvider.notifier)
-                                        .loadChat(chats[i].id);
-                                    close();
-                                  }),
+                          : Scrollbar(
+                              child: ListView.separated(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                                itemCount: chats.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (_, i) => _tile(
+                                    context, ref, chats[i],
+                                    isActive: chats[i].id == active?.id,
+                                    onTap: () {
+                                      ref
+                                          .read(chatHistoryProvider.notifier)
+                                          .loadChat(chats[i].id);
+                                      close();
+                                    }),
+                              ),
                             ),
                     ),
                   ],
@@ -108,6 +111,91 @@ class ConversationsDrawer extends ConsumerWidget {
     );
   }
 
+  /// Long-press actions for a conversation: rename or delete. Before this the
+  /// list had no management affordance at all — chats accumulated forever.
+  Future<void> _showChatActions(
+      BuildContext context, WidgetRef ref, ChatHistory c) async {
+    final t = context.nexus;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: t.bg2,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: t.accent),
+              title: Text('Rename', style: TextStyle(color: t.text)),
+              onTap: () => Navigator.pop(ctx, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              title: const Text('Delete',
+                  style: TextStyle(color: Colors.redAccent)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted) return;
+
+    if (action == 'rename') {
+      final controller =
+          TextEditingController(text: c.title.isEmpty ? 'New chat' : c.title);
+      final name = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Rename conversation'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            onSubmitted: (v) => Navigator.pop(ctx, v),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, controller.text),
+                child: const Text('Rename')),
+          ],
+        ),
+      );
+      final trimmed = name?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) {
+        await ref
+            .read(chatHistoryProvider.notifier)
+            .updateChatTitle(c.id, trimmed);
+      }
+    } else if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Delete conversation?'),
+          content: Text(
+              '"${c.title.isEmpty ? 'New chat' : c.title}" and its messages '
+              'will be permanently deleted.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Delete',
+                    style: TextStyle(color: Colors.redAccent))),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        await ref.read(chatHistoryProvider.notifier).deleteChat(c.id);
+      }
+    }
+  }
+
   Widget _tile(BuildContext context, WidgetRef ref, ChatHistory c,
       {required bool isActive, required VoidCallback onTap}) {
     final t = context.nexus;
@@ -115,6 +203,7 @@ class ConversationsDrawer extends ConsumerWidget {
         c.messages.isNotEmpty ? c.messages.last.textContent : 'Empty chat';
     return GestureDetector(
       onTap: onTap,
+      onLongPress: () => _showChatActions(context, ref, c),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
         decoration: BoxDecoration(

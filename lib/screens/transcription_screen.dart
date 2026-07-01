@@ -65,28 +65,33 @@ class TranscriptionScreen extends ConsumerWidget {
                       style: TextStyle(color: Colors.grey),
                     ),
                   )
-                : ListView.builder(
-                    itemCount: history.length,
-                    itemBuilder: (context, index) {
-                      final item = history[index];
-                      return TranscriptionListItem(
-                        transcription: item,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  TranscriptionDetailScreen(transcription: item),
-                            ),
-                          );
-                        },
-                        onDelete: () {
-                          ref
-                              .read(transcriptionHistoryProvider.notifier)
-                              .deleteTranscription(item.id);
-                        },
-                      );
-                    },
+                : Scrollbar(
+                    child: ListView.builder(
+                      padding: EdgeInsets.only(
+                          bottom: MediaQuery.of(context).padding.bottom),
+                      itemCount: history.length,
+                      itemBuilder: (context, index) {
+                        final item = history[index];
+                        return TranscriptionListItem(
+                          transcription: item,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    TranscriptionDetailScreen(
+                                        transcription: item),
+                              ),
+                            );
+                          },
+                          onDelete: () {
+                            ref
+                                .read(transcriptionHistoryProvider.notifier)
+                                .deleteTranscription(item.id);
+                          },
+                        );
+                      },
+                    ),
                   ),
           ),
         ],

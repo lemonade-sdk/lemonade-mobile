@@ -45,7 +45,15 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
     try {
       if (mode == 'takeover') {
         await client.setMode(_id, 'takeover');
-        await _startTakeover();
+        try {
+          await _startTakeover();
+        } catch (e) {
+          // Mic failed — don't leave the caller with dead air. Revert to the
+          // AI agent, same path as ending a takeover.
+          await _stopTakeover();
+          await client.setMode(_id, 'autonomous');
+          _toast('Microphone access failed — takeover canceled. $e');
+        }
       } else {
         await _stopTakeover();
         await client.setMode(_id, mode);
@@ -65,7 +73,13 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
     final socket = NexusCallTakeoverSocket(token: token, taskId: _id);
     final audio = CallTakeoverAudio(socket);
     _takeover = audio;
-    await audio.start();
+    try {
+      await audio.start();
+    } catch (_) {
+      _takeover = null;
+      await audio.stop();
+      rethrow;
+    }
   }
 
   Future<void> _stopTakeover() async {
@@ -108,9 +122,13 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
     final transcript = ref.watch(taskTranscriptProvider(_id)).valueOrNull;
     final mode = task?.controlMode ?? ControlMode.autonomous;
 
-    // Auto-scroll to the newest turn.
+    // Auto-scroll to the newest turn — but only if the user is already pinned
+    // near the bottom, so scrolling back through the transcript isn't yanked
+    // away by the ~2s poll.
+    final pinned = !_scroll.hasClients ||
+        _scroll.position.pixels >= _scroll.position.maxScrollExtent - 120;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
+      if (pinned && _scroll.hasClients) {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       }
     });
@@ -209,49 +227,53 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
   Widget _transcriptList(BuildContext context, NexusTranscript? transcript) {
     final t = context.nexus;
     final turns = transcript?.turns ?? const [];
-    return ListView(
+    return Scrollbar(
       controller: _scroll,
-      padding: const EdgeInsets.all(16),
-      children: [
-        Center(
-          child: Text('LIVE TRANSCRIPT · both sides',
-              style: nexusMono(fontSize: 10.5, color: t.faint)),
-        ),
-        const SizedBox(height: 13),
-        if (turns.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 20),
-            child: Center(
-                child: Text('Waiting for the conversation…',
-                    style: TextStyle(fontSize: 13, color: t.muted))),
+      child: ListView(
+        controller: _scroll,
+        padding: const EdgeInsets.all(16),
+        children: [
+          Center(
+            child: Text('LIVE TRANSCRIPT · both sides',
+                style: nexusMono(fontSize: 10.5, color: t.faint)),
           ),
-        for (final turn in turns) _turn(context, turn),
-        if (transcript?.summary != null &&
-            transcript!.summary!.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-                color: t.surface2,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: t.line2)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('SUMMARY',
-                    style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.6,
-                        color: t.accent2)),
-                const SizedBox(height: 5),
-                Text(transcript.summary!,
-                    style: TextStyle(fontSize: 13, height: 1.45, color: t.text)),
-              ],
+          const SizedBox(height: 13),
+          if (turns.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 20),
+              child: Center(
+                  child: Text('Waiting for the conversation…',
+                      style: TextStyle(fontSize: 13, color: t.muted))),
             ),
-          ),
+          for (final turn in turns) _turn(context, turn),
+          if (transcript?.summary != null &&
+              transcript!.summary!.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: t.surface2,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: t.line2)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('SUMMARY',
+                      style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                          color: t.accent2)),
+                  const SizedBox(height: 5),
+                  Text(transcript.summary!,
+                      style:
+                          TextStyle(fontSize: 13, height: 1.45, color: t.text)),
+                ],
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 

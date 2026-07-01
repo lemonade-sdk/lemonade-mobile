@@ -25,18 +25,43 @@ class ChatTab extends ConsumerStatefulWidget {
 
 class _ChatTabState extends ConsumerState<ChatTab> {
   final ScrollController _scroll = ScrollController();
+  bool _showJumpToBottom = false;
 
   static const _suggestions = [
     'Summarize my day',
     'Draft a follow-up email',
-    'Generate an image of…',
-    'Explain this code',
+    'Generate an image of a lemonade stand at sunset',
+    'Explain how HTTP requests work',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_onScrolled);
+  }
 
   @override
   void dispose() {
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _onScrolled() {
+    if (!_scroll.hasClients) return;
+    final away =
+        _scroll.position.maxScrollExtent - _scroll.position.pixels > 240;
+    if (away != _showJumpToBottom) {
+      setState(() => _showJumpToBottom = away);
+    }
+  }
+
+  void _jumpToBottom() {
+    if (!_scroll.hasClients) return;
+    _scroll.animateTo(
+      _scroll.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
   }
 
   /// Open the searchable model picker and remember the choice for this chat.
@@ -77,18 +102,59 @@ class _ChatTabState extends ConsumerState<ChatTab> {
           Expanded(
             child: messages.isEmpty
                 ? _empty(context)
-                : NotificationListener<ScrollNotification>(
-                    onNotification: (_) {
-                      FocusManager.instance.primaryFocus?.unfocus();
-                      return false;
-                    },
-                    child: ListView.builder(
-                      controller: _scroll,
-                      padding: const EdgeInsets.only(top: 8, bottom: 12),
-                      itemCount: messages.length,
-                      itemBuilder: (_, i) =>
-                          NexusMessageBubble(message: messages[i]),
-                    ),
+                : Stack(
+                    children: [
+                      NotificationListener<ScrollNotification>(
+                        onNotification: (n) {
+                          // Only dismiss the keyboard when the USER drags the
+                          // list — not on programmatic auto-scroll during
+                          // streaming, which would close the keyboard on every
+                          // token while composing a follow-up.
+                          if (n is ScrollStartNotification &&
+                              n.dragDetails != null) {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                          }
+                          return false;
+                        },
+                        child: Scrollbar(
+                          controller: _scroll,
+                          child: ListView.builder(
+                            controller: _scroll,
+                            padding: const EdgeInsets.only(top: 8, bottom: 12),
+                            itemCount: messages.length,
+                            itemBuilder: (_, i) =>
+                                NexusMessageBubble(message: messages[i]),
+                          ),
+                        ),
+                      ),
+                      if (_showJumpToBottom)
+                        Positioned(
+                          right: 16,
+                          bottom: 12,
+                          child: GestureDetector(
+                            onTap: _jumpToBottom,
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: t.surface,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: t.line2),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color:
+                                        Colors.black.withValues(alpha: 0.25),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(Icons.keyboard_arrow_down,
+                                  size: 24, color: t.accent),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
           ),
           NexusComposer(scrollController: _scroll),
@@ -161,7 +227,20 @@ class _ChatTabState extends ConsumerState<ChatTab> {
           NexusIconButton(
             icon: Icons.add,
             iconColor: t.accent,
-            onTap: () => ref.read(chatProvider.notifier).clearChat(),
+            // Start a fresh conversation. (Was clearChat(), which wiped and
+            // persisted an empty message list onto the CURRENT chat — silent
+            // data loss.)
+            onTap: () {
+              if (ref.read(chatProvider).isEmpty) {
+                // Nothing would visibly change — tell the user why.
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('You\'re already in a new chat.'),
+                  duration: Duration(seconds: 1),
+                ));
+                return;
+              }
+              ref.read(chatHistoryProvider.notifier).createNewChat();
+            },
           ),
         ],
       ),

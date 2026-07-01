@@ -222,7 +222,8 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
       body: _gated
           ? _gate(context)
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                  16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
               children: [
                 _searchCard(context),
                 if (_error != null) ...[

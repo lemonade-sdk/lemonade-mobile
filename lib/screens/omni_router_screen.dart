@@ -39,10 +39,11 @@ class _OmniRouterScreenState extends ConsumerState<OmniRouterScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: () => ref.read(modelsProvider.notifier).fetchModels(),
-        child: const SingleChildScrollView(
-          physics: AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.all(16),
-          child: OmniRouterSettings(),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(
+              16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+          child: const OmniRouterSettings(),
         ),
       ),
     );

@@ -25,9 +25,20 @@ class CallTranscriptScreen extends ConsumerWidget {
         error: (e, _) => Center(
             child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text('No transcript available.\n$e',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: t.muted)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('No transcript available.\n$e',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: t.muted)),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () =>
+                    ref.invalidate(callTranscriptProvider(callRef)),
+                child: Text('Retry', style: TextStyle(color: t.accent2)),
+              ),
+            ],
+          ),
         )),
         data: (transcript) {
           if (transcript == null || transcript.turns.isEmpty) {
@@ -36,7 +47,8 @@ class CallTranscriptScreen extends ConsumerWidget {
                     style: TextStyle(color: t.muted)));
           }
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.fromLTRB(
+                16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
             children: [
               if (transcript.summary != null &&
                   transcript.summary!.isNotEmpty) ...[

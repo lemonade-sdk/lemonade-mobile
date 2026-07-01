@@ -58,7 +58,6 @@ class NexusOverlayHost extends ConsumerWidget {
           label: s.imageLabel,
           caption: s.imageCaption,
         ));
-      case NexusOverlayKind.voiceCall:
       case NexusOverlayKind.none:
         return const SizedBox.shrink();
     }

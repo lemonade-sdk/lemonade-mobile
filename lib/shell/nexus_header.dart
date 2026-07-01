@@ -10,7 +10,7 @@ import '../providers/servers_provider.dart';
 import '../providers/theme_provider.dart';
 import '../themes/nexus_tokens.dart';
 import '../themes/theme_registry.dart';
-import '../themes/nexus_theme_builder.dart';
+import '../widgets/nexus/gateway_gate.dart';
 import '../widgets/nexus/nexus_ui.dart';
 
 /// Top chrome: brand, theme toggle, avatar, mode switcher, and the tappable
@@ -56,20 +56,33 @@ class NexusHeader extends ConsumerWidget {
                       ),
                 ),
                 const SizedBox(width: 8),
-                Container(
-                  width: 34,
-                  height: 34,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: t.surface2,
-                    borderRadius: BorderRadius.circular(11),
-                    border: Border.all(color: t.line),
+                // Avatar → account. Signed out in Subscription mode it opens
+                // sign-in; otherwise it jumps to Settings (account section).
+                // Was a plain Container that testers tapped expecting a menu.
+                GestureDetector(
+                  onTap: () {
+                    if (mode == AppMode.subscription && !auth.isSignedIn) {
+                      SignInScreen.push(context);
+                    } else {
+                      ref.read(navTabProvider.notifier).state =
+                          NexusTab.settings;
+                    }
+                  },
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: t.surface2,
+                      borderRadius: BorderRadius.circular(11),
+                      border: Border.all(color: t.line),
+                    ),
+                    child: Text(initials,
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: t.muted)),
                   ),
-                  child: Text(initials,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: t.muted)),
                 ),
               ],
             ),

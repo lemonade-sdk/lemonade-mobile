@@ -35,7 +35,8 @@ class KnowledgePagesScreen extends ConsumerWidget {
                 child: Text('No knowledge pages yet — tap + to add one.',
                     style: TextStyle(color: t.muted)))
             : ListView.separated(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
                 itemCount: list.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (_, i) => _row(context, list[i]),
@@ -93,6 +94,7 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
   final _title = TextEditingController();
   final _keywords = TextEditingController();
   final _content = TextEditingController();
+  final _scroll = ScrollController();
   bool _enabled = true;
   Set<int> _agentIds = {};
   bool _loading = false;
@@ -109,6 +111,7 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
     _title.dispose();
     _keywords.dispose();
     _content.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -154,6 +157,25 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
   Future<void> _delete() async {
     final client = ref.read(nexusAgentsClientProvider);
     if (client == null || widget.pageId == null) return;
+    final title = _title.text.trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete page?'),
+        content: Text(
+            'Delete ${title.isEmpty ? 'this page' : '"$title"'}? This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Delete',
+                  style: TextStyle(color: ctx.nexus.danger))),
+        ],
+      ),
+    );
+    if (ok != true) return;
     try {
       await client.deletePage(widget.pageId!);
       ref.invalidate(knowledgePagesProvider);
@@ -177,52 +199,57 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
       title: widget.pageId == null ? 'New page' : 'Edit page',
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                NexusField(
-                    label: 'Title', controller: _title, hint: 'Refund policy'),
-                NexusField(
-                    label: 'Keywords',
-                    controller: _keywords,
-                    hint: 'refund, return, money back'),
-                NexusField(
-                    label: 'Content',
-                    controller: _content,
-                    hint: 'Reference text the agent injects per turn…',
-                    lines: 8),
-                if (agents.isNotEmpty) ...[
-                  const NexusSectionLabel('Linked agents'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 7,
-                    runSpacing: 7,
-                    children: [
-                      for (final a in agents)
-                        _agentChip(context, a),
-                    ],
-                  ),
-                  const SizedBox(height: 13),
-                ],
-                NexusToggleTile(
-                    label: 'Enabled',
-                    value: _enabled,
-                    onChanged: (v) => setState(() => _enabled = v)),
-                const SizedBox(height: 16),
-                NexusButton(label: 'Save page', busy: _saving, onTap: _save),
-                if (widget.pageId != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 14),
-                    child: GestureDetector(
-                      onTap: _delete,
-                      child: Center(
-                          child: Text('Delete page',
-                              style: TextStyle(
-                                  color: t.danger,
-                                  fontWeight: FontWeight.w600))),
+          : Scrollbar(
+              controller: _scroll,
+              child: ListView(
+                controller: _scroll,
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+                children: [
+                  NexusField(
+                      label: 'Title', controller: _title, hint: 'Refund policy'),
+                  NexusField(
+                      label: 'Keywords',
+                      controller: _keywords,
+                      hint: 'refund, return, money back'),
+                  NexusField(
+                      label: 'Content',
+                      controller: _content,
+                      hint: 'Reference text the agent injects per turn…',
+                      lines: 8),
+                  if (agents.isNotEmpty) ...[
+                    const NexusSectionLabel('Linked agents'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 7,
+                      children: [
+                        for (final a in agents)
+                          _agentChip(context, a),
+                      ],
                     ),
-                  ),
-              ],
+                    const SizedBox(height: 13),
+                  ],
+                  NexusToggleTile(
+                      label: 'Enabled',
+                      value: _enabled,
+                      onChanged: (v) => setState(() => _enabled = v)),
+                  const SizedBox(height: 16),
+                  NexusButton(label: 'Save page', busy: _saving, onTap: _save),
+                  if (widget.pageId != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: GestureDetector(
+                        onTap: _delete,
+                        child: Center(
+                            child: Text('Delete page',
+                                style: TextStyle(
+                                    color: t.danger,
+                                    fontWeight: FontWeight.w600))),
+                      ),
+                    ),
+                ],
+              ),
             ),
     );
   }

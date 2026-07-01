@@ -133,7 +133,9 @@ class _ExtensionEditorSheetState extends ConsumerState<ExtensionEditorSheet> {
     final t = context.nexus;
     return SafeArea(
       top: false,
-      child: Padding(
+      // Scrollable so the form doesn't overflow when the keyboard is up
+      // (viewInsets padding is applied by [show] around the whole sheet).
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,

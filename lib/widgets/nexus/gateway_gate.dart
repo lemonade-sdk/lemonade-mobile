@@ -4,9 +4,31 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/app_mode_provider.dart';
 import '../../providers/billing_providers.dart';
+import '../../shell/overlays/auth_gate.dart';
 import '../../shell/overlays/unlock_sheet.dart';
 import '../../themes/nexus_tokens.dart';
 import 'nexus_ui.dart';
+
+/// Full-screen sign-in route reusing the shell's [AuthGate]. Pops itself once
+/// the user signs in (or leaves Subscription mode via "Continue with Local
+/// AI"), so callers can just push it and forget.
+class SignInScreen extends ConsumerWidget {
+  const SignInScreen({super.key});
+
+  static Future<void> push(BuildContext context) => Navigator.of(context)
+      .push(MaterialPageRoute(builder: (_) => const SignInScreen()));
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(authProvider, (_, next) {
+      if (next.isSignedIn) Navigator.of(context).maybePop();
+    });
+    ref.listen(appModeProvider, (_, next) {
+      if (next != AppMode.subscription) Navigator.of(context).maybePop();
+    });
+    return const AuthGate();
+  }
+}
 
 /// Gates a gateway feature behind: Subscription mode → signed in → (optionally)
 /// an entitlement [capability]. When the capability is missing it shows an
@@ -49,7 +71,7 @@ class GatewayGate extends ConsumerWidget {
         icon: icon,
         title: 'Sign in to use $feature',
         message: 'Sign in to your Nexus account to manage $feature.',
-        action: null,
+        action: _btn(context, 'Sign in', () => SignInScreen.push(context)),
       );
     }
     if (capability == null) return child;

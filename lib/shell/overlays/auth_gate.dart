@@ -18,6 +18,7 @@ class AuthGate extends ConsumerStatefulWidget {
 class _AuthGateState extends ConsumerState<AuthGate> {
   bool _register = false;
   bool _busy = false;
+  bool _showPassword = false;
   String? _error;
   final _name = TextEditingController();
   final _email = TextEditingController();
@@ -164,11 +165,23 @@ class _AuthGateState extends ConsumerState<AuthGate> {
     final t = context.nexus;
     return TextField(
       controller: c,
-      obscureText: obscure,
+      obscureText: obscure && !_showPassword,
       style: TextStyle(fontSize: 15, color: t.text),
       decoration: InputDecoration(
         hintText: hint,
         prefixIcon: Icon(icon, size: 18, color: t.faint),
+        suffixIcon: obscure
+            ? IconButton(
+                icon: Icon(
+                    _showPassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    size: 18,
+                    color: t.faint),
+                onPressed: () =>
+                    setState(() => _showPassword = !_showPassword),
+              )
+            : null,
       ),
     );
   }

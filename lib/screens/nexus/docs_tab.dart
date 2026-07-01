@@ -18,11 +18,13 @@ class DocsTab extends ConsumerStatefulWidget {
 
 class _DocsTabState extends ConsumerState<DocsTab> {
   final _searchCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
   bool _uploading = false;
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -73,27 +75,39 @@ class _DocsTabState extends ConsumerState<DocsTab> {
     return GatewayGate(
       icon: Icons.description_outlined,
       feature: 'Docs',
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // search
-          TextField(
-            controller: _searchCtrl,
-            onChanged: (v) =>
-                ref.read(kbQueryTextProvider.notifier).state = v,
-            style: TextStyle(fontSize: 14, color: t.text),
-            decoration: InputDecoration(
-              hintText: 'Search docs — keyword + semantic…',
-              prefixIcon: Icon(Icons.search, size: 18, color: t.faint),
-            ),
+      child: RefreshIndicator(
+        // Pull-to-refresh re-checks collections + indexing status.
+        onRefresh: () async {
+          ref.invalidate(kbCollectionsProvider);
+          ref.invalidate(kbDocumentsProvider);
+        },
+        child: Scrollbar(
+          controller: _scrollCtrl,
+          child: ListView(
+            controller: _scrollCtrl,
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              // search
+              TextField(
+                controller: _searchCtrl,
+                onChanged: (v) =>
+                    ref.read(kbQueryTextProvider.notifier).state = v,
+                style: TextStyle(fontSize: 14, color: t.text),
+                decoration: InputDecoration(
+                  hintText: 'Search docs — keyword + semantic…',
+                  prefixIcon: Icon(Icons.search, size: 18, color: t.faint),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _collections(context),
+              const SizedBox(height: 16),
+              _dropzone(context),
+              const SizedBox(height: 16),
+              _body(context),
+            ],
           ),
-          const SizedBox(height: 16),
-          _collections(context),
-          const SizedBox(height: 16),
-          _dropzone(context),
-          const SizedBox(height: 16),
-          _body(context),
-        ],
+        ),
       ),
     );
   }
@@ -103,7 +117,39 @@ class _DocsTabState extends ConsumerState<DocsTab> {
     final async = ref.watch(kbCollectionsProvider);
     return async.when(
       loading: () => const SizedBox(height: 34),
-      error: (e, _) => const SizedBox.shrink(),
+      // Keep "+ New" reachable even when collections fail to load — otherwise
+      // uploads become impossible.
+      error: (e, _) => SizedBox(
+        height: 34,
+        child: Row(children: [
+          Expanded(
+            child: Text('Couldn’t load collections',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, color: t.danger)),
+          ),
+          GestureDetector(
+            onTap: () => ref.invalidate(kbCollectionsProvider),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: t.surface,
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: t.line2),
+              ),
+              child: Row(children: [
+                Icon(Icons.refresh, size: 13, color: t.accent2),
+                const SizedBox(width: 5),
+                Text('Retry',
+                    style: TextStyle(fontSize: 12.5, color: t.accent2)),
+              ]),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _newCollectionBtn(context),
+        ]),
+      ),
       data: (collections) {
         final selectedId = ref.watch(selectedCollectionIdProvider);
         final activeId = selectedId ??
@@ -138,28 +184,31 @@ class _DocsTabState extends ConsumerState<DocsTab> {
                     ),
                   ),
                 ),
-              GestureDetector(
-                onTap: _createCollection,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: t.surface,
-                    borderRadius: BorderRadius.circular(11),
-                    border: Border.all(color: t.line2),
-                  ),
-                  child: Row(children: [
-                    Icon(Icons.add, size: 13, color: t.accent2),
-                    const SizedBox(width: 5),
-                    Text('New',
-                        style: TextStyle(fontSize: 12.5, color: t.accent2)),
-                  ]),
-                ),
-              ),
+              _newCollectionBtn(context),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _newCollectionBtn(BuildContext context) {
+    final t = context.nexus;
+    return GestureDetector(
+      onTap: _createCollection,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: t.surface,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: t.line2),
+        ),
+        child: Row(children: [
+          Icon(Icons.add, size: 13, color: t.accent2),
+          const SizedBox(width: 5),
+          Text('New', style: TextStyle(fontSize: 12.5, color: t.accent2)),
+        ]),
+      ),
     );
   }
 

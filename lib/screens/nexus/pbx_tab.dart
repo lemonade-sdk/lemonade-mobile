@@ -12,6 +12,7 @@ import '../../themes/nexus_tokens.dart';
 import '../../widgets/nexus/gateway_gate.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
+import 'call_transcript_screen.dart';
 import 'extension_editor_sheet.dart';
 import 'get_number_screen.dart';
 
@@ -43,6 +44,7 @@ class PbxTab extends ConsumerWidget {
               (PbxSection.extensions, 'Ext'),
               (PbxSection.flows, 'Flows'),
               (PbxSection.voicemail, 'Voicemail'),
+              (PbxSection.history, 'History'),
             ],
           ),
           const SizedBox(height: 16),
@@ -51,6 +53,7 @@ class PbxTab extends ConsumerWidget {
             PbxSection.extensions => _ExtensionsView(),
             PbxSection.flows => _FlowsView(),
             PbxSection.voicemail => _VoicemailView(),
+            PbxSection.history => _HistoryView(),
           },
         ],
       ),
@@ -463,6 +466,136 @@ class _FlowsView extends ConsumerWidget {
   }
 }
 
+// ── Call history (CDR) ─────────────────────────────────────────────────
+class _HistoryView extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.nexus;
+    final async = ref.watch(cdrProvider);
+    return async.when(
+      loading: () => const _Loading(),
+      error: (e, _) => _ErrorBox('$e'),
+      data: (calls) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const NexusSectionLabel('Call history'),
+            const Spacer(),
+            GestureDetector(
+              onTap: () => ref.invalidate(cdrProvider),
+              child: Icon(Icons.refresh, size: 17, color: t.muted),
+            ),
+          ]),
+          const SizedBox(height: 11),
+          if (calls.isEmpty)
+            _EmptyBox('No calls yet.')
+          else
+            NexusCard(
+              padding: EdgeInsets.zero,
+              radius: 15,
+              child: Column(children: [
+                for (var i = 0; i < calls.length; i++)
+                  _cdrRow(context, ref, calls[i], last: i == calls.length - 1),
+              ]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cdrRow(BuildContext context, WidgetRef ref, NexusCall c,
+      {required bool last}) {
+    final t = context.nexus;
+    final failed = c.state.toLowerCase() == 'failed' ||
+        (c.answeredAt == null && c.billableSeconds == 0);
+    final (icon, tint) = c.direction.toLowerCase() == 'inbound'
+        ? (Icons.call_received, failed ? t.danger : t.accent2)
+        : c.direction.toLowerCase() == 'outbound'
+            ? (Icons.call_made, failed ? t.danger : t.good)
+            : (Icons.swap_horiz, t.muted);
+    final peer = c.direction.toLowerCase() == 'inbound'
+        ? c.fromNumber
+        : c.toNumber;
+    final meta = [
+      if (c.startedAt != null) _when(c.startedAt!),
+      if (c.billableSeconds > 0) _dur(c.billableSeconds),
+      if (failed) (c.hangupCause?.isNotEmpty ?? false) ? c.hangupCause! : 'missed',
+    ].join(' · ');
+
+    return InkWell(
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CallTranscriptScreen(
+              callRef: c.callRef, title: 'Call transcript'))),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          border: last
+              ? null
+              : Border(bottom: BorderSide(color: t.line)),
+        ),
+        child: Row(children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: t.surface2, borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, size: 16, color: tint),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(peer.isEmpty ? 'Unknown' : peer,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: nexusMono(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: t.text)),
+                const SizedBox(height: 2),
+                Text(meta.isEmpty ? c.state : meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: t.muted)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            if (c.cost > 0)
+              Text('\$${c.cost.toStringAsFixed(2)}',
+                  style: nexusMono(fontSize: 11, color: t.muted)),
+            const SizedBox(height: 2),
+            Icon(Icons.chevron_right, size: 16, color: t.faint),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  String _dur(int seconds) {
+    final m = seconds ~/ 60, s = seconds % 60;
+    return m > 0 ? '${m}m ${s}s' : '${s}s';
+  }
+
+  String _when(DateTime d) {
+    final l = d.toLocal();
+    final now = DateTime.now();
+    final hh = l.hour.toString().padLeft(2, '0');
+    final mm = l.minute.toString().padLeft(2, '0');
+    if (l.year == now.year && l.month == now.month && l.day == now.day) {
+      return '$hh:$mm';
+    }
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec' //
+    ];
+    return '${months[l.month - 1]} ${l.day} · $hh:$mm';
+  }
+}
+
 // ── Voicemail ──────────────────────────────────────────────────────────
 class _VoicemailView extends ConsumerWidget {
   @override
@@ -503,6 +636,43 @@ class _VoicemailTile extends ConsumerStatefulWidget {
 class _VoicemailTileState extends ConsumerState<_VoicemailTile> {
   String? _dataUrl;
   bool _loading = false;
+
+  Future<void> _delete() async {
+    final t = context.nexus;
+    final messenger = ScaffoldMessenger.of(context);
+    final m = widget.m;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: t.bg2,
+        title: Text(
+            'Delete voicemail from ${m.fromNumber.isEmpty ? 'Unknown' : m.fromNumber}?',
+            style: TextStyle(color: t.text, fontWeight: FontWeight.w700)),
+        content: Text(
+            'This permanently deletes the message and its recording.',
+            style: TextStyle(color: t.muted, fontSize: 13, height: 1.4)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Keep', style: TextStyle(color: t.muted))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Delete', style: TextStyle(color: t.danger))),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final client = ref.read(nexusVoiceClientProvider);
+    if (client == null) return;
+    try {
+      await client.deleteVoicemail(m.id);
+      if (!mounted) return;
+      ref.invalidate(voicemailProvider);
+    } catch (e) {
+      messenger
+          .showSnackBar(SnackBar(content: Text('Could not delete: $e')));
+    }
+  }
 
   Future<void> _load() async {
     final client = ref.read(nexusVoiceClientProvider);
@@ -561,11 +731,7 @@ class _VoicemailTileState extends ConsumerState<_VoicemailTile> {
             ),
             IconButton(
               icon: Icon(Icons.delete_outline, size: 19, color: t.danger),
-              onPressed: () async {
-                final client = ref.read(nexusVoiceClientProvider);
-                await client?.deleteVoicemail(m.id);
-                ref.invalidate(voicemailProvider);
-              },
+              onPressed: _delete,
             ),
           ]),
           const SizedBox(height: 10),

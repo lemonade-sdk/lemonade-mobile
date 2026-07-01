@@ -25,38 +25,54 @@ class NexusShell extends ConsumerWidget {
     final t = context.nexus;
     final tab = ref.watch(navTabProvider);
     final mesh = ref.watch(appModeProvider) == AppMode.mesh;
+    final overlayOpen = ref.watch(overlayProvider.select((s) => s.isOpen));
 
-    return Scaffold(
-      backgroundColor: t.bg,
-      resizeToAvoidBottomInset: true,
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              const NexusHeader(),
-              Expanded(
-                // Mesh mode isn't wired yet — show the coming-soon screen
-                // instead of the tabs (header + nav stay so the user can switch
-                // back to Subscription / Local AI).
-                child: mesh
-                    ? const MeshComingSoon()
-                    : IndexedStack(
-                        index: tab.index,
-                        children: const [
-                          ChatTab(),
-                          ProjectsTab(),
-                          CallsTab(),
-                          PbxTab(),
-                          DocsTab(),
-                          SettingsTab(),
-                        ],
-                      ),
-              ),
-              const NexusBottomNav(),
-            ],
-          ),
-          const NexusOverlayHost(),
-        ],
+    // System back (Android button/gesture): close the open overlay first, then
+    // step back to the Chat tab, and only exit the app from Chat with nothing
+    // open. Overlays live in a Stack — not Navigator routes — so without this
+    // the back button would background the app mid-flow.
+    return PopScope(
+      canPop: !overlayOpen && tab == NexusTab.chat,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (ref.read(overlayProvider).isOpen) {
+          ref.read(overlayProvider.notifier).close();
+        } else if (ref.read(navTabProvider) != NexusTab.chat) {
+          ref.read(navTabProvider.notifier).state = NexusTab.chat;
+        }
+      },
+      child: Scaffold(
+        backgroundColor: t.bg,
+        resizeToAvoidBottomInset: true,
+        body: Stack(
+          children: [
+            Column(
+              children: [
+                const NexusHeader(),
+                Expanded(
+                  // Mesh mode isn't wired yet — show the coming-soon screen
+                  // instead of the tabs (header + nav stay so the user can
+                  // switch back to Subscription / Local AI).
+                  child: mesh
+                      ? const MeshComingSoon()
+                      : IndexedStack(
+                          index: tab.index,
+                          children: const [
+                            ChatTab(),
+                            ProjectsTab(),
+                            CallsTab(),
+                            PbxTab(),
+                            DocsTab(),
+                            SettingsTab(),
+                          ],
+                        ),
+                ),
+                const NexusBottomNav(),
+              ],
+            ),
+            const NexusOverlayHost(),
+          ],
+        ),
       ),
     );
   }

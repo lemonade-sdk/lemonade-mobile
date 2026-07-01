@@ -22,8 +22,15 @@ class PlanWalletScreen extends ConsumerStatefulWidget {
 }
 
 class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
+  final _scroll = ScrollController();
   bool _busy = false;
   static const _topupAmounts = [500, 1000, 2000, 5000];
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
 
   void _toast(String m) {
     if (mounted) {
@@ -76,9 +83,27 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
     }
   }
 
-  Future<void> _cancel(int id) async {
+  Future<void> _cancel(int id, String name) async {
     final client = ref.read(nexusBillingClientProvider);
     if (client == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel membership?'),
+        content: Text(
+            'Cancel ${name.isEmpty ? 'this membership' : '"$name"'}? You lose the capabilities it unlocks.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Keep it')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Cancel membership',
+                  style: TextStyle(color: ctx.nexus.danger))),
+        ],
+      ),
+    );
+    if (ok != true) return;
     try {
       await client.cancelMembership(id);
       _refresh();
@@ -102,10 +127,15 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
                 padding: const EdgeInsets.all(24),
                 child: Text('$e', style: TextStyle(color: t.danger)))
           ]),
-          data: (ent) => ListView(
-            padding: const EdgeInsets.all(16),
-            children:
-                ent.isBusiness ? _business(context) : _personal(context, ent),
+          data: (ent) => Scrollbar(
+            controller: _scroll,
+            child: ListView(
+              controller: _scroll,
+              padding: EdgeInsets.fromLTRB(
+                  16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+              children:
+                  ent.isBusiness ? _business(context) : _personal(context, ent),
+            ),
           ),
         ),
       ),
@@ -187,7 +217,8 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
                 ),
               ),
               TextButton(
-                  onPressed: () => _cancel(m.id),
+                  onPressed: () =>
+                      _cancel(m.id, m.name.isEmpty ? m.planKey : m.name),
                   child: Text('Cancel', style: TextStyle(color: t.danger))),
             ]),
           ),

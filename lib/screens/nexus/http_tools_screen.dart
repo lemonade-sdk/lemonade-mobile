@@ -34,7 +34,8 @@ class HttpToolsScreen extends ConsumerWidget {
                 child: Text('No HTTP tools yet — tap + to add one.',
                     style: TextStyle(color: t.muted)))
             : ListView.separated(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
                 itemCount: list.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (_, i) => _row(context, list[i]),
@@ -103,6 +104,7 @@ class _HttpToolEditorState extends ConsumerState<HttpToolEditor> {
   bool _enabled = true;
   final List<({TextEditingController name, TextEditingController value, bool hadValue})>
       _headers = [];
+  final _scroll = ScrollController();
   bool _loading = false;
   bool _saving = false;
 
@@ -125,6 +127,7 @@ class _HttpToolEditorState extends ConsumerState<HttpToolEditor> {
       h.name.dispose();
       h.value.dispose();
     }
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -185,6 +188,25 @@ class _HttpToolEditorState extends ConsumerState<HttpToolEditor> {
   Future<void> _delete() async {
     final client = ref.read(nexusAgentsClientProvider);
     if (client == null || widget.toolId == null) return;
+    final name = _name.text.trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete tool?'),
+        content: Text(
+            'Delete ${name.isEmpty ? 'this tool' : '"$name"'}? Agents using it lose it. This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Delete',
+                  style: TextStyle(color: ctx.nexus.danger))),
+        ],
+      ),
+    );
+    if (ok != true) return;
     try {
       await client.deleteTool(widget.toolId!);
       ref.invalidate(httpToolsProvider);
@@ -207,85 +229,91 @@ class _HttpToolEditorState extends ConsumerState<HttpToolEditor> {
       title: widget.toolId == null ? 'New tool' : 'Edit tool',
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                NexusField(label: 'Name', controller: _name, hint: 'lookup_order'),
-                NexusField(
-                    label: 'Description',
-                    controller: _desc,
-                    hint: 'What the agent uses it for',
-                    lines: 2),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 13),
-                  child: Row(children: [
-                    SizedBox(
-                      width: 110,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 11),
-                        decoration: BoxDecoration(
-                            color: t.bg,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: t.line2)),
-                        child: DropdownButton<String>(
-                          value: _method,
-                          isExpanded: true,
-                          dropdownColor: t.bg2,
-                          underline: const SizedBox.shrink(),
-                          items: [
-                            for (final m in _methods)
-                              DropdownMenuItem(
-                                  value: m,
-                                  child: Text(m,
-                                      style: nexusMono(
-                                          fontSize: 13, color: t.text)))
-                          ],
-                          onChanged: (v) =>
-                              setState(() => _method = v ?? 'GET'),
+          : Scrollbar(
+              controller: _scroll,
+              child: ListView(
+                controller: _scroll,
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
+                children: [
+                  NexusField(
+                      label: 'Name', controller: _name, hint: 'lookup_order'),
+                  NexusField(
+                      label: 'Description',
+                      controller: _desc,
+                      hint: 'What the agent uses it for',
+                      lines: 2),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 13),
+                    child: Row(children: [
+                      SizedBox(
+                        width: 110,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 11),
+                          decoration: BoxDecoration(
+                              color: t.bg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: t.line2)),
+                          child: DropdownButton<String>(
+                            value: _method,
+                            isExpanded: true,
+                            dropdownColor: t.bg2,
+                            underline: const SizedBox.shrink(),
+                            items: [
+                              for (final m in _methods)
+                                DropdownMenuItem(
+                                    value: m,
+                                    child: Text(m,
+                                        style: nexusMono(
+                                            fontSize: 13, color: t.text)))
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _method = v ?? 'GET'),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: TextField(
-                        controller: _url,
-                        style: nexusMono(fontSize: 13, color: t.text),
-                        decoration:
-                            nexusInput(context, 'https://api.example.com/…'),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: TextField(
+                          controller: _url,
+                          style: nexusMono(fontSize: 13, color: t.text),
+                          decoration:
+                              nexusInput(context, 'https://api.example.com/…'),
+                        ),
+                      ),
+                    ]),
+                  ),
+                  NexusField(
+                      label: 'Timeout (seconds)',
+                      controller: _timeout,
+                      keyboard: TextInputType.number),
+                  NexusField(
+                      label: 'Parameters (JSON schema)',
+                      controller: _params,
+                      hint: '{ "type":"object", "properties": {…} }',
+                      lines: 4),
+                  _headersSection(context),
+                  const SizedBox(height: 6),
+                  NexusToggleTile(
+                      label: 'Enabled',
+                      value: _enabled,
+                      onChanged: (v) => setState(() => _enabled = v)),
+                  const SizedBox(height: 16),
+                  NexusButton(label: 'Save tool', busy: _saving, onTap: _save),
+                  if (widget.toolId != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: GestureDetector(
+                        onTap: _delete,
+                        child: Center(
+                            child: Text('Delete tool',
+                                style: TextStyle(
+                                    color: t.danger,
+                                    fontWeight: FontWeight.w600))),
                       ),
                     ),
-                  ]),
-                ),
-                NexusField(
-                    label: 'Timeout (seconds)',
-                    controller: _timeout,
-                    keyboard: TextInputType.number),
-                NexusField(
-                    label: 'Parameters (JSON schema)',
-                    controller: _params,
-                    hint: '{ "type":"object", "properties": {…} }',
-                    lines: 4),
-                _headersSection(context),
-                const SizedBox(height: 6),
-                NexusToggleTile(
-                    label: 'Enabled',
-                    value: _enabled,
-                    onChanged: (v) => setState(() => _enabled = v)),
-                const SizedBox(height: 16),
-                NexusButton(label: 'Save tool', busy: _saving, onTap: _save),
-                if (widget.toolId != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 14),
-                    child: GestureDetector(
-                      onTap: _delete,
-                      child: Center(
-                          child: Text('Delete tool',
-                              style: TextStyle(
-                                  color: t.danger,
-                                  fontWeight: FontWeight.w600))),
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
     );
   }

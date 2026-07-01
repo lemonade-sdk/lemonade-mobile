@@ -132,7 +132,8 @@ class _AuthFormsState extends ConsumerState<_AuthForms> {
     final scheme = Theme.of(context).colorScheme;
 
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.fromLTRB(
+          20, 20, 20, 20 + MediaQuery.of(context).padding.bottom),
       children: [
         const SizedBox(height: 8),
         Icon(Icons.account_circle_outlined, size: 64, color: scheme.primary),
@@ -269,7 +270,8 @@ class _AccountDashboard extends ConsumerWidget {
             .catchError((_) => _noAccount);
       },
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
         children: [
           // Identity header (uses cached identity, always available).
           _IdentityHeader(

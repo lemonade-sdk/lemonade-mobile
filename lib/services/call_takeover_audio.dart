@@ -37,20 +37,24 @@ class CallTakeoverAudio {
     _inSub = socket.inbound.listen((pcm) => _inboundBuf.addAll(pcm));
     _flush = Timer.periodic(_flushEvery, (_) => _flushPlayback());
 
-    // Uplink: stream mic PCM16 @16k as it's captured.
+    // Uplink: stream mic PCM16 @16k as it's captured. If the mic can't start,
+    // fail loudly — a "live" takeover that sends nothing is dead air for the
+    // caller, so the UI must revert instead of pretending it worked.
     try {
-      if (await _recorder.hasPermission()) {
-        final stream = await _recorder.startStream(const RecordConfig(
-          encoder: AudioEncoder.pcm16bits,
-          sampleRate: 16000,
-          numChannels: 1,
-        ));
-        _micSub = stream.listen((pcm) {
-          if (!_muted) socket.sendPcm(pcm);
-        });
+      if (!await _recorder.hasPermission()) {
+        throw StateError('Microphone permission denied.');
       }
+      final stream = await _recorder.startStream(const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+      ));
+      _micSub = stream.listen((pcm) {
+        if (!_muted) socket.sendPcm(pcm);
+      });
     } catch (e) {
       debugPrint('[Takeover] mic start failed: $e');
+      rethrow;
     }
   }
 

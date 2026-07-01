@@ -21,6 +21,30 @@ class ProjectsTab extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // This tab is still a design preview over seeded data — say so
+        // instead of presenting fabricated "live" project status as real.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: t.surface,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: t.line2),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 15, color: t.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Preview with sample data — live project streaming from '
+                  'your Mac is coming soon.',
+                  style: TextStyle(fontSize: 11.5, color: t.muted),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
         _sourceStrip(context),
         const SizedBox(height: 16),
         for (final p in projects) ...[
@@ -85,7 +109,7 @@ class ProjectsTab extends ConsumerWidget {
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                         color: t.text)),
-                Text('${projectsSource.projectCount} projects · streaming live',
+                Text('${projectsSource.projectCount} projects · sample data',
                     style: TextStyle(fontSize: 11, color: t.muted)),
               ],
             ),
@@ -94,13 +118,13 @@ class ProjectsTab extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Row(children: [
-                NexusStatusDot(color: t.good, size: 6),
+                NexusStatusDot(color: t.faint, size: 6),
                 const SizedBox(width: 5),
-                Text('Online',
+                Text('Preview',
                     style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w600,
-                        color: t.good)),
+                        color: t.muted)),
               ]),
               const SizedBox(height: 4),
               const NexusPill('VIEW ONLY', color: Color(0xFF93A0C0)),

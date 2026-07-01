@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/chat_message.dart';
 import '../../providers/nav_provider.dart';
@@ -132,7 +133,7 @@ class NexusMessageBubble extends ConsumerWidget {
                         TextStyle(color: t.text, fontWeight: FontWeight.w700),
                     tableBody: TextStyle(color: t.muted),
                   ),
-                  onTapLink: (_, href, __) {},
+                  onTapLink: (_, href, __) => _openLink(context, href),
                 ),
         ),
       ),
@@ -169,15 +170,33 @@ class NexusMessageBubble extends ConsumerWidget {
               bytes: bytes, caption: message.textContent);
         }
       },
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
-          decoration: BoxDecoration(border: Border.all(color: t.line2)),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
+        // The border carries the same radius as the clip — a plain
+        // rectangular border here got its corners cut off by the ClipRRect
+        // (square border corners over a rounded image).
+        decoration: BoxDecoration(
+          border: Border.all(color: t.line2),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
           child: img,
         ),
       ),
     );
+  }
+
+  Future<void> _openLink(BuildContext context, String? href) async {
+    if (href == null || href.isEmpty) return;
+    final uri = Uri.tryParse(href);
+    if (uri == null) return;
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open $href')),
+      );
+    }
   }
 
   void _copy(BuildContext context) {

@@ -382,7 +382,7 @@ class _CallsTabState extends ConsumerState<CallsTab> {
                   builder: (_) => CallTranscriptScreen(
                       callRef: callRef,
                       title: task.toNumber.isEmpty ? 'Transcript' : task.toNumber)))
-              : null),
+              : () => _toast('No transcript available for this call.')),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
         decoration: BoxDecoration(
@@ -448,6 +448,48 @@ class _CallsTabState extends ConsumerState<CallsTab> {
 
   Widget _error(BuildContext context, String msg) {
     final t = context.nexus;
+    // A raw "capability_required 401" means the account has no voice plan —
+    // testers saw the literal exception text here. Show the upsell instead.
+    final needsPlan =
+        msg.contains('capability_required') || msg.contains('status=401');
+    if (needsPlan) {
+      return NexusCard(
+        radius: 18,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Calls need a phone plan',
+                style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: t.text)),
+            const SizedBox(height: 5),
+            Text(
+                'Your account doesn\'t include phone automation yet. Add a '
+                'plan to place AI calls.',
+                style: TextStyle(fontSize: 12.5, height: 1.4, color: t.muted)),
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: () =>
+                  ref.read(overlayProvider.notifier).openSubSheet(),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  color: t.accent,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Text('View plans',
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return NexusCard(
       radius: 18,
       child: Text(msg, style: TextStyle(fontSize: 12.5, color: t.danger)),

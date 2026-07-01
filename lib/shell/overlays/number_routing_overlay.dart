@@ -29,6 +29,7 @@ class _NumberRoutingOverlayState extends ConsumerState<NumberRoutingOverlay> {
   static const _routeTypes = [
     ('IvrFlow', 'IVR flow'),
     ('Extension', 'Extension'),
+    ('RingAll', 'Ring all'),
     ('Voicemail', 'Voicemail'),
     ('ForwardExternal', 'Forward'),
   ];
@@ -51,6 +52,17 @@ class _NumberRoutingOverlayState extends ConsumerState<NumberRoutingOverlay> {
   Future<void> _save() async {
     final client = ref.read(nexusVoiceClientProvider);
     if (client == null || _saving) return;
+    // A flow/extension route with no target would silently blank the route.
+    if (_routeType == 'IvrFlow' && _flowId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pick a flow first.')));
+      return;
+    }
+    if (_routeType == 'Extension' && _extensionId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pick an extension first.')));
+      return;
+    }
     setState(() => _saving = true);
     try {
       await client.updateRouting(
@@ -246,6 +258,10 @@ class _NumberRoutingOverlayState extends ConsumerState<NumberRoutingOverlay> {
           decoration: const InputDecoration(
               hintText: '+1 415 555 0123', labelText: 'Forward to number'),
         );
+      case 'RingAll':
+        return Text(
+            'Rings every extension at once — first to answer takes the call.',
+            style: TextStyle(fontSize: 13, color: t.muted));
       default:
         return Text('Calls to this number go straight to voicemail.',
             style: TextStyle(fontSize: 13, color: t.muted));
