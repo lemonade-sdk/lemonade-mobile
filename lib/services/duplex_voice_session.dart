@@ -142,6 +142,7 @@ class DuplexVoiceSession {
     _silentSamples = 0;
     _finishing = false;
     _emitEvent(DuplexEvent.transcriptUpdate(''));
+    _emitEvent(const DuplexHearing(false));
     _emitState(DuplexState.listening);
 
     final stream = await _recorder.startStream(const RecordConfig(
@@ -186,6 +187,7 @@ class DuplexVoiceSession {
     final rms = _rms16(chunk);
     final samples = chunk.length ~/ 2;
     if (rms > _fallbackSpeechRms) {
+      if (!_speechDetected) _emitEvent(const DuplexHearing(true));
       _speechDetected = true;
       _silentSamples = 0;
     } else if (_speechDetected) {
@@ -244,6 +246,7 @@ class DuplexVoiceSession {
   Future<void> _handleAsrEvent(RealtimeEvent ev) async {
     switch (ev) {
       case RealtimeDelta():
+        _emitEvent(const DuplexHearing(true));
         _liveTranscript = '$_liveTranscript${ev.text}';
         _emitEvent(DuplexEvent.transcriptUpdate(_liveTranscript));
       case RealtimeCompleted():
@@ -326,7 +329,32 @@ class DuplexVoiceSession {
       ));
       _emitEvent(DuplexEvent.artifact(art));
     }
-    for (final art in ttsArtifacts) {
+    // Resolve the audio we'll speak: prefer audio the agent already synthesized
+    // (text_to_speech); otherwise synthesize a fresh TTS pass NOW so the spoken
+    // reply can be both played AND recorded into the chat thread. (Previously
+    // the fresh TTS was produced after emitting the event and thrown away, so
+    // the AI's voice never made it into chat history.)
+    var spokenAudio = List<Artifact>.from(ttsArtifacts);
+    if (spokenAudio.isEmpty && ttsModel != null && reply.isNotEmpty) {
+      try {
+        final tts = await client.audio.speech(TextToSpeechRequest(
+          model: ttsModel!,
+          input: reply,
+          responseFormat: 'mp3',
+        ));
+        spokenAudio = [
+          Artifact(
+            kind: ArtifactKind.audio,
+            mime: tts.mime,
+            base64Data: base64Encode(tts.audioBytes),
+          ),
+        ];
+      } catch (e) {
+        _emitEvent(DuplexEvent.error('TTS error: $e'));
+      }
+    }
+
+    for (final art in spokenAudio) {
       final url = 'data:${art.mime};base64,${art.base64Data}';
       assistantParts.add(ui.MessageContent(
         type: ui.MessageContentType.audio,
@@ -344,29 +372,19 @@ class DuplexVoiceSession {
     ));
     _emitEvent(DuplexAssistantSpoke(
       reply,
-      audioArtifacts: ttsArtifacts,
+      audioArtifacts: spokenAudio,
       imageArtifacts: imageArtifacts,
     ));
 
-    // Speak: prefer audio the agent already synthesized via text_to_speech;
-    // otherwise fall back to a fresh TTS pass on the assistant text.
+    // Speak the resolved audio.
     _emitState(DuplexState.speaking);
-    try {
-      if (ttsArtifacts.isNotEmpty) {
-        final art = ttsArtifacts.last;
+    if (spokenAudio.isNotEmpty) {
+      try {
+        final art = spokenAudio.last;
         await _playDataUrl('data:${art.mime};base64,${art.base64Data}');
-      } else if (ttsModel != null && reply.isNotEmpty) {
-        final tts = await client.audio.speech(TextToSpeechRequest(
-          model: ttsModel!,
-          input: reply,
-          responseFormat: 'mp3',
-        ));
-        await _playDataUrl(
-          'data:${tts.mime};base64,${base64Encode(tts.audioBytes)}',
-        );
+      } catch (e) {
+        _emitEvent(DuplexEvent.error('TTS error: $e'));
       }
-    } catch (e) {
-      _emitEvent(DuplexEvent.error('TTS error: $e'));
     }
 
     if (_running) await _beginListening();
@@ -512,6 +530,13 @@ class DuplexAssistantSpoke extends DuplexEvent {
 class DuplexErrorEvent extends DuplexEvent {
   final String message;
   const DuplexErrorEvent(this.message);
+}
+
+/// Speech-activity cue: true when the mic is picking up the user's voice, false
+/// when a fresh listening window opens. Drives the "Hearing you…" indicator.
+class DuplexHearing extends DuplexEvent {
+  final bool active;
+  const DuplexHearing(this.active);
 }
 
 /// just_audio source from a data URL.
