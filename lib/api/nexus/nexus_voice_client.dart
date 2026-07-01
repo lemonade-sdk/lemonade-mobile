@@ -130,27 +130,31 @@ class NexusVoiceClient extends NexusGatewayClient {
         .toList();
   }
 
-  /// GET /voice/numbers/available — voip.ms inventory search.
-  Future<List<NexusAvailableNumber>> searchAvailable({
+  /// GET /voice/numbers/available — inventory search. The carrier is never
+  /// exposed; [segment] (personal|business|both) is the product-type switch, and
+  /// the response says whether the switch should render (`switchEnabled`).
+  /// Pass [query] (digits, ≥3) OR [state] (2-letter). [type] applies to [query].
+  Future<NexusNumberSearchResult> searchAvailable({
     String? query,
     String type = 'starts',
     String? state,
+    String? segment,
   }) async {
     final json = await getJson(uri('/voice/numbers/available', {
       if (query != null) 'query': query,
       'type': type,
       if (state != null) 'state': state,
+      if (segment != null) 'segment': segment,
     }));
-    final nums = (json['numbers'] as List?) ?? const [];
-    return nums
-        .whereType<Map<String, dynamic>>()
-        .map(NexusAvailableNumber.fromJson)
-        .toList();
+    return NexusNumberSearchResult.fromJson(json);
   }
 
+  /// POST /voice/numbers/order — buy. Sends ONLY {did,label}; the backend
+  /// resolves the provider. 402 insufficient_balance (Personal wallet) → top-up
+  /// then retry; 409 already on platform; 400 no longer available.
   Future<NexusNumber> orderNumber(String did, {String? label}) async {
     final json = await postJson(uri('/voice/numbers/order'),
-        {'did': did, if (label != null) 'label': label});
+        {'did': did, if (label != null && label.isNotEmpty) 'label': label});
     return NexusNumber.fromJson(json);
   }
 

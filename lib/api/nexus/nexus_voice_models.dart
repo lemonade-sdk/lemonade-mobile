@@ -135,6 +135,34 @@ class NexusAvailableNumber {
         state: _str(j['state']),
         sellMonthlyCents: _int(j['sellMonthlyCents']) ?? 0,
       );
+
+  /// "$1.99/mo" — what THIS account pays (carrier never exposed).
+  String get priceLabel => '\$${(sellMonthlyCents / 100).toStringAsFixed(2)}/mo';
+}
+
+/// Result of GET /voice/numbers/available — the matches plus which segment the
+/// server actually applied and whether the Personal/Business/Both switch should
+/// render (`switchEnabled` false → Personal account: hide the switch).
+class NexusNumberSearchResult {
+  final List<NexusAvailableNumber> numbers;
+  final String segment; // personal | business | both
+  final bool switchEnabled;
+
+  const NexusNumberSearchResult({
+    this.numbers = const [],
+    this.segment = '',
+    this.switchEnabled = false,
+  });
+
+  factory NexusNumberSearchResult.fromJson(Map<String, dynamic> j) =>
+      NexusNumberSearchResult(
+        numbers: ((j['numbers'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(NexusAvailableNumber.fromJson)
+            .toList(),
+        segment: _str(j['segment']),
+        switchEnabled: j['switchEnabled'] == true,
+      );
 }
 
 /// A SIP extension (`ExtensionView`).

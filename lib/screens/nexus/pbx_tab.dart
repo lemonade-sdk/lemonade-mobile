@@ -10,8 +10,10 @@ import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
 import '../../widgets/nexus/gateway_gate.dart';
+import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 import 'extension_editor_sheet.dart';
+import 'get_number_screen.dart';
 
 class PbxTab extends ConsumerWidget {
   const PbxTab({super.key});
@@ -117,10 +119,16 @@ class _NumbersView extends ConsumerWidget {
       data: (numbers) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          NexusButton(
+            label: '+ Get a number',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const GetNumberScreen())),
+          ),
+          const SizedBox(height: 16),
           const NexusSectionLabel('DIDs · routing'),
           const SizedBox(height: 11),
           if (numbers.isEmpty)
-            _EmptyBox('No numbers yet — order one from Nexus Voice.')
+            _EmptyBox('No numbers yet — tap "Get a number" to add one.')
           else
             for (final n in numbers) ...[
               NexusCard(
@@ -156,8 +164,30 @@ class _NumbersView extends ConsumerWidget {
                           style: TextStyle(fontSize: 11, color: t.muted)),
                     ],
                   ),
-                  const SizedBox(width: 8),
-                  Icon(Icons.chevron_right, size: 16, color: t.faint),
+                  const SizedBox(width: 4),
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, size: 18, color: t.faint),
+                    color: t.bg2,
+                    onSelected: (v) {
+                      if (v == 'routing') {
+                        ref
+                            .read(overlayProvider.notifier)
+                            .openNumberRouting(n.id);
+                      } else if (v == 'release') {
+                        _release(context, ref, n);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                          value: 'routing',
+                          child: Text('Edit routing',
+                              style: TextStyle(color: t.text))),
+                      PopupMenuItem(
+                          value: 'release',
+                          child: Text('Release number',
+                              style: TextStyle(color: t.danger))),
+                    ],
+                  ),
                 ]),
               ),
               const SizedBox(height: 11),
@@ -165,6 +195,42 @@ class _NumbersView extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _release(
+      BuildContext context, WidgetRef ref, NexusNumber n) async {
+    final t = context.nexus;
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: t.bg2,
+        title: Text('Release ${n.number}?',
+            style: TextStyle(color: t.text, fontWeight: FontWeight.w700)),
+        content: Text(
+            'This permanently releases the number. It will stop receiving calls '
+            'and may not be recoverable.',
+            style: TextStyle(color: t.muted, fontSize: 13, height: 1.4)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Keep', style: TextStyle(color: t.muted))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Release', style: TextStyle(color: t.danger))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final client = ref.read(nexusVoiceClientProvider);
+    if (client == null) return;
+    try {
+      await client.cancelNumber(n.id);
+      ref.invalidate(voiceNumbersProvider);
+      messenger.showSnackBar(const SnackBar(content: Text('Number released.')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    }
   }
 
   String _routeLabel(String rt) => switch (rt) {
