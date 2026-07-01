@@ -1,30 +1,35 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Unit tests for pure app logic. (This file used to hold the stock
+// flutter-create counter smoke test, which never matched this app and
+// failed on every run.)
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:lemonade_mobile/main.dart';
+import 'package:lemonade_mobile/models/server_config.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('ServerConfig.apiUrl normalization', () {
+    ServerConfig cfg(String base) => ServerConfig(baseUrl: base, name: 'test');
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    test('bare host gets /api/v1 appended', () {
+      expect(cfg('http://host:8000').apiUrl, 'http://host:8000/api/v1');
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    test('trailing slashes are stripped', () {
+      expect(cfg('http://host:8000///').apiUrl, 'http://host:8000/api/v1');
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('existing /api/v1 is kept as-is', () {
+      expect(cfg('http://host:8000/api/v1').apiUrl, 'http://host:8000/api/v1');
+      expect(cfg('http://host:8000/api/v1/').apiUrl, 'http://host:8000/api/v1');
+    });
+
+    test('external /v1 style is kept as-is', () {
+      expect(cfg('https://api.example.com/v1').apiUrl,
+          'https://api.example.com/v1');
+    });
+
+    test('/api suffix gets /v1 appended', () {
+      expect(cfg('http://host:8000/api').apiUrl, 'http://host:8000/api/v1');
+    });
   });
 }

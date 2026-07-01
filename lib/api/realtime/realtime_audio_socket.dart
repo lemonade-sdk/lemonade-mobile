@@ -41,35 +41,42 @@ class RealtimeAudioSocket {
     final httpPort =
         apiUri.hasPort ? apiUri.port : (scheme == 'wss' ? 443 : 80);
 
-    // Try the advertised WS port first. If the server advertised a separate
-    // port (e.g. 9001) that isn't reachable from this network — common when
-    // the HTTP API is exposed through a NAT/proxy but the WS port isn't —
-    // fall back to the HTTP port, where many Lemonade proxies actually
-    // serve WS via HTTP upgrade.
+    // Candidate (port, path) pairs, tried in order:
+    //   • the advertised websocket_port at `/realtime` (standalone Lemonade
+    //     servers run the WS on its own dynamically-assigned port);
+    //   • the HTTP port at `/realtime` and `/api/v1/realtime` — the Nexus
+    //     gateway (and proxied setups) serve the WS as an HTTP upgrade on the
+    //     regular API port under those paths.
+    // Previously, when no port was advertised we dialed ONLY the HTTP port at
+    // `/realtime`; against servers that don't route that path the API answers
+    // with a plain HTTP response and the handshake fails with
+    // "was not upgraded to websocket".
     final advertisedPort = port ?? httpPort;
-    final candidates = <int>[advertisedPort];
-    if (advertisedPort != httpPort) candidates.add(httpPort);
+    final candidates = <(int, String)>[
+      (advertisedPort, '/realtime'),
+      if (advertisedPort != httpPort) (httpPort, '/realtime'),
+      (httpPort, '/api/v1/realtime'),
+    ];
 
     // Lemonade's WS server rejects unauthenticated connections when an API
     // key is configured. It accepts the key via `Authorization: Bearer …`
     // header OR a `?api_key=` query param; the query param is the only way
-    // that works portably with `web_socket_channel` across platforms.
+    // that works portably with `web_socket_channel` across platforms. The
+    // Nexus gateway wants the same credential as `?access_token=` — send
+    // both, each side ignores the one it doesn't use.
     final apiKey = _server.apiKey ?? 'lemonade';
 
     Object? lastError;
-    for (final candidatePort in candidates) {
-      // Lemonade serves realtime transcription at `/realtime` on the
-      // dynamically-assigned websocket_port (NOT the root path, and NOT under
-      // the HTTP `/api/v1` base). See the Lemonade OpenAI-compat docs:
-      //   ws://<host>:<websocket_port>/realtime?model=<model>
+    for (final (candidatePort, candidatePath) in candidates) {
       final uri = Uri(
         scheme: scheme,
         host: apiUri.host,
         port: candidatePort,
-        path: '/realtime',
+        path: candidatePath,
         queryParameters: {
           'model': model,
           'api_key': apiKey,
+          'access_token': apiKey,
         },
       );
       try {
@@ -99,9 +106,11 @@ class RealtimeAudioSocket {
     }
 
     _emitState(RealtimeConnectionState.error);
+    final tried = candidates
+        .map((c) => '${apiUri.host}:${c.$1}${c.$2}')
+        .join(', ');
     throw StateError(
-      'Could not open the realtime audio WebSocket on '
-      '${apiUri.host}:${candidates.join(' or ')}. '
+      'Could not open the realtime audio WebSocket (tried $tried). '
       'Last error: $lastError. '
       'Check that the server\'s WS port is reachable from this device — '
       'remote setups often need the WS port forwarded too, not just HTTP.',

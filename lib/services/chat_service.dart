@@ -19,8 +19,16 @@ class ChatService {
   final LemonadeApiClient client;
   ChatService(this.client);
 
+  /// Rough character budget for the wire history (~6k tokens at ~4 chars per
+  /// token). Local models often run 4k–8k-token contexts; sending the whole
+  /// unbounded conversation each turn is what made chats work for a few
+  /// rounds and then start failing with HTTP 500s once the prompt outgrew
+  /// the model's context window.
+  static const int kHistoryCharBudget = 24000;
+
   /// Run a chat turn. Caller passes the full conversation [history] (already
-  /// containing the new user message).
+  /// containing the new user message). Older turns beyond the char budget are
+  /// dropped from the wire request (the on-device chat log keeps everything).
   Stream<ChatTurnEvent> run({
     required String llmModel,
     required List<ui.ChatMessage> history,
@@ -29,6 +37,7 @@ class ChatService {
     OmniToolExecutor? executor,
     String? extraSystemPrompt,
   }) {
+    final trimmed = _trimHistory(history);
     final useOmni = omniRouterEnabled &&
         capabilities != null &&
         capabilities.isUsable &&
@@ -37,13 +46,33 @@ class ChatService {
     if (useOmni) {
       return _runOmni(
         llmModel: llmModel,
-        history: history,
+        history: trimmed,
         capabilities: capabilities,
         executor: executor,
         extraSystemPrompt: extraSystemPrompt,
       );
     }
-    return _runPlainStream(llmModel: llmModel, history: history);
+    return _runPlainStream(llmModel: llmModel, history: trimmed);
+  }
+
+  /// Keep the most recent messages that fit the char budget. The newest
+  /// message is always kept, and we prefer starting the window on a user turn
+  /// so the model doesn't see a conversation opening mid-answer.
+  List<ui.ChatMessage> _trimHistory(List<ui.ChatMessage> history) {
+    if (history.isEmpty) return history;
+    var used = 0;
+    var start = history.length;
+    for (var i = history.length - 1; i >= 0; i--) {
+      final cost = history[i].textContent.length + 64; // ≈ per-message overhead
+      if (start < history.length && used + cost > kHistoryCharBudget) break;
+      start = i;
+      used += cost;
+    }
+    // Slide forward past any leading assistant turns left by the cut.
+    while (start < history.length - 1 && !history[start].isUser) {
+      start++;
+    }
+    return start == 0 ? history : history.sublist(start);
   }
 
   Stream<ChatTurnEvent> _runOmni({

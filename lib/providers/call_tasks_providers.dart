@@ -56,7 +56,8 @@ final callTaskProvider =
     try {
       task = await client.getTask(id);
     } catch (_) {
-      return;
+      await Future.delayed(const Duration(seconds: 3));
+      continue;
     }
     yield task;
     if (task.isFinished) return;

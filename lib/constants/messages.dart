@@ -4,6 +4,8 @@ class AppMessages {
   // Error messages
   static const String noServerSelected = 'No server selected. Please select a server in settings.';
   static const String noModelSelected = 'Please select a model from the settings before chatting.';
+  static const String modelListSyncing =
+      'Still syncing the model list from the server — try again in a moment.';
   static const String noModelSelectedForImage = 'Please select a model from the settings before generating images.';
 
   // Image generation errors

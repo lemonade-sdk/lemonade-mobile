@@ -98,7 +98,11 @@ class OmniToolCatalog {
         },
         'required': ['prompt'],
       },
-      requiresLabels: const ['edit'],
+      // Any-of semantics: prefer a dedicated 'edit' model, but image models
+      // serve /v1/images/edits too. Requiring the rare 'edit' label alone
+      // meant photo editing silently never activated on typical servers even
+      // though the endpoint was fully wired up.
+      requiresLabels: const ['edit', 'image'],
     ),
     ToolDefinition(
       name: 'text_to_speech',

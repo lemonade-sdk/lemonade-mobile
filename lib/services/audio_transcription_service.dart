@@ -62,38 +62,34 @@ class AudioTranscriptionService {
     return data['text'] as String? ?? '';
   }
 
-  /// Discover WebSocket port from the health endpoint.
-  /// Returns the port number or null if not available.
+  /// Discover the dedicated WebSocket port from the server's health endpoint.
+  /// Returns null when the server doesn't advertise one — callers must NOT
+  /// treat the HTTP API port as a discovered WS port. (The old fallback
+  /// returned the HTTP port here, so the realtime socket dialed the plain
+  /// HTTP API and failed with "was not upgraded to websocket";
+  /// RealtimeAudioSocket.connect handles its own same-port upgrade attempts.)
   Future<int?> discoverWebSocketPort() async {
-    try {
-      // Try the health endpoint
-      final healthUrl = Uri.parse('$_apiUrl/health');
-      final response = await http.get(
-        healthUrl,
-        headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 5));
+    // Lemonade serves health under the API base; some builds also expose it
+    // at the server root. Check both.
+    final baseNoSlash = server.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    for (final healthUrl in ['$_apiUrl/health', '$baseNoSlash/health']) {
+      try {
+        final response = await http.get(
+          Uri.parse(healthUrl),
+          headers: {'Authorization': _authHeader},
+        ).timeout(const Duration(seconds: 5));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        // Check for WebSocket port in response
-        if (data['ws_port'] != null) {
-          return data['ws_port'] as int;
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final port = data['ws_port'] ?? data['websocket_port'];
+          if (port is int) return port;
+          if (port is String) return int.tryParse(port);
         }
-        if (data['websocket_port'] != null) {
-          return data['websocket_port'] as int;
-        }
+      } catch (e) {
+        // Health endpoint not available at this path — try the next.
       }
-    } catch (e) {
-      // Health endpoint not available
     }
-
-    // Default: try using the same port as HTTP
-    try {
-      final uri = Uri.parse(server.baseUrl);
-      return uri.port;
-    } catch (e) {
-      return null;
-    }
+    return null;
   }
 
   /// Get the base URL host for WebSocket connections.
