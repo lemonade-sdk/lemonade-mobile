@@ -133,6 +133,24 @@ class ChatHistoryNotifier extends StateNotifier<List<ChatHistory>> {
     }
   }
 
+  /// Set a chat's title (persisted). Only touches the title — does not rewrite
+  /// the message list. Used by AI auto-titling after the first exchange.
+  Future<void> updateChatTitle(String chatId, String title) async {
+    final idx = state.indexWhere((c) => c.id == chatId);
+    if (idx == -1) return;
+
+    final chat = state[idx];
+    final updated = chat.copyWith(title: title, lastUpdated: DateTime.now());
+
+    state = [
+      ...state.sublist(0, idx),
+      updated,
+      ...state.sublist(idx + 1),
+    ];
+
+    await ChatRepository.upsertChat(updated);
+  }
+
   Future<void> updateChatOverrides(String chatId, ModelDefaults? overrides) async {
     final idx = state.indexWhere((c) => c.id == chatId);
     if (idx == -1) return;

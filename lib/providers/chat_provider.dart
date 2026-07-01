@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/lemonade_client.dart';
+import '../api/types/chat_message.dart';
+import '../api/types/chat_request.dart';
 import '../constants/messages.dart';
 import '../models/chat_message.dart';
 import '../omni/tool_executor.dart';
@@ -158,9 +161,73 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
             _scroll(scrollController);
         }
       }
+      await _maybeAutoTitle(client, selectedModel);
     } catch (e) {
       final errText = AppMessages.genericError(e.toString());
       await _replaceLast(working, errText);
+    }
+  }
+
+  /// After the first full exchange, ask the model for a short conversation title
+  /// and persist it for the sidebar. Best-effort: any failure leaves the
+  /// existing first-message fallback title untouched.
+  Future<void> _maybeAutoTitle(LemonadeApiClient client, String model) async {
+    try {
+      final notifier = ref.read(chatHistoryProvider.notifier);
+      final active = notifier.getActiveChat();
+      if (active == null || active.title.trim().isNotEmpty) return;
+
+      final msgs = active.messages;
+      final firstUser =
+          msgs.where((m) => m.role == MessageRole.user).firstOrNull;
+      final firstAssistant =
+          msgs.where((m) => m.role == MessageRole.assistant).firstOrNull;
+      if (firstUser == null || firstAssistant == null) return;
+
+      String textOf(ChatMessage m) => m.content
+          .where((c) => c.type == MessageContentType.text)
+          .map((c) => c.value)
+          .join(' ')
+          .trim();
+      final userText = textOf(firstUser);
+      final assistantText = textOf(firstAssistant);
+      if (userText.isEmpty) return;
+
+      final res = await client.chat.create(
+        ChatCompletionRequest(
+          model: model,
+          messages: [
+            ApiChatMessage.system(
+                'You generate a concise chat title. Reply with ONLY a 3–6 word '
+                'title in Title Case — no quotes, no trailing punctuation, no '
+                'prefixes or explanation.'),
+            ApiChatMessage.user('First message: $userText\n'
+                '${assistantText.isEmpty ? '' : 'Assistant reply: $assistantText\n'}'
+                '\nTitle:'),
+          ],
+          stream: false,
+        ),
+        timeout: const Duration(seconds: 20),
+      );
+
+      var title = (res.message.content ?? '').trim();
+      // Sanitize: strip quotes/newlines, a trailing period, and clamp length.
+      title = title.replaceAll('"', '').replaceAll('\n', ' ').trim();
+      if (title.endsWith('.')) {
+        title = title.substring(0, title.length - 1).trim();
+      }
+      if (title.length > 60) title = '${title.substring(0, 57).trim()}…';
+      if (title.isEmpty) return;
+
+      // Only apply if still untitled (guard against a manual rename mid-flight).
+      final still = notifier.getActiveChat();
+      if (still != null &&
+          still.id == active.id &&
+          still.title.trim().isEmpty) {
+        await notifier.updateChatTitle(active.id, title);
+      }
+    } catch (_) {
+      // best-effort — keep the first-message fallback title
     }
   }
 
