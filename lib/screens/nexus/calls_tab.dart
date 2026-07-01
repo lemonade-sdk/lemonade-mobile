@@ -5,6 +5,7 @@ import '../../api/nexus/nexus_call_tasks_models.dart';
 import '../../providers/call_tasks_providers.dart';
 import '../../providers/nav_provider.dart';
 import 'call_transcript_screen.dart';
+import 'get_number_screen.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
 import '../../widgets/nexus/gateway_gate.dart';
@@ -101,6 +102,8 @@ class _CallsTabState extends ConsumerState<CallsTab> {
             const SizedBox(height: 16),
           ],
           _placeCallCard(context),
+          const SizedBox(height: 12),
+          _getNumberRow(context),
           const SizedBox(height: 16),
           const NexusSectionLabel('Recent activity'),
           const SizedBox(height: 9),
@@ -169,6 +172,34 @@ class _CallsTabState extends ConsumerState<CallsTab> {
                   fontSize: 12.5, fontWeight: FontWeight.w600, color: t.accent2)),
         ],
       ),
+    );
+  }
+
+  Widget _getNumberRow(BuildContext context) {
+    final t = context.nexus;
+    return NexusCard(
+      radius: 14,
+      onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const GetNumberScreen())),
+      child: Row(children: [
+        Icon(Icons.dialpad, size: 17, color: t.accent),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Get a number',
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      color: t.text)),
+              Text('Search & buy a phone number',
+                  style: TextStyle(fontSize: 11.5, color: t.muted)),
+            ],
+          ),
+        ),
+        Icon(Icons.chevron_right, size: 16, color: t.faint),
+      ]),
     );
   }
 
