@@ -123,18 +123,40 @@ final wireLlmModelProvider = Provider<String?>((ref) {
   }
   if (selected == null || !selected.isCollection) return selectedId;
 
-  for (final componentId in selected.compositeModels) {
-    for (final m in models) {
-      if (m.id != componentId) continue;
-      if (m.supportsTts || m.supportsAudio || m.supportsImageGeneration) break;
-      return componentId;
-    }
+  // Prefer a component we KNOW is chat-shaped; failing that, one we know
+  // nothing about (the server may still route it); never a component we know
+  // is TTS/STT/image — sending one of those to /chat/completions is a
+  // guaranteed "only LLM models support this endpoint" 400.
+  //
+  // Embedding/reranker components need an id-based veto: the gateway labels
+  // every non-audio/image modality as plain `text`, so by labels alone
+  // "Qwen3-Embedding-0.6B" looked chat-shaped and got sent to
+  // /chat/completions (real bug, real 400).
+  bool nonChatById(String id) {
+    final l = id.toLowerCase();
+    return l.contains('embed') || l.contains('rerank');
   }
-  // No chat-shaped component found locally — return the first component as a
-  // last resort so the request at least references something concrete.
-  return selected.compositeModels.isNotEmpty
-      ? selected.compositeModels.first
-      : selectedId;
+
+  String? unknownCandidate;
+  for (final componentId in selected.compositeModels) {
+    if (nonChatById(componentId)) continue;
+    ModelInfo? entry;
+    for (final m in models) {
+      if (m.id == componentId) {
+        entry = m;
+        break;
+      }
+    }
+    if (entry == null) {
+      unknownCandidate ??= componentId;
+      continue;
+    }
+    if (entry.supportsTts || entry.supportsAudio || entry.supportsImageGeneration) {
+      continue;
+    }
+    return componentId;
+  }
+  return unknownCandidate ?? selectedId;
 });
 
 /// Resolved view of the active workflow. When the user has a Collection

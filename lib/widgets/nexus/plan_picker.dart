@@ -53,10 +53,14 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
   }
 
   /// Whether an add-on is currently on the subscription. Uses the authoritative
-  /// active-add-on list from GET /billing/subscription; before it loads, falls
-  /// back to inferring the PBX `phone_system` add-on from the `pbx` capability.
+  /// active-add-on list from GET /billing/subscription; before it loads — or
+  /// when the account's subscription-item lines were never backfilled (older
+  /// subscriptions predate that table) — falls back to inferring the PBX
+  /// `phone_system` add-on from the `pbx` capability.
   bool _activeAddon(String key, SubscriptionDetail? detail, NexusCapabilities caps) {
-    if (detail != null) return detail.activeAddonKeys.contains(key);
+    if (detail != null && detail.addons.isNotEmpty) {
+      return detail.activeAddonKeys.contains(key);
+    }
     return key == 'phone_system' && caps.pbx;
   }
 
@@ -113,23 +117,37 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
           error: (e, _) => Text('Could not load plans: $e',
               style: TextStyle(color: t.danger, fontSize: 12.5)),
           data: (catalog) {
+            // Anything the account already OWNS is always visible, even when
+            // the audience/segment filter would hide it — e.g. a Personal
+            // account holding the Business phone add-on must still see (and
+            // be able to manage) it.
             final visiblePlans = [
               for (final p in catalog.plans)
-                if (_visibleFor(p.audience, segment)) p
+                if (_visibleFor(p.audience, segment) ||
+                    p.key == currentPlanKey)
+                  p
             ];
             final addons = [
               for (final a in catalog.addons)
-                if (_visibleFor(a.audience, segment)) a
+                if (_visibleFor(a.audience, segment) ||
+                    _activeAddon(a.key, detail, caps))
+                  a
             ];
             if (visiblePlans.isEmpty && addons.isEmpty) {
               return Text('No plans available for your account.',
                   style: TextStyle(color: t.muted, fontSize: 12.5));
             }
+            // The plan you're subscribed to reads as selected by default;
+            // tapping another plan moves the radio (and offers the switch
+            // CTA). Before this, the current plan only got a tiny CURRENT
+            // chip and the radio sat empty — it looked unsubscribed.
+            final effectiveSelected = _selectedPlan ?? currentPlanKey;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 for (final p in visiblePlans)
-                  _planCard(context, p, p.key == currentPlanKey),
+                  _planCard(context, p, p.key == currentPlanKey,
+                      selected: p.key == effectiveSelected),
                 if (subscribed) _changePlanCta(context, currentPlanKey),
                 if (addons.isNotEmpty) ...[
                   const SizedBox(height: 6),
@@ -239,9 +257,9 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
 
   // ── Cards ───────────────────────────────────────────────────────────
 
-  Widget _planCard(BuildContext context, Plan p, bool current) {
+  Widget _planCard(BuildContext context, Plan p, bool current,
+      {required bool selected}) {
     final t = context.nexus;
-    final selected = (_selectedPlan ?? '__none') == p.key;
     final price =
         '\$${(p.priceCents / 100).toStringAsFixed(p.priceCents % 100 == 0 ? 0 : 2)}';
     return GestureDetector(

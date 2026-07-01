@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lemonade_mobile/api/lemonade_client.dart';
@@ -56,6 +57,12 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   final Ref ref;
 
   ModelsNotifier(this.ref) : super([]) {
+    // Initial fetch: providers are lazy, so by the time this notifier is
+    // first created the saved server may ALREADY be selected — the
+    // server-change listener below never fires for it and the catalog stayed
+    // empty until the next mode/server switch ("catalog has 0 entries" at
+    // cold start).
+    fetchModels();
     // Re-evaluate the allowed model set when the inference mode changes
     // (Subscription locks to NXS*; Local/Mesh show everything).
     ref.listen(appModeProvider, (_, __) => fetchModels());
@@ -86,6 +93,14 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     final isSubscription = ref.read(appModeProvider) == AppMode.subscription;
     final restrictToNxs = isSubscription && isGateway;
 
+    // Right after switching into Subscription mode the previous (local)
+    // server can still be selected for a beat while the gateway server is
+    // being restored. Fetching from it would auto-pick a local model as the
+    // chat model, which then visibly "flips" to an NXS collection once the
+    // gateway list lands. Skip the transient fetch; the server-change
+    // listener re-runs us as soon as the gateway is selected.
+    if (isSubscription && !isGateway) return;
+
     final client = LemonadeApiClient(selectedServer);
     try {
       // Fetch the full catalog (loaded + registry entries). The server may
@@ -99,7 +114,17 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
           maxCtxById[m.id] = m.maxContextWindow;
         }
       }
-      final apiModels = allModels.where((m) => m.downloaded == true).toList();
+      // "downloaded" filtering is a LOCAL-server concept (hide models the
+      // user hasn't pulled). On the managed gateway `downloaded` means
+      // "loaded on a node right now" — but the router auto-loads on demand,
+      // so an unloaded chat component or a partially-loaded collection is
+      // still perfectly routable. Filtering them out made collections vanish
+      // from the picker and, worse, hid a collection's chat component from
+      // the wire resolver, which then fell back to the image/TTS component →
+      // "This model does not support chat completion" 400s.
+      final apiModels = isGateway
+          ? allModels
+          : allModels.where((m) => m.downloaded == true).toList();
       final modelInfos = apiModels
           .map((m) => ModelInfo(
                 m.id,
@@ -109,10 +134,15 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
                 maxContextWindow: maxCtxById[m.id] ?? m.maxContextWindow,
               ))
           .toList();
-      // In subscription, surface only the NXS* collections; elsewhere, all.
-      state = restrictToNxs
-          ? modelInfos.where(isNxsCollection).toList()
-          : modelInfos;
+      // Keep the FULL catalog in state even on the gateway: the wire-model
+      // substitution (collection → chat component) and the omni capability
+      // resolver both need the component models' entries/labels. Filtering
+      // them out here made wireLlmModelProvider fall back to
+      // `compositeModels.first` — often an image/TTS component — producing
+      // "This model does not support chat completion" 400s in Subscription
+      // mode. The NXS-only view is applied where users pick/land on a model
+      // (`allowed` below + the model picker UI), not to the raw catalog.
+      state = modelInfos;
 
       final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
       // Wait for the persisted selection to finish loading before deciding
@@ -121,7 +151,9 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       await selectedModelNotifier.loaded;
 
       // The set of models the user is allowed to be on for this server.
-      final allowed = state;
+      final allowed = restrictToNxs
+          ? modelInfos.where(isNxsCollection).toList()
+          : modelInfos;
 
       // If the saved model isn't in the allowed set (not installed, or not an
       // NXS* collection on the gateway), auto-pick a valid default.
@@ -138,14 +170,22 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
         } else {
           // Prefer the default Halo collection; otherwise fall back to a
           // chat-shaped model — `modelInfos.first` is whatever the server
-          // returned first, which is often an image-gen / TTS / ASR model and
-          // would cause /chat/completions to 400 on first chat.
+          // returned first, which is often an image-gen / TTS / ASR /
+          // embedding model and would cause /chat/completions to 400 on
+          // first chat. Embedding/reranker models carry plain `text` labels,
+          // so they need the id-based veto.
+          bool nonChatId(String id) {
+            final l = id.toLowerCase();
+            return l.contains('embed') || l.contains('rerank');
+          }
+
           pick = preferredDefault(modelInfos) ??
               modelInfos.firstWhere(
                 (m) =>
                     !m.supportsTts &&
                     !m.supportsAudio &&
-                    !m.supportsImageGeneration,
+                    !m.supportsImageGeneration &&
+                    !nonChatId(m.id),
                 orElse: () => modelInfos.isNotEmpty
                     ? modelInfos.first
                     : ModelInfo('', const []),
@@ -155,8 +195,11 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
           await selectedModelNotifier.selectModel(pick.id);
         }
       }
-    } catch (_) {
-      state = [];
+    } catch (e) {
+      // Keep the previous catalog on a failed refresh — blanking it bricked
+      // chat ("model list never syncs") after one transient network error.
+      debugPrint('fetchModels failed (${selectedServer.baseUrl}): $e');
+      if (state.isEmpty) state = [];
     } finally {
       client.close();
     }
@@ -175,9 +218,10 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   }
 
   /// The preferred default model: a Halo-Lite collection first, then any Halo
-  /// collection, then any Halo-Lite model, then any Halo model. Null if none
-  /// match. Collections are preferred so Omni multimodal routing is on by
-  /// default.
+  /// collection, then ANY collection, then Halo-Lite / Halo models. Null if
+  /// none match. Collections are preferred so Omni multimodal routing is on
+  /// by default — a Local AI server with any collection defined should never
+  /// default to a bare model.
   ModelInfo? preferredDefault(List<ModelInfo> models) {
     bool idHas(ModelInfo m, String needle) =>
         m.id.toLowerCase().contains(needle);
@@ -186,6 +230,9 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     }
     for (final m in models) {
       if (m.isCollection && idHas(m, 'halo')) return m;
+    }
+    for (final m in models) {
+      if (m.isCollection) return m;
     }
     for (final m in models) {
       if (idHas(m, 'halo-lite')) return m;

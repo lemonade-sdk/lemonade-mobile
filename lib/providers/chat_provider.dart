@@ -23,6 +23,10 @@ import '../storage/file_storage.dart';
 final chatProvider =
     StateNotifierProvider<ChatNotifier, List<ChatMessage>>((ref) => ChatNotifier(ref));
 
+/// True while a chat turn is in flight. The composer uses this to swap the
+/// send button for a stop button and to block double-sends.
+final chatStreamingProvider = StateProvider<bool>((ref) => false);
+
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   final Ref ref;
 
@@ -36,11 +40,64 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     state = active?.messages ?? [];
   }
 
+  bool _sending = false;
+  bool _stopRequested = false;
+
+  /// Ask the in-flight turn to stop after the next event. Keeps whatever text
+  /// has already streamed in.
+  void stopStreaming() => _stopRequested = true;
+
+  /// Pre-flight check for the composer: returns the reason a send can't start
+  /// (no server / no model / non-vision model with an image), or null if it
+  /// can. Lets the composer keep the user's text and attachments instead of
+  /// discarding them into an error bubble.
+  String? sendBlockedReason({bool hasImages = false}) {
+    if (ref.read(selectedServerProvider) == null) {
+      return AppMessages.noServerSelected;
+    }
+    final selectedModel = ref.read(wireLlmModelProvider) ?? '';
+    if (selectedModel.isEmpty) return AppMessages.noModelSelected;
+    if (_modelListOutOfSync()) return AppMessages.modelListSyncing;
+    if (hasImages) {
+      final modelInfo = ref.read(modelsProvider).firstWhere(
+            (m) => m.id == selectedModel,
+            orElse: () => ModelInfo(selectedModel, const []),
+          );
+      if (!modelInfo.supportsVision) {
+        return AppMessages.visionModelServerError(selectedModel);
+      }
+    }
+    return null;
+  }
+
+  /// True while the selected model isn't present in the fetched model list —
+  /// e.g. right after a mode/server switch, before the new catalog lands.
+  /// Sending in that window is dangerous: the wire resolver can't decompose a
+  /// Collection it can't see, so the raw meta-id (e.g. "NXS-PJX-Chat") goes
+  /// to /chat/completions and the node 400s with "not an LLM". When out of
+  /// sync, a catalog refresh is kicked off so the state self-heals instead of
+  /// blocking forever.
+  bool _modelListOutOfSync() {
+    final selectedId = ref.read(selectedModelProvider);
+    if (selectedId == null) return false;
+    final models = ref.read(modelsProvider);
+    final outOfSync = models.isEmpty || !models.any((m) => m.id == selectedId);
+    if (outOfSync) {
+      debugPrint('Model list out of sync: selected="$selectedId", '
+          'catalog has ${models.length} entries — refreshing.');
+      // Fire-and-forget: re-fetch validates the selection and re-picks a
+      // valid default if the saved one is gone.
+      ref.read(modelsProvider.notifier).fetchModels();
+    }
+    return outOfSync;
+  }
+
   Future<void> sendMessage(
     String message, {
     List<String>? imagePaths,
     ScrollController? scrollController,
   }) async {
+    if (_sending) return; // one turn at a time — no interleaved histories
     final server = ref.read(selectedServerProvider);
     if (server == null) {
       await _appendError(AppMessages.noServerSelected);
@@ -57,6 +114,11 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       return;
     }
 
+    if (_modelListOutOfSync()) {
+      await _appendError(AppMessages.modelListSyncing);
+      return;
+    }
+
     final availableModels = ref.read(modelsProvider);
     final modelInfo = availableModels.firstWhere(
       (m) => m.id == selectedModel,
@@ -68,6 +130,33 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       await _appendError(AppMessages.visionModelServerError(selectedModel));
       return;
     }
+
+    debugPrint('Chat turn → wire model "$selectedModel" '
+        '(selected "${ref.read(selectedModelProvider)}")');
+
+    _sending = true;
+    _stopRequested = false;
+    ref.read(chatStreamingProvider.notifier).state = true;
+    try {
+      await _runTurn(
+        message,
+        imagePaths: imagePaths,
+        scrollController: scrollController,
+        selectedModel: selectedModel,
+      );
+    } finally {
+      _sending = false;
+      ref.read(chatStreamingProvider.notifier).state = false;
+    }
+  }
+
+  Future<void> _runTurn(
+    String message, {
+    required List<String>? imagePaths,
+    required ScrollController? scrollController,
+    required String selectedModel,
+  }) async {
+    final hasImages = imagePaths != null && imagePaths.isNotEmpty;
 
     // Build & persist the user message immediately.
     final userParts = <MessageContent>[];
@@ -82,7 +171,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     final userMessage = ChatMessage(role: MessageRole.user, content: userParts);
     final history = [...state, userMessage];
     await ref.read(chatHistoryProvider.notifier).updateActiveChat(history);
-    _scroll(scrollController, animated: true);
+    _scroll(scrollController, animated: true, force: true);
 
     // Add the assistant placeholder.
     final placeholder = ChatMessage.text(role: MessageRole.assistant, text: '');
@@ -118,6 +207,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       );
 
       await for (final ev in stream) {
+        // Breaking out of the await-for cancels the underlying stream.
+        if (_stopRequested) break;
         switch (ev) {
           case ChatTokens():
             assistantText += ev.delta;
@@ -293,8 +384,13 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     await ref.read(chatHistoryProvider.notifier).updateActiveChat(next);
   }
 
-  void _scroll(ScrollController? controller, {bool animated = false}) {
+  void _scroll(ScrollController? controller,
+      {bool animated = false, bool force = false}) {
     if (controller == null || !controller.hasClients) return;
+    // Don't yank the view to the bottom while the user is reading earlier
+    // messages — only follow the stream when already pinned near the bottom.
+    final pos = controller.position;
+    if (!force && pos.maxScrollExtent - pos.pixels > 160) return;
     if (animated) {
       controller.animateTo(
         controller.position.maxScrollExtent,

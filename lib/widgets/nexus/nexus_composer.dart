@@ -94,8 +94,18 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
   }
 
   void _send() {
+    if (ref.read(chatStreamingProvider)) return; // one turn at a time
     final text = _controller.text.trim();
     if (text.isEmpty && _attached.isEmpty) return;
+    // Validate BEFORE clearing so a blocked send (no server, no model,
+    // image on a text-only model) keeps the user's text and attachments.
+    final blocked = ref
+        .read(chatProvider.notifier)
+        .sendBlockedReason(hasImages: _attached.isNotEmpty);
+    if (blocked != null) {
+      _toast(blocked);
+      return;
+    }
     ref.read(chatProvider.notifier).sendMessage(
           text,
           imagePaths: _attached.isEmpty ? null : List.of(_attached),
@@ -168,7 +178,10 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
                 child: Container(
                   decoration: BoxDecoration(
                     color: t.surface,
-                    borderRadius: BorderRadius.circular(15),
+                    // Full pill — half the 44px single-line height. A smaller
+                    // radius here read as "square with slightly rounded
+                    // corners" next to the round action buttons.
+                    borderRadius: BorderRadius.circular(22),
                     border: Border.all(color: t.line2),
                   ),
                   padding: const EdgeInsets.fromLTRB(14, 4, 8, 4),
@@ -211,24 +224,30 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                onTap: _send,
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: t.accent,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                          color: t.accent.withValues(alpha: 0.4),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4)),
-                    ],
+              Builder(builder: (context) {
+                final streaming = ref.watch(chatStreamingProvider);
+                return GestureDetector(
+                  onTap: streaming
+                      ? () => ref.read(chatProvider.notifier).stopStreaming()
+                      : _send,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: t.accent,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                            color: t.accent.withValues(alpha: 0.4),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4)),
+                      ],
+                    ),
+                    child: Icon(streaming ? Icons.stop : Icons.send,
+                        size: 18, color: Colors.white),
                   ),
-                  child: const Icon(Icons.send, size: 18, color: Colors.white),
-                ),
-              ),
+                );
+              }),
             ],
           ),
         ],

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/nexus/nexus_account_client.dart' show kNexusGatewayBaseUrl;
+import '../models/server_config.dart';
 import 'nav_provider.dart';
 import 'servers_provider.dart';
 
@@ -40,6 +41,18 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
   final Ref ref;
   _AppModeNotifier(this.ref) : super(AppMode.subscription) {
     _hydrate();
+    // Keep the selected server consistent with the mode no matter which side
+    // finishes loading first. At cold start the saved mode, the server list
+    // (Isar), and the saved server selection all hydrate asynchronously —
+    // launching in Local AI mode used to sit on "Searching…" forever because
+    // the server list wasn't loaded yet when the mode landed (and the saved
+    // selection could restore the gateway afterwards). Re-reconciling on
+    // every change converges to the right server without loops:
+    // _selectServerForMode is a no-op once the selection already matches.
+    ref.listen<List<ServerConfig>>(
+        serversProvider, (_, __) => _selectServerForMode(state));
+    ref.listen<ServerConfig?>(
+        selectedServerProvider, (_, __) => _selectServerForMode(state));
   }
 
   Future<void> _hydrate() async {
@@ -51,6 +64,7 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
           (m) => m.name == saved,
           orElse: () => AppMode.subscription,
         );
+        _selectServerForMode(state);
       }
     } catch (_) {
       // SharedPreferences unavailable — keep the default.

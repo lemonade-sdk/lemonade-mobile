@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../providers/app_mode_provider.dart';
 import '../../providers/models_provider.dart';
 import '../../themes/nexus_tokens.dart';
 import 'nexus_ui.dart';
@@ -29,6 +30,15 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
   String _q = '';
 
   @override
+  void initState() {
+    super.initState();
+    // Re-fetch from the server every time the picker opens — models
+    // added/removed server-side otherwise only appeared after an app restart.
+    Future.microtask(
+        () => ref.read(modelsProvider.notifier).fetchModels());
+  }
+
+  @override
   void dispose() {
     _query.dispose();
     super.dispose();
@@ -37,7 +47,17 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final t = context.nexus;
-    final models = ref.watch(modelsProvider);
+    // Subscription is locked to the curated NXS* collections (the provider
+    // already filters); explain that so the internal-looking names don't read
+    // as someone else's data — a tester asked "are these your conversations?".
+    final subscription =
+        ref.watch(appModeProvider) == AppMode.subscription;
+    // Subscription users pick from the curated NXS collections only — the
+    // catalog also holds their raw component models (needed internally for
+    // wire-model substitution and tool routing), which aren't chooseable.
+    final models = subscription
+        ? ref.watch(modelsProvider).where(isNxsCollection).toList()
+        : ref.watch(modelsProvider);
     final filtered = _q.isEmpty
         ? models
         : models
@@ -64,7 +84,11 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
                       fontWeight: FontWeight.w700,
                       color: t.text)),
               const SizedBox(height: 4),
-              Text('Pick the model / collection for this chat.',
+              Text(
+                  subscription
+                      ? 'AI collections included with your subscription — '
+                        'pick one for this chat.'
+                      : 'Pick the model / collection for this chat.',
                   style: TextStyle(fontSize: 12.5, color: t.muted)),
               const SizedBox(height: 12),
               TextField(
@@ -99,7 +123,11 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
                       ],
                       if (collections.isNotEmpty) ...[
                         const SizedBox(height: 6),
-                        _sectionLabel(context, 'Collections'),
+                        _sectionLabel(
+                            context,
+                            subscription
+                                ? 'Included with your plan'
+                                : 'Collections'),
                         for (final m in collections) _tile(context, m),
                       ],
                     ],
