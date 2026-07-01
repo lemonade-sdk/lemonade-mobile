@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -32,11 +33,64 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
     super.dispose();
   }
 
+  void _toast(String m) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+    }
+  }
+
+  /// The composer "+" — attach an image. Offers the photo library (mobile) and a
+  /// file picker (works on desktop/macOS where the gallery source is a no-op).
   Future<void> _attach() async {
+    final t = context.nexus;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: t.bg2,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.photo_library_outlined, color: t.accent),
+              title: Text('Photo library', style: TextStyle(color: t.text)),
+              onTap: () => Navigator.pop(ctx, 'photo'),
+            ),
+            ListTile(
+              leading: Icon(Icons.insert_drive_file_outlined, color: t.accent),
+              title: Text('Choose image file', style: TextStyle(color: t.text)),
+              onTap: () => Navigator.pop(ctx, 'file'),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'photo') {
+      await _pickFromGallery();
+    } else if (choice == 'file') {
+      await _pickFile();
+    }
+  }
+
+  Future<void> _pickFromGallery() async {
     try {
       final picked = await _picker.pickImage(source: ImageSource.gallery);
       if (picked != null) setState(() => _attached.add(picked.path));
-    } catch (_) {}
+    } catch (e) {
+      _toast('Could not open the photo library: $e');
+    }
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(type: FileType.image);
+      final path = result?.files.singleOrNull?.path;
+      if (path != null) setState(() => _attached.add(path));
+    } catch (e) {
+      _toast('Could not open files: $e');
+    }
   }
 
   void _send() {
