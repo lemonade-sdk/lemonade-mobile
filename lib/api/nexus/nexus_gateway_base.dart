@@ -144,10 +144,20 @@ abstract class NexusGatewayClient {
     try {
       final decoded = jsonDecode(body);
       if (decoded is Map<String, dynamic>) {
-        for (final key in ['error', 'message', 'detail', 'title']) {
+        // Gateway errors often carry BOTH a machine code (`error`, e.g.
+        // "voice_node_error") and the human reason (`message`, e.g. "all
+        // lines busy…"). Returning the first key found hid the reason —
+        // prefer the message and append the code for context.
+        final code = decoded['error'];
+        for (final key in ['message', 'detail', 'title']) {
           final v = decoded[key];
-          if (v is String && v.isNotEmpty) return v;
+          if (v is String && v.isNotEmpty) {
+            return (code is String && code.isNotEmpty && code != v)
+                ? '$v ($code)'
+                : v;
+          }
         }
+        if (code is String && code.isNotEmpty) return code;
         final errors = decoded['errors'];
         if (errors is List && errors.isNotEmpty) {
           return errors.map((e) => e.toString()).join('; ');
