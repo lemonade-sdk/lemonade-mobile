@@ -92,11 +92,13 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     await _persist(result);
   }
 
-  /// Register. Same reuse-then-mint rule as [login].
+  /// Register. Same reuse-then-mint rule as [login]. [segment] is the account
+  /// type the user picked at signup: 'personal' or 'business'.
   Future<void> register({
     required String clientName,
     required String email,
     required String password,
+    String segment = 'personal',
   }) async {
     if (await _reuseExistingToken()) return;
     final device = await _deviceContext();
@@ -104,6 +106,7 @@ class _AuthNotifier extends StateNotifier<AuthState> {
       clientName: clientName,
       email: email,
       password: password,
+      segment: segment,
       deviceId: device.id,
       deviceName: device.name,
       appName: kNexusAppName,

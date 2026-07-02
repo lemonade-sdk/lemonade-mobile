@@ -254,9 +254,28 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
             Text(
                 'Numbers need the phone system enabled and an organization '
                 'Admin or Owner. Ask an admin, or enable the phone package in '
-                'Plan & wallet.',
+                'Plan & wallet.\n\nJust bought a phone plan? Setup runs '
+                'automatically and takes a couple of minutes — then retry.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: t.muted, fontSize: 13, height: 1.45)),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: () {
+                setState(() => _gated = false);
+                _search();
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                decoration: BoxDecoration(
+                    color: t.accent, borderRadius: BorderRadius.circular(11)),
+                child: const Text('Retry',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white)),
+              ),
+            ),
           ],
         ),
       ),

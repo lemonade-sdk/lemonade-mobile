@@ -77,6 +77,7 @@ class _AuthFormsState extends ConsumerState<_AuthForms> {
   bool _busy = false;
   String? _error;
   bool _obscure = true;
+  String _segment = 'personal'; // account type picked at signup
 
   final _company = TextEditingController();
   final _email = TextEditingController();
@@ -113,6 +114,7 @@ class _AuthFormsState extends ConsumerState<_AuthForms> {
           clientName: _company.text.trim(),
           email: email,
           password: password,
+          segment: _segment,
         );
       } else {
         await notifier.login(email: email, password: password);
@@ -169,6 +171,25 @@ class _AuthFormsState extends ConsumerState<_AuthForms> {
         const SizedBox(height: 20),
 
         if (_registerMode) ...[
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'personal', label: Text('Personal')),
+              ButtonSegment(value: 'business', label: Text('Business')),
+            ],
+            selected: {_segment},
+            onSelectionChanged: _busy
+                ? null
+                : (s) => setState(() => _segment = s.first),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _segment == 'personal'
+                ? 'Calling, AI automation & pay-as-you-go wallet.'
+                : 'Full PBX for teams — numbers, extensions & IVR.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 14),
           TextField(
             controller: _company,
             enabled: !_busy,

@@ -89,11 +89,17 @@ class NexusAccountClient {
     String? deviceId,
     String? deviceName,
     String? appName,
+    // "personal" (consumer: calling + wallet packages) or "business" (full
+    // PBX). The SERVER defaults omitted segments to business — which is how
+    // mobile signups silently became Business accounts — so callers should
+    // always pass the user's explicit choice.
+    String segment = 'personal',
   }) async {
     final json = await _postJson(_uri('/auth/register'), {
       'client_name': clientName,
       'email': email,
       'password': password,
+      'segment': segment,
       ..._deviceFields(deviceId, deviceName, appName),
     });
     return AuthResult.fromJson(json);

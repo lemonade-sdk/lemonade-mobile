@@ -19,6 +19,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
   bool _register = false;
   bool _busy = false;
   bool _showPassword = false;
+  String _segment = 'personal'; // account type picked at signup
   String? _error;
   final _name = TextEditingController();
   final _email = TextEditingController();
@@ -45,6 +46,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
           clientName: _name.text.trim().isEmpty ? 'My account' : _name.text.trim(),
           email: _email.text.trim(),
           password: _password.text,
+          segment: _segment,
         );
       } else {
         await notifier.login(
@@ -78,9 +80,25 @@ class _AuthGateState extends ConsumerState<AuthGate> {
                 Text('${_register ? 'Create account' : 'Welcome back'} · Subscription mode',
                     style: TextStyle(fontSize: 12.5, color: t.muted)),
                 const SizedBox(height: 28),
-                if (_register)
+                if (_register) ...[
+                  NexusSegmented<String>(
+                    value: _segment,
+                    onChanged: (v) => setState(() => _segment = v),
+                    options: const [
+                      ('personal', 'Personal'),
+                      ('business', 'Business'),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                      _segment == 'personal'
+                          ? 'Calling, AI automation & pay-as-you-go wallet.'
+                          : 'Full PBX for teams — numbers, extensions & IVR.',
+                      style: TextStyle(fontSize: 11.5, color: t.muted)),
+                  const SizedBox(height: 12),
                   _field(context, _name, 'Full name', Icons.person_outline),
-                if (_register) const SizedBox(height: 11),
+                  const SizedBox(height: 11),
+                ],
                 _field(context, _email, 'Email', Icons.mail_outline),
                 const SizedBox(height: 11),
                 _field(context, _password, 'Password', Icons.lock_outline,
