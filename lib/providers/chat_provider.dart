@@ -58,7 +58,13 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     final selectedModel = ref.read(wireLlmModelProvider) ?? '';
     if (selectedModel.isEmpty) return AppMessages.noModelSelected;
     if (_modelListOutOfSync()) return AppMessages.modelListSyncing;
-    if (hasImages) {
+    // The vision check is a PLAIN-model rule: a bare LLM that can't see must
+    // not receive image parts. A Collection routes attachments through the
+    // omni pipeline instead (analyze_image / edit_image / placeholder
+    // stripping), so gating on the wire component's labels here wrongly
+    // blocked image sends on collections whose vision/image capability lives
+    // in a DIFFERENT component.
+    if (hasImages && !ref.read(selectedIsCollectionProvider)) {
       final modelInfo = ref.read(modelsProvider).firstWhere(
             (m) => m.id == selectedModel,
             orElse: () => ModelInfo(selectedModel, const []),
@@ -126,7 +132,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     );
 
     final hasImages = imagePaths != null && imagePaths.isNotEmpty;
-    if (hasImages && !modelInfo.supportsVision) {
+    if (hasImages &&
+        !modelInfo.supportsVision &&
+        !ref.read(selectedIsCollectionProvider)) {
       await _appendError(AppMessages.visionModelServerError(selectedModel));
       return;
     }
