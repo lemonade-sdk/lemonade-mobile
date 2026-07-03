@@ -8,6 +8,12 @@ class ApiModelInfo {
   final String? checkpoint;
   final bool suggested;
 
+  /// Explicit vision capability from the server, when provided. The router sets
+  /// this to reflect whether a backend currently has the model loaded WITH
+  /// vision enabled (the `vision` label only reflects inherent capability). Null
+  /// when the server doesn't send it — callers fall back to the label heuristic.
+  final bool? vision;
+
   /// Static model-supported context window (`max_context_window`), when the
   /// server knows it; 0 otherwise.
   final int maxContextWindow;
@@ -21,6 +27,7 @@ class ApiModelInfo {
     this.checkpoint,
     this.suggested = false,
     this.maxContextWindow = 0,
+    this.vision,
   });
 
   /// True when this is a Lemonade Omni Model — a bundle whose `recipe` is
@@ -61,6 +68,7 @@ class ApiModelInfo {
       checkpoint: json['checkpoint'] as String?,
       suggested: json['suggested'] as bool? ?? false,
       maxContextWindow: (json['max_context_window'] as num?)?.toInt() ?? 0,
+      vision: json['vision'] as bool?,
     );
   }
 }
