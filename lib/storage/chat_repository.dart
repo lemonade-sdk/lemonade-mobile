@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:isar_community/isar.dart';
 
@@ -93,8 +92,15 @@ class ChatRepository {
   }
 
   static Future<String?> _attachmentToDataUrl(AttachmentEntity a) async {
-    final f = File(a.filePath);
-    if (!await f.exists()) return null;
+    final kind = switch (a.kind) {
+      AttachmentKind.image => 'image',
+      AttachmentKind.audio => 'audio',
+      AttachmentKind.file => 'file',
+    };
+    // resolveExisting re-roots paths that went stale when an iOS app update
+    // moved the container — the silent killer of persisted chat images.
+    final f = await AttachmentStore.resolveExisting(kind, a.filePath);
+    if (f == null) return null;
     final bytes = await f.readAsBytes();
     return 'data:${a.mimeType};base64,${base64Encode(bytes)}';
   }

@@ -64,6 +64,20 @@ class AttachmentStore {
     return true;
   }
 
+  /// Resolve a stored attachment path to an existing file. iOS relocates the
+  /// app container (new UUID in the path) on EVERY app update, so absolute
+  /// paths persisted in the DB go stale each build — re-root by basename
+  /// under the current documents dir. Content-addressed filenames (sha256 +
+  /// extension) make the basename a stable key. Returns null when the file
+  /// is genuinely gone.
+  static Future<File?> resolveExisting(String kind, String storedPath) async {
+    var f = File(storedPath);
+    if (await f.exists()) return f;
+    final root = await _rootFor(kind);
+    f = File(p.join(root.path, p.basename(storedPath)));
+    return await f.exists() ? f : null;
+  }
+
   static Future<Directory> _rootFor(String kind) async {
     final docs = await getApplicationDocumentsDirectory();
     final folderName = switch (kind) {
