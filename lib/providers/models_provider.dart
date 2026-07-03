@@ -37,25 +37,15 @@ class ModelInfo {
   /// Static model-supported max context window (tokens), or 0 if unknown.
   final int maxContextWindow;
 
-  /// Explicit vision flag from the server (router), when provided — reflects
-  /// whether a backend actually has the model loaded WITH vision on. Overrides
-  /// the label heuristic; null falls back to labels.
-  final bool? visionFlag;
-
   ModelInfo(
     this.id,
     this.labels, {
     this.isCollection = false,
     this.compositeModels = const [],
     this.maxContextWindow = 0,
-    this.visionFlag,
   }) : capabilities = ModelUtils.detectCapabilities(id, labels);
 
-  /// True if the model can accept image input. Prefers the server's explicit
-  /// [visionFlag] (accurate to the loaded backend state) and only falls back to
-  /// the label/name heuristic when the server doesn't send one.
-  bool get supportsVision =>
-      visionFlag ?? ModelUtils.supportsVision(capabilities);
+  bool get supportsVision => ModelUtils.supportsVision(capabilities);
   bool get supportsImageGeneration => ModelUtils.supportsImageGeneration(capabilities);
   bool get supportsThinking => ModelUtils.supportsThinking(capabilities);
   bool get supportsAudio => ModelUtils.supportsAudio(capabilities);
@@ -142,7 +132,6 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
                 isCollection: m.isCollection,
                 compositeModels: m.compositeModels,
                 maxContextWindow: maxCtxById[m.id] ?? m.maxContextWindow,
-                visionFlag: m.vision,
               ))
           .toList();
       // Keep the FULL catalog in state even on the gateway: the wire-model
