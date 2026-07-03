@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -172,8 +173,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       userParts.add(MessageContent(type: MessageContentType.text, value: message));
     }
     if (hasImages) {
-      for (final dataUrl in imagePaths) {
-        userParts.add(MessageContent(type: MessageContentType.image, value: dataUrl));
+      for (final img in imagePaths) {
+        userParts.add(MessageContent(
+            type: MessageContentType.image, value: await _toImageDataUrl(img)));
       }
     }
     final userMessage = ChatMessage(role: MessageRole.user, content: userParts);
@@ -351,6 +353,30 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     final next = [...messages.sublist(0, messages.length - 1), updated];
     await ref.read(chatHistoryProvider.notifier).updateActiveChat(next);
     return next;
+  }
+
+  /// The composer hands over picked FILE PATHS, but every wire path (plain
+  /// chat history, the agent loop's part builder, binary extraction) forwards
+  /// only `data:` URLs and silently drops anything else — so an uploaded
+  /// photo rendered in the chat UI yet never reached the model ("I don't see
+  /// an image to edit"). Inline the file bytes as a data URL at send time.
+  Future<String> _toImageDataUrl(String pathOrDataUrl) async {
+    if (pathOrDataUrl.startsWith('data:')) return pathOrDataUrl;
+    try {
+      final bytes = await File(pathOrDataUrl).readAsBytes();
+      final ext = pathOrDataUrl.split('.').last.toLowerCase();
+      final mime = switch (ext) {
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        'gif' => 'image/gif',
+        'heic' || 'heif' => 'image/heic',
+        _ => 'image/jpeg',
+      };
+      return 'data:$mime;base64,${base64Encode(bytes)}';
+    } catch (_) {
+      // Unreadable file — keep the path so the UI can still render it.
+      return pathOrDataUrl;
+    }
   }
 
   Future<MessageContent?> _persistArtifact(Artifact artifact) async {
