@@ -229,7 +229,11 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
             );
             _scroll(scrollController);
           case ChatStatus():
-            // Show the status as the in-flight assistant text. Final text overwrites it.
+            // Show the status as the in-flight assistant text. Final text
+            // overwrites it. A status marks a tool boundary — reset the token
+            // buffer so the next iteration's streamed text starts clean
+            // instead of appending to the pre-tool planning text.
+            assistantText = '';
             working = await _updateAssistant(
               working,
               text: ev.message,

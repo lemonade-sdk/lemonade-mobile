@@ -614,6 +614,9 @@ class VoiceModeController extends StateNotifier<VoiceModeStatus> {
             'reply with text.',
       )) {
         switch (ev) {
+          case AgentDelta():
+            // Voice speaks the FINAL text; live tokens aren't voiced.
+            break;
           case AgentStatus():
             state = state.copyWith(
                 phase: VoicePhase.thinking, message: ev.message);

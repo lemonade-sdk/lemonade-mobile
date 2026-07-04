@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../api/lemonade_client.dart';
 import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
+import '../api/types/chat_response.dart';
 import '../api/types/tool_call.dart';
 import '../api/types/tool_definition.dart';
 import 'capability_resolver.dart';
@@ -24,6 +25,15 @@ const int kAgentMaxIterations = 30;
 /// Result emitted by the agent loop on each iteration.
 sealed class AgentEvent {
   const AgentEvent();
+}
+
+/// A streamed text token from the model. Emitted live while the LLM is
+/// producing a response so the UI can render token-by-token; the final
+/// [AgentDone] text supersedes the accumulated deltas (it may differ — e.g.
+/// ReAct JSON gets humanized).
+class AgentDelta extends AgentEvent {
+  final String text;
+  const AgentDelta(this.text);
 }
 
 /// Status update for UI ("Thinking…", "Generating image…", etc.).
@@ -109,17 +119,31 @@ class AgentLoop {
     var lastAssistantText = '';
 
     for (var iteration = 0; iteration < kAgentMaxIterations; iteration++) {
-      final response = await client.chat.create(ChatCompletionRequest(
+      // Stream the model's turn so text renders token-by-token — the SSE
+      // layer assembles indexed tool-call deltas into complete ToolCalls at
+      // finish, so tool-calling loses nothing by streaming. (This used to be
+      // a blocking create(), which made every collection/omni chat appear
+      // all at once.)
+      var toolCalls = const <ToolCall>[];
+      lastAssistantText = '';
+      await for (final ev in client.chat.stream(ChatCompletionRequest(
         model: llmModelId,
         messages: llmMessages,
         tools: activeTools,
-        stream: false,
-      ));
-
-      final assistant = response.message;
-      lastAssistantText = assistant.content ?? '';
-
-      final toolCalls = assistant.toolCalls ?? const <ToolCall>[];
+        stream: true,
+      ))) {
+        switch (ev) {
+          case ChatContentDelta():
+            yield AgentDelta(ev.text);
+          case ChatToolCallDelta():
+            // Partial tool-call fragments — nothing user-visible until the
+            // assembled result arrives with the finish event.
+            break;
+          case ChatStreamFinish():
+            toolCalls = ev.toolCalls;
+            lastAssistantText = ev.contentSoFar;
+        }
+      }
       if (toolCalls.isEmpty) {
         yield AgentDone(
           text: _humanizeReactJson(lastAssistantText),

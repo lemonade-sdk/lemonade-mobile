@@ -409,6 +409,9 @@ class DuplexVoiceSession {
           'just reply with text.',
     )) {
       switch (ev) {
+        case AgentDelta():
+          // Voice speaks the FINAL text; live tokens aren't voiced.
+          break;
         case AgentStatus():
           // Surface intermediate status (e.g., "Generating image…") so the
           // UI doesn't sit on the listening pulse during long tool runs.

@@ -96,6 +96,8 @@ class ChatService {
       extraSystemPrompt: extraSystemPrompt,
     )) {
       switch (event) {
+        case AgentDelta():
+          yield ChatTurnEvent.tokens(event.text);
         case AgentStatus():
           yield ChatTurnEvent.status(event.message);
         case AgentArtifact():
