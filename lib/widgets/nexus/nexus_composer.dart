@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -39,10 +40,14 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
     }
   }
 
-  /// The composer "+" — attach an image. Offers the photo library (mobile) and a
-  /// file picker (works on desktop/macOS where the gallery source is a no-op).
+  /// The composer "+" — attach an image. Offers the camera (mobile), the photo
+  /// library (mobile), and a file picker (works on desktop/macOS where the
+  /// gallery/camera sources are a no-op).
   Future<void> _attach() async {
     final t = context.nexus;
+    // The camera source is only meaningful on a real mobile device; hide it on
+    // desktop where it would just no-op.
+    final showCamera = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
     final choice = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: t.bg2,
@@ -52,6 +57,12 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (showCamera)
+              ListTile(
+                leading: Icon(Icons.camera_alt_outlined, color: t.accent),
+                title: Text('Take photo', style: TextStyle(color: t.text)),
+                onTap: () => Navigator.pop(ctx, 'camera'),
+              ),
             ListTile(
               leading: Icon(Icons.photo_library_outlined, color: t.accent),
               title: Text('Photo library', style: TextStyle(color: t.text)),
@@ -67,10 +78,21 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
         ),
       ),
     );
-    if (choice == 'photo') {
+    if (choice == 'camera') {
+      await _takePhoto();
+    } else if (choice == 'photo') {
       await _pickFromGallery();
     } else if (choice == 'file') {
       await _pickFile();
+    }
+  }
+
+  Future<void> _takePhoto() async {
+    try {
+      final picked = await _picker.pickImage(source: ImageSource.camera);
+      if (picked != null) setState(() => _attached.add(picked.path));
+    } catch (e) {
+      _toast('Could not open the camera: $e');
     }
   }
 
