@@ -124,25 +124,46 @@ class AgentLoop {
       // finish, so tool-calling loses nothing by streaming. (This used to be
       // a blocking create(), which made every collection/omni chat appear
       // all at once.)
-      var toolCalls = const <ToolCall>[];
-      lastAssistantText = '';
-      await for (final ev in client.chat.stream(ChatCompletionRequest(
+      final request = ChatCompletionRequest(
         model: llmModelId,
         messages: llmMessages,
         tools: activeTools,
         stream: true,
-      ))) {
-        switch (ev) {
-          case ChatContentDelta():
-            yield AgentDelta(ev.text);
-          case ChatToolCallDelta():
-            // Partial tool-call fragments — nothing user-visible until the
-            // assembled result arrives with the finish event.
-            break;
-          case ChatStreamFinish():
-            toolCalls = ev.toolCalls;
-            lastAssistantText = ev.contentSoFar;
+      );
+      var toolCalls = const <ToolCall>[];
+      lastAssistantText = '';
+      var streamedAny = false;
+      try {
+        await for (final ev in client.chat.stream(request)) {
+          switch (ev) {
+            case ChatContentDelta():
+              streamedAny = true;
+              yield AgentDelta(ev.text);
+            case ChatToolCallDelta():
+              // Partial tool-call fragments — nothing user-visible until the
+              // assembled result arrives with the finish event.
+              break;
+            case ChatStreamFinish():
+              toolCalls = ev.toolCalls;
+              lastAssistantText = ev.contentSoFar;
+          }
         }
+      } catch (e) {
+        // The SSE connection dropped mid-flight ("Connection closed while
+        // receiving data" — a proxy/node streaming hiccup, common on vision +
+        // tool turns). Silently start a fresh NON-streaming request for this
+        // same turn (what the loop did before streaming, and proven reliable)
+        // instead of surfacing the error. Reset any partially-streamed text
+        // via a status so the retried result doesn't render doubled.
+        if (streamedAny) yield const AgentStatus('Thinking…');
+        final response = await client.chat.create(ChatCompletionRequest(
+          model: llmModelId,
+          messages: llmMessages,
+          tools: activeTools,
+          stream: false,
+        ));
+        lastAssistantText = response.message.content ?? '';
+        toolCalls = response.message.toolCalls ?? const <ToolCall>[];
       }
       if (toolCalls.isEmpty) {
         yield AgentDone(

@@ -117,24 +117,39 @@ class ChatService {
   }) async* {
     final apiMessages = _buildApiHistory(history);
 
-    final stream = client.chat.stream(ChatCompletionRequest(
-      model: llmModel,
-      messages: apiMessages,
-      stream: true,
-    ));
-
     final buf = StringBuffer();
-    await for (final ev in stream) {
-      switch (ev) {
-        case ChatContentDelta():
-          buf.write(ev.text);
-          yield ChatTurnEvent.tokens(ev.text);
-        case ChatToolCallDelta():
-          // Plain mode: ignore tool deltas (we didn't request tools).
-          break;
-        case ChatStreamFinish():
-          yield ChatTurnEvent.done(text: buf.toString(), artifacts: const []);
+    var streamedAny = false;
+    try {
+      final stream = client.chat.stream(ChatCompletionRequest(
+        model: llmModel,
+        messages: apiMessages,
+        stream: true,
+      ));
+      await for (final ev in stream) {
+        switch (ev) {
+          case ChatContentDelta():
+            buf.write(ev.text);
+            streamedAny = true;
+            yield ChatTurnEvent.tokens(ev.text);
+          case ChatToolCallDelta():
+            // Plain mode: ignore tool deltas (we didn't request tools).
+            break;
+          case ChatStreamFinish():
+            yield ChatTurnEvent.done(text: buf.toString(), artifacts: const []);
+        }
       }
+    } catch (e) {
+      // SSE dropped mid-flight — silently retry once as a blocking request
+      // (a clean status resets any partial text the UI already rendered).
+      if (streamedAny) yield ChatTurnEvent.status('Thinking…');
+      final response = await client.chat.create(ChatCompletionRequest(
+        model: llmModel,
+        messages: apiMessages,
+        stream: false,
+      ));
+      yield ChatTurnEvent.done(
+          text: response.message.content ?? buf.toString(),
+          artifacts: const []);
     }
   }
 

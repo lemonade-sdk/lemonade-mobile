@@ -205,7 +205,13 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // mode. The NXS-only view is applied where users pick/land on a model
       // (`allowed` below + the model picker UI), not to the raw catalog.
       state = modelInfos;
-      _saveCache(selectedServer.baseUrl, modelInfos); // fire-and-forget
+      // Only cache a NON-empty catalog. A gateway that momentarily returns
+      // zero models (nothing loaded yet, a transient blip) must not clobber a
+      // previously-good cache with an empty list — that permanently broke
+      // cold-start hydration (the cache would load `[]` and hydrate nothing).
+      if (modelInfos.isNotEmpty) {
+        _saveCache(selectedServer.baseUrl, modelInfos); // fire-and-forget
+      }
 
       final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
       // Wait for the persisted selection to finish loading before deciding
