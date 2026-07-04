@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,6 +52,24 @@ class ModelInfo {
   bool get supportsAudio => ModelUtils.supportsAudio(capabilities);
   bool get supportsTts => ModelUtils.supportsTts(capabilities);
   bool get isTextOnly => ModelUtils.isTextOnly(capabilities);
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'labels': labels,
+        if (isCollection) 'isCollection': true,
+        if (compositeModels.isNotEmpty) 'compositeModels': compositeModels,
+        if (maxContextWindow > 0) 'maxContextWindow': maxContextWindow,
+      };
+
+  factory ModelInfo.fromJson(Map<String, dynamic> json) => ModelInfo(
+        json['id'] as String? ?? '',
+        [...?(json['labels'] as List?)?.whereType<String>()],
+        isCollection: json['isCollection'] as bool? ?? false,
+        compositeModels: [
+          ...?(json['compositeModels'] as List?)?.whereType<String>()
+        ],
+        maxContextWindow: (json['maxContextWindow'] as num?)?.toInt() ?? 0,
+      );
 }
 
 class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
@@ -61,7 +80,10 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     // first created the saved server may ALREADY be selected — the
     // server-change listener below never fires for it and the catalog stayed
     // empty until the next mode/server switch ("catalog has 0 entries" at
-    // cold start).
+    // cold start). Hydrate instantly from the last-fetched cache so the
+    // picker / wire resolution / send guard work offline and before the
+    // network round-trip, then refresh live.
+    _hydrateFromCache();
     fetchModels();
     // Re-evaluate the allowed model set when the inference mode changes
     // (Subscription locks to NXS*; Local/Mesh show everything).
@@ -78,9 +100,49 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // Omni Collection) on every app start.
       if (previous != null && previous.baseUrl != next.baseUrl) {
         ref.read(selectedModelProvider.notifier).clearSelection();
+        state = [];
       }
+      _hydrateFromCache();
       fetchModels();
     });
+  }
+
+  static String _cacheKey(String baseUrl) => 'nexus.models_cache.$baseUrl';
+
+  /// Load the last successfully fetched catalog for the CURRENT server so the
+  /// UI has models immediately at cold start. Never overwrites live data:
+  /// applies only while the state is still empty for the same server.
+  Future<void> _hydrateFromCache() async {
+    final server = ref.read(selectedServerProvider);
+    if (server == null || state.isNotEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cacheKey(server.baseUrl));
+      if (raw == null || raw.isEmpty) return;
+      final cached = (jsonDecode(raw) as List)
+          .whereType<Map<String, dynamic>>()
+          .map(ModelInfo.fromJson)
+          .where((m) => m.id.isNotEmpty)
+          .toList();
+      // The network fetch (or a server switch) may have landed while we read.
+      if (cached.isNotEmpty &&
+          state.isEmpty &&
+          ref.read(selectedServerProvider)?.baseUrl == server.baseUrl) {
+        state = cached;
+      }
+    } catch (e) {
+      debugPrint('models cache hydrate failed: $e');
+    }
+  }
+
+  Future<void> _saveCache(String baseUrl, List<ModelInfo> models) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cacheKey(baseUrl),
+          jsonEncode([for (final m in models) m.toJson()]));
+    } catch (_) {
+      // Cache is best-effort — a failed write just means a slower next boot.
+    }
   }
 
   Future<void> fetchModels() async {
@@ -143,6 +205,7 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // mode. The NXS-only view is applied where users pick/land on a model
       // (`allowed` below + the model picker UI), not to the raw catalog.
       state = modelInfos;
+      _saveCache(selectedServer.baseUrl, modelInfos); // fire-and-forget
 
       final selectedModelNotifier = ref.read(selectedModelProvider.notifier);
       // Wait for the persisted selection to finish loading before deciding
