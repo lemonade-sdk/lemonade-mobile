@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/app_mode_provider.dart';
 import '../../providers/billing_providers.dart';
+import '../../providers/models_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/omni_router_provider.dart';
 import '../../providers/theme_provider.dart';
@@ -27,17 +28,25 @@ class SettingsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(appModeProvider);
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _profile(context, ref),
-        const SizedBox(height: 18),
-        if (mode.showsModelManager) ...[
-          const ModelManager(),
+    // Pull-to-refresh re-fetches the installed model list from the selected
+    // server, so models installed/removed outside the app (e.g. via the
+    // Lemonade server itself or another client) show up without a restart —
+    // the list otherwise only updates on server/app-mode changes.
+    return RefreshIndicator(
+      onRefresh: () => ref.read(modelsProvider.notifier).fetchModels(),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          _profile(context, ref),
           const SizedBox(height: 18),
+          if (mode.showsModelManager) ...[
+            const ModelManager(),
+            const SizedBox(height: 18),
+          ],
+          ..._groups(context, ref),
         ],
-        ..._groups(context, ref),
-      ],
+      ),
     );
   }
 
