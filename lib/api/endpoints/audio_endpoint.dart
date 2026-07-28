@@ -16,7 +16,8 @@ class AudioEndpoint {
       request.toWireJson(),
       timeout: timeout ?? const Duration(minutes: 2),
     );
-    return TtsResult(audioBytes: bytes, mime: _mimeFor(request.responseFormat));
+    return TtsResult(
+        audioBytes: bytes, mime: mimeForTtsFormat(request.responseFormat));
   }
 
   /// `POST /v1/audio/transcriptions` — ASR via multipart upload.
@@ -44,24 +45,5 @@ class AudioEndpoint {
       timeout: timeout ?? const Duration(minutes: 5),
     );
     return TranscriptionResult.fromJson(body);
-  }
-
-  String _mimeFor(String responseFormat) {
-    switch (responseFormat) {
-      case 'mp3':
-        return 'audio/mpeg';
-      case 'wav':
-        return 'audio/wav';
-      case 'opus':
-        return 'audio/opus';
-      case 'aac':
-        return 'audio/aac';
-      case 'flac':
-        return 'audio/flac';
-      case 'pcm':
-        return 'audio/pcm';
-      default:
-        return 'application/octet-stream';
-    }
   }
 }

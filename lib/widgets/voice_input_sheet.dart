@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/lemonade_client.dart';
 import '../api/types/tool_call.dart';
 import '../models/chat_message.dart';
 import '../models/transcription.dart';
@@ -13,6 +14,7 @@ import '../providers/servers_provider.dart';
 import '../providers/transcription_provider.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/audio_transcription_service.dart';
+import '../utils/friendly_error.dart';
 
 /// Bottom sheet that captures a short voice clip, transcribes it, and offers
 /// the user a choice: send as a text message, generate an image from it, or
@@ -85,7 +87,7 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
       if (!mounted) return;
       setState(() {
         _stage = _Stage.error;
-        _error = 'Failed to start recording: $e';
+        _error = friendlyError(e, action: 'start recording');
       });
     }
   }
@@ -115,27 +117,32 @@ class _VoiceInputSheetState extends ConsumerState<VoiceInputSheet> {
       }
 
       final asrModel = ref.read(effectiveAudioModelProvider);
-      final svc = AudioTranscriptionService(server);
-      final text = await svc.transcribeFile(persisted, model: asrModel);
-      if (!mounted) return;
-      setState(() {
-        _stage = _Stage.ready;
-        _transcript = text;
-      });
+      final client = LemonadeApiClient(server);
+      try {
+        final svc = AudioTranscriptionService(client);
+        final text = await svc.transcribeFile(persisted, model: asrModel);
+        if (!mounted) return;
+        setState(() {
+          _stage = _Stage.ready;
+          _transcript = text;
+        });
 
-      // Persist to transcription history regardless of how the user uses it.
-      await ref.read(transcriptionHistoryProvider.notifier).addTranscription(
-            text: text,
-            modelId: asrModel,
-            mode: TranscriptionMode.http,
-            serverName: server.name,
-            audioFilePath: persisted,
-          );
+        // Persist to transcription history regardless of how the user uses it.
+        await ref.read(transcriptionHistoryProvider.notifier).addTranscription(
+              text: text,
+              modelId: asrModel,
+              mode: TranscriptionMode.http,
+              serverName: server.name,
+              audioFilePath: persisted,
+            );
+      } finally {
+        client.close();
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _stage = _Stage.error;
-        _error = 'Transcription failed: $e';
+        _error = friendlyError(e, action: 'transcribe the recording');
       });
     }
   }

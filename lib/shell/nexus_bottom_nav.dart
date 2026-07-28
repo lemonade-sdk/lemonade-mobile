@@ -25,7 +25,10 @@ class NexusBottomNav extends ConsumerWidget {
     final current = ref.watch(navTabProvider);
     final mode = ref.watch(appModeProvider);
     final callLive = ref.watch(activeCallTaskProvider).valueOrNull != null;
-    final bottomPad = MediaQuery.of(context).padding.bottom;
+    // Prefer viewPadding: MediaQuery.padding.bottom is zeroed while the
+    // keyboard is up, and on some edge-to-edge Android builds is 0 even with
+    // a 3-button system nav. viewPadding keeps the system gesture/nav bar.
+    final bottomPad = MediaQuery.viewPaddingOf(context).bottom;
 
     // Projects / Calls / PBX / Docs are cloud features — greyed out unless in
     // Subscription mode. Chat + Settings are always available.
@@ -35,7 +38,7 @@ class NexusBottomNav extends ConsumerWidget {
         mode == AppMode.subscription;
 
     return Container(
-      padding: EdgeInsets.fromLTRB(8, 8, 8, bottomPad > 0 ? bottomPad : 14),
+      padding: EdgeInsets.fromLTRB(8, 8, 8, bottomPad > 0 ? bottomPad : 16),
       decoration: BoxDecoration(
         color: t.bg2,
         border: Border(top: BorderSide(color: t.line)),

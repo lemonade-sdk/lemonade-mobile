@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +11,7 @@ import '../../providers/nav_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../services/call_takeover_audio.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
 /// Live AI call — real transcript (polled), whisper steering (Override), human
@@ -25,6 +28,8 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
   final _whisper = TextEditingController();
   final _scroll = ScrollController();
   CallTakeoverAudio? _takeover;
+  StreamSubscription<TakeoverSocketState>? _takeoverStateSub;
+  bool _reconnecting = false;
   bool _muted = false;
   bool _switching = false;
 
@@ -32,6 +37,7 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
   void dispose() {
     _whisper.dispose();
     _scroll.dispose();
+    _takeoverStateSub?.cancel();
     _takeover?.stop();
     super.dispose();
   }
@@ -48,11 +54,11 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
         try {
           await _startTakeover();
         } catch (e) {
-          // Mic failed — don't leave the caller with dead air. Revert to the
-          // AI agent, same path as ending a takeover.
+          // Mic or socket failed — don't leave the caller with dead air.
+          // Revert to the AI agent, same path as ending a takeover.
           await _stopTakeover();
           await client.setMode(_id, 'autonomous');
-          _toast('Microphone access failed — takeover canceled. $e');
+          _toast(friendlyError(e, action: 'take over the call'));
         }
       } else {
         await _stopTakeover();
@@ -60,7 +66,7 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
       }
       ref.invalidate(callTaskProvider(_id));
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'switch the call mode'));
     } finally {
       if (mounted) setState(() => _switching = false);
     }
@@ -69,23 +75,62 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
   Future<void> _startTakeover() async {
     if (_takeover != null) return;
     final token = ref.read(authProvider).token;
-    if (token == null) return;
+    if (token == null) {
+      throw StateError('Not signed in.');
+    }
     final socket = NexusCallTakeoverSocket(token: token, taskId: _id);
     final audio = CallTakeoverAudio(socket);
     _takeover = audio;
     try {
+      // Throws if the socket handshake or the mic fails — the caller reverts
+      // to the AI agent instead of showing a "live" takeover that sends
+      // nothing.
       await audio.start();
     } catch (_) {
       _takeover = null;
       await audio.stop();
       rethrow;
     }
+    // Track the socket after start(): brief drops show "Reconnecting…", and a
+    // dead link (reconnect exhausted) exits takeover instead of leaving the
+    // UI claiming the operator is live while audio goes nowhere.
+    _takeoverStateSub = socket.states.listen((s) {
+      if (!mounted) return;
+      switch (s.phase) {
+        case TakeoverSocketPhase.reconnecting:
+          setState(() => _reconnecting = true);
+        case TakeoverSocketPhase.connected:
+          setState(() => _reconnecting = false);
+        case TakeoverSocketPhase.closed:
+          _onTakeoverLost(s.error);
+        case TakeoverSocketPhase.connecting:
+          break;
+      }
+    });
   }
 
   Future<void> _stopTakeover() async {
+    await _takeoverStateSub?.cancel();
+    _takeoverStateSub = null;
+    if (mounted && _reconnecting) setState(() => _reconnecting = false);
     final t = _takeover;
     _takeover = null;
     await t?.stop();
+  }
+
+  /// The takeover socket died and reconnection was exhausted. Exit takeover
+  /// cleanly — hand the call back to the AI — and tell the operator.
+  Future<void> _onTakeoverLost(Object? error) async {
+    if (_takeover == null) return;
+    await _stopTakeover();
+    final client = ref.read(nexusCallTasksClientProvider);
+    try {
+      await client?.setMode(_id, 'autonomous');
+    } catch (_) {}
+    ref.invalidate(callTaskProvider(_id));
+    _toast(error == null
+        ? 'Takeover ended — the AI agent has the call.'
+        : 'Connection lost — the AI agent has taken the call back.');
   }
 
   Future<void> _sendWhisper() async {
@@ -96,7 +141,7 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
     try {
       await client.whisper(_id, text);
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'send that to the agent'));
     }
   }
 
@@ -439,10 +484,13 @@ class _LiveCallOverlayState extends ConsumerState<LiveCallOverlay> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 11),
       child: Row(children: [
-        NexusStatusDot(color: t.live, size: 8),
+        NexusStatusDot(color: _reconnecting ? t.warn : t.live, size: 8),
         const SizedBox(width: 8),
         Expanded(
-          child: Text("You're live on the call",
+          child: Text(
+              _reconnecting
+                  ? 'Reconnecting to the call…'
+                  : "You're live on the call",
               style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w600, color: t.text)),
         ),

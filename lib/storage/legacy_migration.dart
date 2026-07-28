@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,10 +19,14 @@ import 'secure_storage.dart';
 
 /// One-time migration from SharedPreferences (pre-Isar shape) to Isar.
 ///
-/// Safety: before doing anything, dumps every relevant SharedPreferences key into
-/// `{appDocDir}/legacy-backup-<ts>.json` so a botched migration can be hand-recovered.
+/// Safety: before doing anything, dumps every relevant SharedPreferences key
+/// (with API keys redacted) into `{appDocDir}/legacy-backup-<ts>.json` so a
+/// botched migration can be hand-recovered. The backup is written at most once.
 ///
-/// Idempotent: gated on [AppPrefsEntity.legacyMigrationCompleted].
+/// Idempotent: gated on [AppPrefsEntity.legacyMigrationCompleted], with
+/// per-step SharedPreferences flags (`legacyMigrated.<step>`) so a crash
+/// between a committed step and the final flag resumes on the next launch
+/// instead of re-colliding on unique indexes.
 class LegacyMigration {
   static const _kChatHistories = 'chat_histories';
   static const _kServers = 'servers';
@@ -29,6 +34,10 @@ class LegacyMigration {
   static const _kSelectedModel = 'selected_model';
   static const _kGlobalModelDefaults = 'global_model_defaults';
   static const _kTranscriptionHistory = 'transcription_history';
+
+  static const _kBackupWrittenFlag = 'legacy_backup_written';
+  static const _kStepFlagPrefix = 'legacyMigrated.';
+  static const _redactedMarker = '<redacted>';
 
   static const _uuid = Uuid();
 
@@ -41,20 +50,43 @@ class LegacyMigration {
 
     final sp = await SharedPreferences.getInstance();
 
-    // 1. Safety net.
-    await _writeBackup(sp);
+    // 1. Safety net — written once (flag-guarded) so a failing migration
+    //    doesn't stack a fresh copy on every launch.
+    if (!(sp.getBool(_kBackupWrittenFlag) ?? false)) {
+      await _writeBackup(sp);
+      await sp.setBool(_kBackupWrittenFlag, true);
+    }
+    // Older builds wrote backups containing plaintext API keys (the docs dir
+    // is included in device/iCloud backups). Now that a redacted copy exists,
+    // remove any key-bearing ones.
+    await _deleteUnredactedBackups();
 
-    // 2. Migrate.
-    await _migrateServers(sp);
-    await _migrateChats(sp);
-    await _migrateTranscriptions(sp);
-    await _migrateModelDefaults(sp);
-    await _migrateSelectedServerAndModel(sp);
+    // 2. Migrate. Each step is idempotent and skipped once its flag is set.
+    await _runStep(sp, 'servers', () => _migrateServers(sp));
+    await _runStep(sp, 'chats', () => _migrateChats(sp));
+    await _runStep(sp, 'transcriptions', () => _migrateTranscriptions(sp));
+    await _runStep(sp, 'modelDefaults', () => _migrateModelDefaults(sp));
+    await _runStep(sp, 'selection', () => _migrateSelectedServerAndModel(sp));
 
-    // 3. Mark done.
-    prefsRow.legacyMigrationCompleted = true;
-    await db.isar.writeTxn(() async => db.appPrefs.put(prefsRow));
+    // 3. Mark done. Re-read the prefs row: the selection step above rewrote
+    //    it, and putting the stale copy from the top of this method would
+    //    clobber the migrated server/model selection.
+    final donePrefs = await db.readOrCreatePrefs();
+    donePrefs.legacyMigrationCompleted = true;
+    await db.isar.writeTxn(() async => db.appPrefs.put(donePrefs));
     return true;
+  }
+
+  /// Run [body] unless [step] already completed on a previous (partial) run.
+  static Future<void> _runStep(
+    SharedPreferences sp,
+    String step,
+    Future<void> Function() body,
+  ) async {
+    final flag = '$_kStepFlagPrefix$step';
+    if (sp.getBool(flag) ?? false) return;
+    await body();
+    await sp.setBool(flag, true);
   }
 
   // ---------------------------------------------------------------------------
@@ -64,7 +96,7 @@ class LegacyMigration {
   static Future<void> _writeBackup(SharedPreferences sp) async {
     final backup = <String, dynamic>{
       _kChatHistories: sp.getStringList(_kChatHistories),
-      _kServers: sp.getStringList(_kServers),
+      _kServers: _redactServers(sp.getStringList(_kServers)),
       _kSelectedServerName: sp.getString(_kSelectedServerName),
       _kSelectedModel: sp.getString(_kSelectedModel),
       _kGlobalModelDefaults: sp.getString(_kGlobalModelDefaults),
@@ -76,6 +108,73 @@ class LegacyMigration {
     final path = p.join(docs.path, 'legacy-backup-$ts.json');
     final file = File(path);
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(backup), flush: true);
+  }
+
+  /// Strip plaintext API keys from the legacy servers payload before it hits
+  /// disk. The real keys move into secure storage during [_migrateServers].
+  static List<String>? _redactServers(List<String>? servers) {
+    if (servers == null) return null;
+    return servers.map((raw) {
+      try {
+        final json = jsonDecode(raw);
+        if (json is Map<String, dynamic>) {
+          final key = json['apiKey'];
+          if (key is String && key.isNotEmpty) {
+            json['apiKey'] = _redactedMarker;
+            return jsonEncode(json);
+          }
+        }
+      } catch (_) {}
+      return raw;
+    }).toList(growable: false);
+  }
+
+  /// Delete any `legacy-backup-*.json` that still contains plaintext API keys.
+  /// Safe: only called after a redacted backup has been written.
+  static Future<void> _deleteUnredactedBackups() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      await for (final entry in docs.list(followLinks: false)) {
+        if (entry is! File) continue;
+        final name = p.basename(entry.path);
+        if (!name.startsWith('legacy-backup-') || !name.endsWith('.json')) {
+          continue;
+        }
+        try {
+          if (await _containsPlaintextKeys(entry)) await entry.delete();
+        } catch (_) {}
+      }
+    } catch (_) {
+      // Best-effort cleanup; never block the migration on it.
+    }
+  }
+
+  static Future<bool> _containsPlaintextKeys(File f) async {
+    final content = await f.readAsString();
+    try {
+      final decoded = jsonDecode(content);
+      if (decoded is Map<String, dynamic>) {
+        final servers = decoded[_kServers];
+        if (servers is List) {
+          for (final raw in servers) {
+            if (raw is! String) continue;
+            try {
+              final json = jsonDecode(raw);
+              if (json is Map) {
+                final key = json['apiKey'];
+                if (key is String && key.isNotEmpty && key != _redactedMarker) {
+                  return true;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+        return false;
+      }
+    } catch (_) {}
+    // Unparseable — be conservative: treat any apiKey mention without the
+    // redaction marker as sensitive.
+    return content.contains('apiKey') && !content.contains(_redactedMarker);
   }
 
   // ---------------------------------------------------------------------------
@@ -120,7 +219,14 @@ class LegacyMigration {
 
     if (entities.isEmpty) return;
     await db.isar.writeTxn(() async {
-      await db.serverConfigs.putAll(entities);
+      // Idempotent: `name` has a unique index with replace:false, so a
+      // partially-committed previous run would make putAll throw. Skip rows
+      // that already exist instead.
+      for (final e in entities) {
+        final exists =
+            await db.serverConfigs.filter().nameEqualTo(e.name).findFirst();
+        if (exists == null) await db.serverConfigs.put(e);
+      }
     });
   }
 
@@ -136,6 +242,11 @@ class LegacyMigration {
     final messageRows = <MessageEntity>[];
     final attachmentRows = <AttachmentEntity>[];
 
+    // Idempotent: skip chats whose uuid is already in Isar (committed by a
+    // previous partial run) — re-inserting would violate the unique index.
+    final seenUuids =
+        (await db.chats.where().uuidProperty().findAll()).toSet();
+
     for (final raw in list) {
       Map<String, dynamic> chatJson;
       try {
@@ -145,6 +256,7 @@ class LegacyMigration {
       }
 
       final chatUuid = (chatJson['id'] as String?) ?? _uuid.v4();
+      if (!seenUuids.add(chatUuid)) continue;
       final chatRow = ChatHistoryEntity()
         ..uuid = chatUuid
         ..title = chatJson['title'] as String?
@@ -272,23 +384,45 @@ class LegacyMigration {
       } catch (_) {}
     }
 
-    if (await File(value).exists()) {
+    // Legacy absolute file path: copy the bytes into the content-addressed
+    // store rather than adopting the path as-is — the old absolute path goes
+    // stale on the next iOS container move and the image is unrecoverable.
+    try {
       final f = File(value);
-      final size = await f.length();
-      final hash = await AttachmentStore.sha256OfFile(value);
-      return AttachmentEntity()
-        ..uuid = _uuid.v4()
-        ..messageUuid = messageUuid
-        ..kind = AttachmentKind.image
-        ..filePath = value
-        ..mimeType = 'image/jpeg'
-        ..sha256 = hash
-        ..sizeBytes = size
-        ..createdAt = DateTime.now();
+      if (await f.exists()) {
+        final bytes = await f.readAsBytes();
+        if (bytes.isEmpty) return null;
+        final ext = p.extension(value).toLowerCase();
+        final extension = ext.isNotEmpty ? ext : '.jpg';
+        final path = await AttachmentStore.writeBytes(
+          bytes: bytes,
+          kind: 'image',
+          extension: extension,
+        );
+        return AttachmentEntity()
+          ..uuid = _uuid.v4()
+          ..messageUuid = messageUuid
+          ..kind = AttachmentKind.image
+          ..filePath = path
+          ..mimeType = _mimeForExtension(extension)
+          ..sha256 = AttachmentStore.sha256OfBytes(bytes)
+          ..sizeBytes = bytes.length
+          ..createdAt = DateTime.now();
+      }
+    } catch (_) {
+      // Source unreadable — skip this image gracefully.
     }
 
     return null;
   }
+
+  static String _mimeForExtension(String ext) => switch (ext) {
+        '.png' => 'image/png',
+        '.gif' => 'image/gif',
+        '.webp' => 'image/webp',
+        '.bmp' => 'image/bmp',
+        _ => 'image/jpeg',
+      };
 
   static bool _looksLikeBase64(String s) {
     if (s.length < 100) return false;
@@ -303,6 +437,10 @@ class LegacyMigration {
     final db = AppDatabase.instance;
     final list = sp.getStringList(_kTranscriptionHistory) ?? const <String>[];
 
+    // Idempotent: skip transcriptions already committed by a partial run.
+    final seenUuids =
+        (await db.transcriptions.where().uuidProperty().findAll()).toSet();
+
     final entities = <TranscriptionEntity>[];
     for (final raw in list) {
       Map<String, dynamic> json;
@@ -311,8 +449,10 @@ class LegacyMigration {
       } catch (_) {
         continue;
       }
+      final uuid = (json['id'] as String?) ?? _uuid.v4();
+      if (!seenUuids.add(uuid)) continue;
       entities.add(TranscriptionEntity()
-        ..uuid = (json['id'] as String?) ?? _uuid.v4()
+        ..uuid = uuid
         ..text = json['text'] as String? ?? ''
         ..modelId = json['modelId'] as String?
         ..mode = json['mode'] as String? ?? 'http'

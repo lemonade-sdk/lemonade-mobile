@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:http/http.dart' as http;
+
 import '../api/lemonade_client.dart';
 import '../api/types/audio_request.dart';
 import '../api/types/chat_message.dart';
@@ -96,6 +98,11 @@ class EndCallResult extends ToolExecutionResult {
 
 /// Translates a tool_call into the appropriate Lemonade endpoint call.
 class OmniToolExecutor {
+  /// Shared HTTP client for the web research tools. Each `web_search` /
+  /// `find_places` call used to construct and close a fresh `http.Client`,
+  /// paying a full TCP+TLS handshake per search round — reuse one instead.
+  static final http.Client _webHttpClient = http.Client();
+
   final LemonadeApiClient client;
 
   /// Maps tool name → model id chosen for that tool.
@@ -115,8 +122,12 @@ class OmniToolExecutor {
 
   Future<ToolExecutionResult> execute(
     ToolCall call,
-    ToolExecutionContext ctx,
-  ) async {
+    ToolExecutionContext ctx, {
+    bool Function()? isCancelled,
+  }) async {
+    if (isCancelled?.call() ?? false) {
+      return const ErrorResult('Cancelled.');
+    }
     Map<String, dynamic> args;
     try {
       args = jsonDecode(call.argumentsJson) as Map<String, dynamic>;
@@ -132,9 +143,9 @@ class OmniToolExecutor {
     // descriptions already tell the model when to pick which tool; let it.
     switch (call.name) {
       case 'generate_image':
-        return _generate(args);
+        return _generate(args, isCancelled: isCancelled);
       case 'edit_image':
-        return _edit(args, ctx);
+        return _edit(args, ctx, isCancelled: isCancelled);
       case 'text_to_speech':
         return _tts(args);
       case 'transcribe_audio':
@@ -152,9 +163,15 @@ class OmniToolExecutor {
     }
   }
 
-  Future<ToolExecutionResult> _generate(Map<String, dynamic> args) async {
+  Future<ToolExecutionResult> _generate(
+    Map<String, dynamic> args, {
+    bool Function()? isCancelled,
+  }) async {
     final model = toolModels['generate_image'];
     if (model == null) return const ErrorResult('No image model is loaded.');
+    if (isCancelled?.call() ?? false) {
+      return const ErrorResult('Cancelled.');
+    }
 
     final basePrompt = (args['image_prompt'] ?? args['prompt']) as String? ?? '';
     final style = args['style'] as String?;
@@ -178,6 +195,9 @@ class OmniToolExecutor {
     );
     try {
       final resp = await client.images.generate(req);
+      if (isCancelled?.call() ?? false) {
+        return const ErrorResult('Cancelled.');
+      }
       final first = resp.images.firstOrNull;
       if (first?.b64Json == null) {
         return const ErrorResult('Image generation returned no data.');
@@ -234,9 +254,15 @@ class OmniToolExecutor {
   }
 
   Future<ToolExecutionResult> _edit(
-      Map<String, dynamic> args, ToolExecutionContext ctx) async {
+    Map<String, dynamic> args,
+    ToolExecutionContext ctx, {
+    bool Function()? isCancelled,
+  }) async {
     final model = toolModels['edit_image'] ?? toolModels['generate_image'];
     if (model == null) return const ErrorResult('No image model is loaded.');
+    if (isCancelled?.call() ?? false) {
+      return const ErrorResult('Cancelled.');
+    }
 
     // Source priority: an image generated this turn, then a prior assistant
     // image, then a USER-UPLOADED photo. The last fallback is what lets people
@@ -269,6 +295,9 @@ class OmniToolExecutor {
     );
     try {
       final resp = await client.images.edit(req);
+      if (isCancelled?.call() ?? false) {
+        return const ErrorResult('Cancelled.');
+      }
       final first = resp.images.firstOrNull;
       if (first?.b64Json == null) {
         return const ErrorResult('Image edit returned no data.');
@@ -412,7 +441,7 @@ class OmniToolExecutor {
     if (query.isEmpty) {
       return const ErrorResult('web_search requires a non-empty "query".');
     }
-    final client = WebSearchClient();
+    final client = WebSearchClient(_webHttpClient);
     try {
       final results = await client.search(query);
       if (results.isEmpty) {
@@ -428,8 +457,6 @@ class OmniToolExecutor {
       return TextResult(buf.toString().trimRight());
     } catch (e) {
       return ErrorResult('Web search failed: $e');
-    } finally {
-      client.close();
     }
   }
 
@@ -439,7 +466,7 @@ class OmniToolExecutor {
     if (query.isEmpty) {
       return const ErrorResult('find_places requires a non-empty "query".');
     }
-    final client = PlacesSearchClient();
+    final client = PlacesSearchClient(_webHttpClient);
     try {
       final places = await client.search(query, nearLocation: near);
       if (places.isEmpty) {
@@ -464,8 +491,6 @@ class OmniToolExecutor {
       return TextResult(buf.toString().trimRight());
     } catch (e) {
       return ErrorResult('Places lookup failed: $e');
-    } finally {
-      client.close();
     }
   }
 }

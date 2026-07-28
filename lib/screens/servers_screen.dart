@@ -7,6 +7,7 @@ import '../models/discovered_server.dart';
 import '../models/server_config.dart';
 import '../providers/beacon_provider.dart';
 import '../providers/servers_provider.dart';
+import '../utils/friendly_error.dart';
 
 /// Server management — adding, beacon discovery, and the configured-servers list.
 /// Extracted out of the old monolithic Settings screen.
@@ -23,6 +24,7 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
   final _apiKeyController = TextEditingController();
   final _scrollController = ScrollController();
   bool _isTestingServer = false;
+  bool _addingServer = false;
 
   @override
   void dispose() {
@@ -33,7 +35,8 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     super.dispose();
   }
 
-  void _addServer() {
+  Future<void> _addServer() async {
+    if (_addingServer) return; // double-tap guard — no duplicate rows
     final name = _nameController.text.trim();
     final url = _urlController.text.trim();
     final apiKey = _apiKeyController.text.trim();
@@ -45,28 +48,41 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
       ));
       return;
     }
-
-    final server = ServerConfig(
-      name: name,
-      baseUrl: url,
-      apiKey: apiKey.isNotEmpty ? apiKey : null,
-    );
-    ref.read(serversProvider.notifier).addServer(server);
-    // Auto-select the first server so the app is usable right away — testers
-    // didn't realize a separate "select" step existed.
-    if (ref.read(selectedServerProvider) == null) {
-      ref.read(selectedServerProvider.notifier).selectServer(server);
+    // Skip exact duplicates — same URL is the same server.
+    if (ref.read(serversProvider).any((s) => s.baseUrl == url)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('That server is already in the list.'),
+      ));
+      return;
     }
-    _nameController.clear();
-    _urlController.clear();
-    _apiKeyController.clear();
-    // Drop the keyboard so the confirmation (and the new row in "Configured
-    // Servers") isn't hidden behind it — testers thought the form just
-    // cleared itself and nothing happened.
-    FocusManager.instance.primaryFocus?.unfocus();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Server "$name" added.')),
-    );
+
+    setState(() => _addingServer = true);
+    try {
+      final server = ServerConfig(
+        name: name,
+        baseUrl: url,
+        apiKey: apiKey.isNotEmpty ? apiKey : null,
+      );
+      await ref.read(serversProvider.notifier).addServer(server);
+      // Auto-select the first server so the app is usable right away — testers
+      // didn't realize a separate "select" step existed.
+      if (ref.read(selectedServerProvider) == null) {
+        ref.read(selectedServerProvider.notifier).selectServer(server);
+      }
+      if (!mounted) return;
+      _nameController.clear();
+      _urlController.clear();
+      _apiKeyController.clear();
+      // Drop the keyboard so the confirmation (and the new row in "Configured
+      // Servers") isn't hidden behind it — testers thought the form just
+      // cleared itself and nothing happened.
+      FocusManager.instance.primaryFocus?.unfocus();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Server "$name" added.')),
+      );
+    } finally {
+      if (mounted) setState(() => _addingServer = false);
+    }
   }
 
   void _autofillFromDiscovered(DiscoveredServer discovered) {
@@ -110,7 +126,7 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error testing "${server.name}": $e'),
+        content: Text(friendlyError(e, action: 'test "${server.name}"')),
         backgroundColor: AppColors.serverDead,
       ));
     } finally {
@@ -286,9 +302,9 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
                     ),
                     const SizedBox(height: 12),
                     ElevatedButton.icon(
-                      onPressed: _addServer,
+                      onPressed: _addingServer ? null : _addServer,
                       icon: const Icon(Icons.save),
-                      label: const Text('Add server'),
+                      label: Text(_addingServer ? 'Adding…' : 'Add server'),
                     ),
                   ],
                 ),

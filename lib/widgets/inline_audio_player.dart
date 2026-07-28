@@ -62,6 +62,12 @@ class _InlineAudioPlayerState extends State<InlineAudioPlayer> {
         final mime = widget.source.substring(5, widget.source.indexOf(';'));
         final bytes = base64Decode(widget.source.substring(commaIdx + 1));
         path = await _writeToCache(bytes, mime);
+      } else if (widget.source.startsWith('lemonade-file:')) {
+        // Cold-start file-backed ref: lemonade-file:<mime>|<path>
+        final bar = widget.source.indexOf('|');
+        if (bar < 0) return;
+        path = widget.source.substring(bar + 1);
+        if (!await File(path).exists()) return;
       } else {
         path = widget.source;
         if (!await File(path).exists()) return;

@@ -6,6 +6,7 @@ import '../api/exceptions.dart';
 import '../api/nexus/nexus_account_client.dart';
 import '../api/nexus/nexus_account_models.dart';
 import '../providers/account_provider.dart';
+import '../utils/friendly_error.dart';
 
 /// Account / subscription home. Signing in is entirely optional — the app works
 /// without it. When signed out this shows Login / Register; when signed in it
@@ -120,10 +121,14 @@ class _AuthFormsState extends ConsumerState<_AuthForms> {
         await notifier.login(email: email, password: password);
       }
       // On success the screen rebuilds into the dashboard automatically.
-    } on LemonadeApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
     } catch (e) {
-      if (mounted) setState(() => _error = 'Something went wrong: $e');
+      if (!mounted) return;
+      // 401 here means bad credentials, not an expired session.
+      final msg = (e is LemonadeApiException && e.statusCode == 401)
+          ? 'Email or password is incorrect.'
+          : friendlyError(e,
+              action: _registerMode ? 'create your account' : 'sign in');
+      setState(() => _error = msg);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -654,10 +659,10 @@ class _BillingButtonsState extends ConsumerState<_BillingButtons> {
       final url =
           await NexusAccountClient(token: widget.token).openBillingPortal();
       if (mounted) await _launch(context, url);
-    } on LemonadeApiException catch (e) {
-      if (mounted) _snack(context, e.message);
     } catch (e) {
-      if (mounted) _snack(context, 'Could not open billing portal: $e');
+      if (mounted) {
+        _snack(context, _msg(e, action: 'open the billing portal'));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -697,10 +702,8 @@ class _PlansSectionState extends ConsumerState<_PlansSection> {
         addons: _selectedAddons.toList(),
       );
       if (mounted) await _launch(context, url);
-    } on LemonadeApiException catch (e) {
-      if (mounted) _snack(context, e.message);
     } catch (e) {
-      if (mounted) _snack(context, 'Checkout failed: $e');
+      if (mounted) _snack(context, _msg(e, action: 'start checkout'));
     } finally {
       if (mounted) setState(() => _checkoutBusyPlan = null);
     }
@@ -1016,8 +1019,21 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-String _msg(Object e) =>
-    e is LemonadeApiException ? e.message : e.toString();
+/// Customer-facing message for [e]. Keeps intentional server messages from
+/// typed API errors, but routes everything transport-shaped (and every other
+/// exception) through [friendlyError] so raw exception text never renders.
+String _msg(Object e, {String? action}) {
+  if (e is LemonadeApiException && e.message.isNotEmpty) {
+    final m = e.message.toLowerCase();
+    final transport = e.cause != null ||
+        m.contains('socketexception') ||
+        m.contains('network error') ||
+        m.contains('timed out') ||
+        m.contains('connection');
+    if (!transport) return e.message;
+  }
+  return friendlyError(e, action: action);
+}
 
 String _price(int cents) {
   if (cents == 0) return 'Free';

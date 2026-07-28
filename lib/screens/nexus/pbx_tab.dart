@@ -9,6 +9,8 @@ import '../../providers/nav_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
+import '../../widgets/nexus/error_retry.dart';
 import '../../widgets/nexus/gateway_gate.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
@@ -118,7 +120,10 @@ class _NumbersView extends ConsumerWidget {
     final async = ref.watch(voiceNumbersProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _ErrorBox('$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'load your numbers',
+          onRetry: () => ref.invalidate(voiceNumbersProvider)),
       data: (numbers) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -232,7 +237,8 @@ class _NumbersView extends ConsumerWidget {
       ref.invalidate(voiceNumbersProvider);
       messenger.showSnackBar(const SnackBar(content: Text('Number released.')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('$e')));
+      messenger.showSnackBar(SnackBar(
+          content: Text(friendlyError(e, action: 'release the number'))));
     }
   }
 
@@ -266,7 +272,10 @@ class _ExtensionsView extends ConsumerWidget {
     final async = ref.watch(voiceExtensionsProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _ErrorBox('$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'load your extensions',
+          onRetry: () => ref.invalidate(voiceExtensionsProvider)),
       data: (exts) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -382,7 +391,10 @@ class _FlowsView extends ConsumerWidget {
     final async = ref.watch(voiceFlowsProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _ErrorBox('$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'load your flows',
+          onRetry: () => ref.invalidate(voiceFlowsProvider)),
       data: (flows) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -474,7 +486,10 @@ class _HistoryView extends ConsumerWidget {
     final async = ref.watch(cdrProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _ErrorBox('$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'load your call history',
+          onRetry: () => ref.invalidate(cdrProvider)),
       data: (calls) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -603,7 +618,10 @@ class _VoicemailView extends ConsumerWidget {
     final async = ref.watch(voicemailProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _ErrorBox('$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'load your voicemail',
+          onRetry: () => ref.invalidate(voicemailProvider)),
       data: (msgs) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -669,8 +687,8 @@ class _VoicemailTileState extends ConsumerState<_VoicemailTile> {
       if (!mounted) return;
       ref.invalidate(voicemailProvider);
     } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Could not delete: $e')));
+      messenger.showSnackBar(SnackBar(
+          content: Text(friendlyError(e, action: 'delete the voicemail'))));
     }
   }
 
@@ -680,15 +698,20 @@ class _VoicemailTileState extends ConsumerState<_VoicemailTile> {
     setState(() => _loading = true);
     try {
       final bytes = await client.voicemailAudio(widget.m.id);
-      setState(() => _dataUrl = 'data:audio/wav;base64,${base64Encode(bytes)}');
+      if (mounted) {
+        setState(
+            () => _dataUrl = 'data:audio/wav;base64,${base64Encode(bytes)}');
+      }
+      // Mark read even if the tile is gone by now — the network side of the
+      // action should still complete; only touch ref/state when mounted.
       if (!widget.m.isRead) {
         await client.markVoicemailRead(widget.m.id);
-        ref.invalidate(voicemailProvider);
+        if (mounted) ref.invalidate(voicemailProvider);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not load audio: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(friendlyError(e, action: 'load the audio'))));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -787,19 +810,6 @@ class _Loading extends StatelessWidget {
   Widget build(BuildContext context) => const Padding(
       padding: EdgeInsets.all(24),
       child: Center(child: CircularProgressIndicator()));
-}
-
-class _ErrorBox extends StatelessWidget {
-  final String msg;
-  const _ErrorBox(this.msg);
-  @override
-  Widget build(BuildContext context) {
-    final t = context.nexus;
-    return NexusCard(
-      radius: 15,
-      child: Text(msg, style: TextStyle(fontSize: 12.5, color: t.danger)),
-    );
-  }
 }
 
 class _EmptyBox extends StatelessWidget {

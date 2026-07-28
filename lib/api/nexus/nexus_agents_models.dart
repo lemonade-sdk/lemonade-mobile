@@ -2,13 +2,13 @@
 /// (`/voice/http-tools`), and agent knowledge pages (`/voice/agent-knowledge`).
 library;
 
-DateTime? _date(dynamic v) =>
-    v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
-int? _int(dynamic v) => v == null ? null : int.tryParse('$v');
-String _str(dynamic v) => v?.toString() ?? '';
-List<int> _ints(dynamic v) => v is List
-    ? v.map((e) => int.tryParse('$e') ?? -1).where((e) => e >= 0).toList()
-    : const [];
+import 'json_utils.dart';
+
+// Local aliases keep fromJson bodies short and match prior call sites.
+DateTime? _date(dynamic v) => jsonDate(v);
+int? _int(dynamic v) => jsonInt(v);
+String _str(dynamic v) => jsonStr(v);
+List<int> _ints(dynamic v) => jsonIntList(v);
 
 // ── Agents ─────────────────────────────────────────────────────────────
 

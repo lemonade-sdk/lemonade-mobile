@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/lemonade_client_provider.dart';
+import '../../utils/friendly_error.dart';
 
 class AdminSystemInfoTab extends ConsumerStatefulWidget {
   const AdminSystemInfoTab({super.key});
@@ -31,7 +32,7 @@ class _AdminSystemInfoTabState extends ConsumerState<AdminSystemInfoTab> {
       if (client == null) return;
       _info = await client.admin.systemInfo();
     } catch (e) {
-      _error = e.toString();
+      _error = friendlyError(e, action: 'load system info');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

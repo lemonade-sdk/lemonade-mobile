@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/lemonade_client_provider.dart';
+import '../../utils/friendly_error.dart';
 
 class AdminBackendsTab extends ConsumerStatefulWidget {
   const AdminBackendsTab({super.key});
@@ -31,7 +32,7 @@ class _AdminBackendsTabState extends ConsumerState<AdminBackendsTab> {
       if (client == null) return;
       _systemInfo = await client.admin.systemInfo();
     } catch (e) {
-      _error = e.toString();
+      _error = friendlyError(e, action: 'load system info');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -45,7 +46,7 @@ class _AdminBackendsTabState extends ConsumerState<AdminBackendsTab> {
     try {
       await client.admin.install(recipe: recipe, backend: backend, force: force);
     } catch (e) {
-      _showError('Install failed: $e');
+      _showError(friendlyError(e, action: 'install the backend'));
     } finally {
       await _refresh();
     }
@@ -60,13 +61,14 @@ class _AdminBackendsTabState extends ConsumerState<AdminBackendsTab> {
     try {
       await client.admin.uninstall(recipe: recipe, backend: backend);
     } catch (e) {
-      _showError('Uninstall failed: $e');
+      _showError(friendlyError(e, action: 'uninstall the backend'));
     } finally {
       await _refresh();
     }
   }
 
   void _showError(String text) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text), backgroundColor: Colors.redAccent),
     );

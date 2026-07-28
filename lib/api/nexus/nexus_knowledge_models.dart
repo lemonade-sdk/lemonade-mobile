@@ -2,12 +2,12 @@
 /// Powers the redesign's Docs tab.
 library;
 
-DateTime? _date(dynamic v) =>
-    v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
-int? _int(dynamic v) => v == null ? null : int.tryParse('$v');
-String _str(dynamic v) => v?.toString() ?? '';
+import 'json_utils.dart';
 
-/// A knowledge collection / KB (`CollectionDto`).
+DateTime? _date(dynamic v) => jsonDate(v);
+int? _int(dynamic v) => jsonInt(v);
+String _str(dynamic v) => jsonStr(v);
+
 class NexusCollection {
   final int id;
   final String name;

@@ -7,6 +7,7 @@ import '../../api/nexus/nexus_voice_models.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -91,18 +92,29 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
     } on ServerException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = '$e');
+      if (!mounted) return;
+      setState(() => _error = friendlyError(e, action: 'search for numbers'));
     } finally {
       if (mounted) setState(() => _searching = false);
     }
   }
 
   Future<void> _buy(NexusAvailableNumber n) async {
-    final label = await _confirmBuy(n);
-    if (label == null) return; // cancelled ('' = buy without a label)
-    final client = ref.read(nexusVoiceClientProvider);
-    if (client == null) return;
+    // Guard BEFORE the confirm dialog so a double-tap can't stack two
+    // confirms (and place two paid orders).
+    if (_buyingDid != null) return;
     setState(() => _buyingDid = n.number);
+    final label = await _confirmBuy(n);
+    if (label == null) {
+      // cancelled ('' = buy without a label)
+      if (mounted) setState(() => _buyingDid = null);
+      return;
+    }
+    final client = ref.read(nexusVoiceClientProvider);
+    if (client == null) {
+      if (mounted) setState(() => _buyingDid = null);
+      return;
+    }
     try {
       await client.orderNumber(n.number, label: label);
       ref.invalidate(voiceNumbersProvider);
@@ -123,7 +135,7 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
           _toast(e.message);
       }
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'buy the number'));
     } finally {
       if (mounted) setState(() => _buyingDid = null);
     }
@@ -131,42 +143,9 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
 
   /// Confirm + optional label. Returns the label ('' = none), or null if cancelled.
   Future<String?> _confirmBuy(NexusAvailableNumber n) {
-    final t = context.nexus;
-    final ctrl = TextEditingController();
-    final where = [
-      if (n.rateCenter.isNotEmpty) n.rateCenter,
-      if (n.state.isNotEmpty) n.state,
-    ].join(', ');
     return showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: t.bg2,
-        title: Text('Buy ${_fmt(n.number)}?',
-            style: TextStyle(color: t.text, fontWeight: FontWeight.w700)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${n.priceLabel}${where.isEmpty ? '' : ' · $where'}',
-                style: TextStyle(color: t.muted, fontSize: 13)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              style: TextStyle(fontSize: 14, color: t.text),
-              decoration: nexusInput(context, 'Label (optional)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text('Cancel', style: TextStyle(color: t.muted))),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: Text('Buy ${n.priceLabel}',
-                  style: TextStyle(color: t.accent2))),
-        ],
-      ),
+      builder: (_) => _ConfirmBuyDialog(number: n, fmt: _fmt),
     );
   }
 
@@ -199,7 +178,7 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
       }
       _toast('Finish in the browser, then buy the number again.');
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'start the top-up'));
     }
   }
 
@@ -436,6 +415,65 @@ class _GetNumberScreenState extends ConsumerState<GetNumberScreen> {
           ),
         ),
       ]),
+    );
+  }
+}
+
+/// Confirm-purchase dialog. A StatefulWidget so the label controller is
+/// owned — and disposed — with the dialog itself.
+class _ConfirmBuyDialog extends StatefulWidget {
+  final NexusAvailableNumber number;
+  final String Function(String) fmt;
+  const _ConfirmBuyDialog({required this.number, required this.fmt});
+
+  @override
+  State<_ConfirmBuyDialog> createState() => _ConfirmBuyDialogState();
+}
+
+class _ConfirmBuyDialogState extends State<_ConfirmBuyDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.nexus;
+    final n = widget.number;
+    final where = [
+      if (n.rateCenter.isNotEmpty) n.rateCenter,
+      if (n.state.isNotEmpty) n.state,
+    ].join(', ');
+    return AlertDialog(
+      backgroundColor: t.bg2,
+      title: Text('Buy ${widget.fmt(n.number)}?',
+          style: TextStyle(color: t.text, fontWeight: FontWeight.w700)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${n.priceLabel}${where.isEmpty ? '' : ' · $where'}',
+              style: TextStyle(color: t.muted, fontSize: 13)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _ctrl,
+            style: TextStyle(fontSize: 14, color: t.text),
+            decoration: nexusInput(context, 'Label (optional)'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: t.muted))),
+        TextButton(
+            onPressed: () => Navigator.pop(context, _ctrl.text.trim()),
+            child: Text('Buy ${n.priceLabel}',
+                style: TextStyle(color: t.accent2))),
+      ],
     );
   }
 }

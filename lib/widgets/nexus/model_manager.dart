@@ -5,6 +5,7 @@ import '../../api/endpoints/admin_endpoint.dart';
 import '../../providers/lemonade_client_provider.dart';
 import '../../providers/models_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import 'device_stats_card.dart';
 import 'model_picker_sheet.dart';
 import 'nexus_ui.dart';
@@ -99,7 +100,8 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
       final ctx = _ctx.value.clamp(1024, maxCtx);
       await admin.load(modelName: id, ctxSize: ctx);
     } catch (e) {
-      _toast('Selected. Server load: $e');
+      // The selection sticks even when the server-side load fails.
+      _toast(friendlyError(e, action: 'load the model on the server'));
     } finally {
       if (mounted) setState(() => _busyId = null);
     }
@@ -122,7 +124,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     try {
       await admin.unload(modelName: id);
     } catch (e) {
-      _toast('Unload failed: $e');
+      _toast(friendlyError(e, action: 'unload the model'));
     } finally {
       if (mounted) setState(() => _busyId = null);
     }
@@ -153,7 +155,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
       await admin.delete(modelName: id);
       ref.read(modelsProvider.notifier).fetchModels();
     } catch (e) {
-      _toast('Remove failed: $e');
+      _toast(friendlyError(e, action: 'remove the model'));
     } finally {
       if (mounted) setState(() => _busyId = null);
     }
@@ -173,6 +175,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     });
     try {
       final res = await admin.pullVariants(checkpoint: checkpoint);
+      if (!mounted) return;
       final variants = (res['variants'] as List?) ?? const [];
       setState(() {
         _hfRecipe = res['recipe']?.toString();
@@ -191,7 +194,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
       });
       if (_variants.isEmpty) _toast('No GGUF variants found for $checkpoint');
     } catch (e) {
-      _toast('Search failed: $e');
+      _toast(friendlyError(e, action: 'search Hugging Face'));
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -224,7 +227,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
         }
       }
     } catch (e) {
-      _toast('Install failed: $e');
+      _toast(friendlyError(e, action: 'install the model'));
     } finally {
       if (mounted) setState(() => _installing = null);
     }
@@ -777,7 +780,8 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
       }
       await _fetchSystemInfo();
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e,
+          action: installed ? 'remove the backend' : 'install the backend'));
     } finally {
       if (mounted) setState(() => _backendBusy = null);
     }

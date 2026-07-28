@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/nexus/nexus_call_tasks_models.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../widgets/nexus/error_retry.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -22,24 +23,11 @@ class CallTranscriptScreen extends ConsumerWidget {
       title: title,
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-            child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('No transcript available.\n$e',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: t.muted)),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () =>
-                    ref.invalidate(callTranscriptProvider(callRef)),
-                child: Text('Retry', style: TextStyle(color: t.accent2)),
-              ),
-            ],
-          ),
-        )),
+        error: (e, _) => ErrorRetry(
+            error: e,
+            action: 'load the transcript',
+            asPage: true,
+            onRetry: () => ref.invalidate(callTranscriptProvider(callRef))),
         data: (transcript) {
           if (transcript == null || transcript.turns.isEmpty) {
             return Center(

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/app_mode_provider.dart';
 import '../../providers/billing_providers.dart';
+import '../../providers/image_resolution_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/omni_router_provider.dart';
 import '../../providers/theme_provider.dart';
@@ -16,6 +17,7 @@ import '../../screens/nexus/team_screen.dart';
 import '../../screens/omni_router_screen.dart';
 import '../../screens/servers_screen.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/gateway_gate.dart';
 import '../../widgets/nexus/model_manager.dart';
 import '../../widgets/nexus/nexus_ui.dart';
@@ -141,6 +143,7 @@ class SettingsTab extends ConsumerWidget {
                 builder: (_) => const OmniRouterScreen()))),
         _navRow(context, 'Model defaults',
             onTap: () => Navigator.of(context).pushNamed('/model-defaults')),
+        _imageResolutionRow(context, ref),
       ]),
       _group(context, 'Servers', [
         _navRow(context, 'Manage servers',
@@ -165,7 +168,8 @@ class SettingsTab extends ConsumerWidget {
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text('Couldn’t update recording: $e')));
+                        content: Text(friendlyError(e,
+                            action: 'update call recording'))));
                   }
                 }
               }),
@@ -276,6 +280,64 @@ class SettingsTab extends ConsumerWidget {
         Text(value, style: nexusMono(fontSize: 13, color: t.muted)),
       ]),
     );
+  }
+
+  Widget _imageResolutionRow(BuildContext context, WidgetRef ref) {
+    final t = context.nexus;
+    final preset = ref.watch(imageResolutionProvider);
+    return _rowShell(
+      context,
+      onTap: () => _pickImageResolution(context, ref),
+      child: Row(children: [
+        Expanded(
+          child: _labelSub(
+            context,
+            'Image generation resolution',
+            'Long edge for generate/edit tools',
+          ),
+        ),
+        Text(preset.label.split(' · ').first,
+            style: nexusMono(fontSize: 13, color: t.muted)),
+        Icon(Icons.chevron_right, size: 18, color: t.faint),
+      ]),
+    );
+  }
+
+  Future<void> _pickImageResolution(BuildContext context, WidgetRef ref) async {
+    final current = ref.read(imageResolutionProvider);
+    final picked = await showModalBottomSheet<ImageResolutionPreset>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final t = ctx.nexus;
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: Text('Image generation resolution',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: t.text)),
+              ),
+              for (final p in ImageResolutionPreset.values)
+                ListTile(
+                  title: Text(p.label, style: TextStyle(color: t.text)),
+                  trailing: p == current
+                      ? Icon(Icons.check, color: t.accent)
+                      : null,
+                  onTap: () => Navigator.of(ctx).pop(p),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked != null) {
+      await ref.read(imageResolutionProvider.notifier).set(picked);
+    }
   }
 
   Widget _actionRow(BuildContext context, String label,

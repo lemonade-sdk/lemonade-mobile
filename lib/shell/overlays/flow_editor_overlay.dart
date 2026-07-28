@@ -5,6 +5,7 @@ import '../../providers/nav_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
 /// One IVR node. Mirrors the backend flow JSON: `{type, config:{...},
@@ -146,7 +147,7 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
         }
       }
     } catch (e) {
-      _toast('Load failed: $e');
+      _toast(friendlyError(e, action: 'load the flow'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -207,7 +208,7 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
       ref.invalidate(voiceFlowsProvider);
       if (mounted) ref.read(overlayProvider.notifier).close();
     } catch (e) {
-      _toast('Save failed: $e');
+      _toast(friendlyError(e, action: 'save the flow'));
       if (mounted) setState(() => _saving = false);
     }
   }
@@ -219,7 +220,7 @@ class _FlowEditorOverlayState extends ConsumerState<FlowEditorOverlay> {
         await client.deleteFlow(widget.flowId!);
         ref.invalidate(voiceFlowsProvider);
       } catch (e) {
-        _toast('Delete failed: $e');
+        _toast(friendlyError(e, action: 'delete the flow'));
       }
     }
     if (mounted) ref.read(overlayProvider.notifier).close();

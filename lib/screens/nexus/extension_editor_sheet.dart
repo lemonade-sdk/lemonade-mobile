@@ -5,6 +5,7 @@ import '../../api/nexus/nexus_voice_models.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
 /// Add / edit a SIP extension. On create the one-time SIP password is shown in
@@ -91,8 +92,8 @@ class _ExtensionEditorSheetState extends ConsumerState<ExtensionEditorSheet> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Save failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(friendlyError(e, action: 'save the extension'))));
         setState(() => _saving = false);
       }
     }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/lemonade_client_provider.dart';
+import '../../utils/friendly_error.dart';
 
 class AdminDashboardTab extends ConsumerStatefulWidget {
   const AdminDashboardTab({super.key});
@@ -53,7 +54,7 @@ class _AdminDashboardTabState extends ConsumerState<AdminDashboardTab> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = friendlyError(e, action: 'load the dashboard');
       });
     }
   }

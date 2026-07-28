@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -101,6 +102,24 @@ class AudioRecorderService {
     return newPath;
   }
 
+  /// Resolve a stored recording path to one that exists on disk.
+  ///
+  /// Recordings are persisted under `{docs}/audio/<name>` but the DB stores
+  /// the absolute path, and iOS relocates the app container (new UUID in the
+  /// path) on EVERY app update — so stored absolute paths go stale each
+  /// build. Re-root by basename under the current documents dir (the same
+  /// pattern as AttachmentStore.resolveExisting; filenames carry a unique
+  /// timestamp, so the basename is a stable key). Returns null when the file
+  /// is genuinely gone.
+  static Future<String?> resolveAudioPath(String storedPath) async {
+    if (await File(storedPath).exists()) return storedPath;
+    final docsDir = await getApplicationDocumentsDirectory();
+    final baseName = storedPath.split('/').last;
+    final rerooted = '${docsDir.path}/audio/$baseName';
+    if (await File(rerooted).exists()) return rerooted;
+    return null;
+  }
+
   /// Stop any active recording (file or stream).
   Future<void> stopRecording() async {
     if (!_isRecording) return;
@@ -180,6 +199,22 @@ class AudioRecorderService {
     for (final path in paths) {
       await deleteFile(path);
     }
+  }
+
+  /// Normalized amplitude (0.0–1.0) from raw little-endian PCM16 bytes.
+  /// Uses dBFS-like scaling so normal speech (~−30 to −10 dBFS) lands in
+  /// 0.5–0.83. Shared by live transcription and voice-mode waveform UIs.
+  static double normalizedAmplitudeFromPcm16(Uint8List bytes) {
+    if (bytes.length < 2) return 0.0;
+    final data = ByteData.sublistView(bytes);
+    var maxAmp = 0.0;
+    for (var i = 0; i < bytes.length - 1; i += 2) {
+      final sample = data.getInt16(i, Endian.little).abs().toDouble();
+      if (sample > maxAmp) maxAmp = sample;
+    }
+    if (maxAmp < 1) return 0.0;
+    final dBFS = 20.0 * (log(maxAmp / 32768.0) / ln10);
+    return ((dBFS + 60.0) / 60.0).clamp(0.0, 1.0);
   }
 
   /// Build a WAV file in memory from raw PCM16 chunks.

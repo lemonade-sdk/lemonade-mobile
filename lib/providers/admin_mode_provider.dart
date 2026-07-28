@@ -7,13 +7,19 @@ class _AdminModeNotifier extends StateNotifier<bool> {
     _load();
   }
 
+  /// A toggle flipped before [_load] resolves must win over the stale
+  /// snapshot it read (cold-start window).
+  bool _userDirty = false;
+
   Future<void> _load() async {
     if (!AppDatabase.isOpen) return;
     final prefs = await AppDatabase.instance.readOrCreatePrefs();
+    if (_userDirty) return;
     state = prefs.adminModeEnabled;
   }
 
   Future<void> setEnabled(bool value) async {
+    _userDirty = true;
     state = value;
     if (!AppDatabase.isOpen) return;
     final db = AppDatabase.instance;

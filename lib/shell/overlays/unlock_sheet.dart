@@ -9,6 +9,7 @@ import '../../providers/billing_providers.dart';
 import '../../providers/nav_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -69,7 +70,7 @@ class _UnlockSheetState extends ConsumerState<UnlockSheet> {
         _toast(e.message);
       }
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'unlock ${widget.feature}'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -88,7 +89,7 @@ class _UnlockSheetState extends ConsumerState<UnlockSheet> {
         setState(() {});
       }
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'start the top-up'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -105,7 +106,7 @@ class _UnlockSheetState extends ConsumerState<UnlockSheet> {
       _toast('Phone System added.');
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'add the Phone System'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

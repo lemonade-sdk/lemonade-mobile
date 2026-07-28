@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lemonade_mobile/models/chat_history.dart';
 import 'package:lemonade_mobile/models/model_defaults.dart';
 import 'package:lemonade_mobile/providers/chat_history_provider.dart';
 import 'package:lemonade_mobile/providers/models_provider.dart';
@@ -13,10 +14,22 @@ final globalModelDefaultsProvider =
 // Clipboard for "Copy Settings" feature
 final modelDefaultsClipboardProvider = StateProvider<ModelDefaults?>((ref) => null);
 
+/// The active chat's per-chat overrides, derived from the chat list STATE.
+/// The effective*ModelProviders must `ref.watch(chatHistoryProvider.select(…))`
+/// through this — watching the *notifier* (which never changes identity) meant
+/// they kept returning the previous chat's override after a chat switch or an
+/// override edit until some unrelated dependency happened to change.
+ModelDefaults? _activeChatOverrides(List<ChatHistory> chats) {
+  for (final chat in chats) {
+    if (chat.isActive) return chat.modelOverrides;
+  }
+  return null;
+}
+
 // Derived provider: effective model for a given type, merging per-chat override > global default > first available
 final effectiveLlmModelProvider = Provider<String?>((ref) {
-  final activeChat = ref.watch(chatHistoryProvider.notifier).getActiveChat();
-  final chatOverride = activeChat?.modelOverrides?.llmModel;
+  final chatOverride = ref.watch(chatHistoryProvider
+      .select((chats) => _activeChatOverrides(chats)?.llmModel));
   if (chatOverride != null) return chatOverride;
 
   final global = ref.watch(globalModelDefaultsProvider);
@@ -27,8 +40,8 @@ final effectiveLlmModelProvider = Provider<String?>((ref) {
 });
 
 final effectiveAudioModelProvider = Provider<String?>((ref) {
-  final activeChat = ref.watch(chatHistoryProvider.notifier).getActiveChat();
-  final chatOverride = activeChat?.modelOverrides?.audioToTextModel;
+  final chatOverride = ref.watch(chatHistoryProvider
+      .select((chats) => _activeChatOverrides(chats)?.audioToTextModel));
   if (chatOverride != null) return chatOverride;
 
   final global = ref.watch(globalModelDefaultsProvider);
@@ -41,8 +54,8 @@ final effectiveAudioModelProvider = Provider<String?>((ref) {
 });
 
 final effectiveImageGenModelProvider = Provider<String?>((ref) {
-  final activeChat = ref.watch(chatHistoryProvider.notifier).getActiveChat();
-  final chatOverride = activeChat?.modelOverrides?.imageGenerationModel;
+  final chatOverride = ref.watch(chatHistoryProvider
+      .select((chats) => _activeChatOverrides(chats)?.imageGenerationModel));
   if (chatOverride != null) return chatOverride;
 
   final global = ref.watch(globalModelDefaultsProvider);
@@ -58,9 +71,19 @@ class GlobalModelDefaultsNotifier extends StateNotifier<ModelDefaults> {
     _load();
   }
 
+  /// True once the user has changed anything — a late-resolving [_load] must
+  /// not clobber their write with the stale snapshot it read (cold-start
+  /// window).
+  bool _userDirty = false;
+
+  /// Serializes writes so [_save]'s read-modify-write against the defaults
+  /// row can't interleave; the last write always carries the latest state.
+  Future<void> _pendingSave = Future.value();
+
   Future<void> _load() async {
     if (!AppDatabase.isOpen) return;
     final row = await AppDatabase.instance.readOrCreateDefaults();
+    if (_userDirty) return;
     state = ModelDefaults(
       llmModel: row.llmModel,
       audioToTextModel: row.audioToTextModel,
@@ -69,7 +92,15 @@ class GlobalModelDefaultsNotifier extends StateNotifier<ModelDefaults> {
     );
   }
 
-  Future<void> _save() async {
+  Future<void> _save() {
+    _userDirty = true;
+    final run = _pendingSave.then((_) => _writeNow());
+    // Keep the chain alive even when a write fails.
+    _pendingSave = run.catchError((_) {});
+    return run;
+  }
+
+  Future<void> _writeNow() async {
     if (!AppDatabase.isOpen) return;
     final db = AppDatabase.instance;
     final row = await db.readOrCreateDefaults();

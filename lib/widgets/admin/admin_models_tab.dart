@@ -5,6 +5,7 @@ import '../../api/endpoints/admin_endpoint.dart';
 import '../../api/types/model_info.dart';
 import '../../providers/lemonade_client_provider.dart';
 import '../../providers/model_downloads_provider.dart';
+import '../../utils/friendly_error.dart';
 
 class AdminModelsTab extends ConsumerStatefulWidget {
   const AdminModelsTab({super.key});
@@ -47,7 +48,7 @@ class _AdminModelsTabState extends ConsumerState<AdminModelsTab> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString());
+      setState(() => _error = friendlyError(e, action: 'load the models'));
     } finally {
       // Also covers the `client == null` early return above, which used to
       // leave the tab spinning forever.
@@ -62,7 +63,7 @@ class _AdminModelsTabState extends ConsumerState<AdminModelsTab> {
     try {
       await client.admin.load(modelName: modelName);
     } catch (e) {
-      _errorSnack('Load failed: $e');
+      _errorSnack(friendlyError(e, action: 'load the model'));
     } finally {
       await _refresh();
     }
@@ -75,7 +76,7 @@ class _AdminModelsTabState extends ConsumerState<AdminModelsTab> {
     try {
       await client.admin.unload(modelName: modelName);
     } catch (e) {
-      _errorSnack('Unload failed: $e');
+      _errorSnack(friendlyError(e, action: 'unload the model'));
     } finally {
       await _refresh();
     }
@@ -90,7 +91,7 @@ class _AdminModelsTabState extends ConsumerState<AdminModelsTab> {
     try {
       await client.admin.delete(modelName: modelName);
     } catch (e) {
-      _errorSnack('Delete failed: $e');
+      _errorSnack(friendlyError(e, action: 'delete the model'));
     } finally {
       await _refresh();
     }
@@ -151,7 +152,7 @@ class _AdminModelsTabState extends ConsumerState<AdminModelsTab> {
         }
       }
     } catch (e) {
-      status.value = 'Error: $e';
+      status.value = friendlyError(e, action: 'download the model');
     } finally {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       await _refresh();

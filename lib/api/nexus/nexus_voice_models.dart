@@ -5,12 +5,12 @@ library;
 
 import 'dart:convert';
 
-DateTime? _date(dynamic v) =>
-    v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
-int? _int(dynamic v) => v == null ? null : int.tryParse('$v');
-String _str(dynamic v) => v?.toString() ?? '';
+import 'json_utils.dart';
 
-/// A live or historical call (`CallView`).
+DateTime? _date(dynamic v) => jsonDate(v);
+int? _int(dynamic v) => jsonInt(v);
+String _str(dynamic v) => jsonStr(v);
+
 class NexusCall {
   final String callRef;
   final String direction; // Inbound | Outbound | Internal

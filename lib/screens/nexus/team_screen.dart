@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/nexus/nexus_voice_models.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../widgets/nexus/error_retry.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -20,24 +21,11 @@ class TeamScreen extends ConsumerWidget {
       title: 'Team',
       body: team.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('$e',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: t.danger)),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => ref.invalidate(voiceTeamProvider),
-                  child: Text('Retry', style: TextStyle(color: t.accent2)),
-                ),
-              ],
-            ),
-          ),
-        ),
+        error: (e, _) => ErrorRetry(
+            error: e,
+            action: 'load your team',
+            asPage: true,
+            onRetry: () => ref.invalidate(voiceTeamProvider)),
         data: (members) => members.isEmpty
             ? Center(
                 child: Text('No team members.',

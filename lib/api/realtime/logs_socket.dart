@@ -22,6 +22,16 @@ class LogsSocket {
   Stream<LogsEvent> get events => _events.stream;
 
   Future<void> connect({required int port}) async {
+    // Idempotent-safe: close any previous channel first so a second
+    // connect() doesn't leak the old socket.
+    final previous = _channel;
+    _channel = null;
+    if (previous != null) {
+      try {
+        await previous.sink.close();
+      } catch (_) {}
+    }
+
     final apiUri = Uri.parse(_client.server.apiUrl);
     final scheme = apiUri.scheme == 'https' ? 'wss' : 'ws';
     final uri = Uri(
@@ -31,11 +41,15 @@ class LogsSocket {
       path: '/logs/stream',
     );
 
-    _channel = WebSocketChannel.connect(uri);
-    _channel!.stream.listen(
+    final channel = WebSocketChannel.connect(uri);
+    _channel = channel;
+    channel.stream.listen(
       _onMessage,
-      onError: (err) => _events.add(LogsError(err.toString())),
-      onDone: () => _events.add(const LogsDisconnected()),
+      onError: (err) => _emit(LogsError(err.toString())),
+      onDone: () {
+        // Ignore the close of a superseded channel (reconnect/dispose).
+        if (identical(_channel, channel)) _emit(const LogsDisconnected());
+      },
     );
   }
 
@@ -60,6 +74,13 @@ class LogsSocket {
     ch.sink.add(jsonEncode(message));
   }
 
+  /// Adds on a closed controller throw — guard every emit so a late socket
+  /// callback after dispose() can't crash.
+  void _emit(LogsEvent ev) {
+    if (_events.isClosed) return;
+    _events.add(ev);
+  }
+
   void _onMessage(dynamic raw) {
     if (raw is! String) return;
     Map<String, dynamic> msg;
@@ -76,7 +97,7 @@ class LogsSocket {
       case 'logs.snapshot':
         final entries = msg['entries'];
         if (entries is List) {
-          _events.add(LogsSnapshot([
+          _emit(LogsSnapshot([
             for (final e in entries.whereType<Map<String, dynamic>>())
               LogEntry.fromJson(e),
           ]));
@@ -85,11 +106,11 @@ class LogsSocket {
       case 'logs.entry':
         final entry = msg['entry'];
         if (entry is Map<String, dynamic>) {
-          _events.add(LogsLive(LogEntry.fromJson(entry)));
+          _emit(LogsLive(LogEntry.fromJson(entry)));
         }
         break;
       case 'error':
-        _events.add(LogsError(msg['message']?.toString() ?? 'Unknown error'));
+        _emit(LogsError(msg['message']?.toString() ?? 'Unknown error'));
         break;
     }
   }

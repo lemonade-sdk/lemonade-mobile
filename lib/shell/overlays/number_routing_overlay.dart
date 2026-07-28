@@ -6,6 +6,7 @@ import '../../providers/nav_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/voice_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import 'sheet_scaffold.dart';
 
 /// Bottom sheet to re-route a DID. Wired to `PUT /voice/numbers/{id}/routing`.
@@ -77,8 +78,8 @@ class _NumberRoutingOverlayState extends ConsumerState<NumberRoutingOverlay> {
       if (mounted) ref.read(overlayProvider.notifier).close();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Save failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(friendlyError(e, action: 'save the routing'))));
         setState(() => _saving = false);
       }
     }

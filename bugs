@@ -1,0 +1,11 @@
+1. On Android there is a problem with the system bar covering the bottom of the app layout. Buttons and text input are hard to target. I think we need to detect if this device is a android phone with a system bar below and if it is we adjust the app bottom and move the stuff up this is a common bug for android you should look it up.
+
+2. Also the chat text input has a style issue. Corners look weird, it seems round is over square or something.
+
+3. Call mode doesnt work it says Failed to start: Bad state: Could not open the realtime audio WebSocket on 192. etc....
+websocketexception Connection to 'http://192.168.8.236:13305/?model=Whisper etc.... was not upgraded to websocket.
+
+4. After a few rounds of conversations, network error 500 happens
+
+5. I'm not able to edit images in the mobile app so the app should allow people to upload a photo into the chat session and then write something to make changes
+ to that image. this feature  exist through tool calls and lemonade provides these endpoints.

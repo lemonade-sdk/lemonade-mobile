@@ -1,3 +1,5 @@
+import '../api/url_utils.dart';
+
 class ServerConfig {
   final String baseUrl;
   final String? apiKey;
@@ -16,19 +18,7 @@ class ServerConfig {
   ///   http://host:8000/v1        -> http://host:8000/v1 (kept as-is for external APIs)
   ///   http://host:8000/api/v1    -> http://host:8000/api/v1
   ///   http://host:8000/api/v1/   -> http://host:8000/api/v1
-  String get apiUrl {
-    String url = baseUrl;
-    // Strip trailing slashes
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-    if (url.endsWith('/api/v1')) return url;
-    if (url.endsWith('/v1')) return url;
-    if (url.endsWith('/api')) {
-      return '$url/v1';
-    }
-    return '$url/api/v1';
-  }
+  String get apiUrl => normalizeApiV1Base(baseUrl);
 
   Map<String, dynamic> toJson() {
     return {

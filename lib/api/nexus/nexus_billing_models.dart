@@ -3,14 +3,13 @@
 /// `GET /api/v1/voice/entitlements`.
 library;
 
-DateTime? _date(dynamic v) =>
-    v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
-int _intv(dynamic v) => v is num ? v.toInt() : (int.tryParse('$v') ?? 0);
-int? _intn(dynamic v) => v == null ? null : (v is num ? v.toInt() : int.tryParse('$v'));
-String _str(dynamic v) => v?.toString() ?? '';
+import 'json_utils.dart';
 
-/// What features the account may use. Server-enforced; the UI gates off these
-/// but always handles 402/403 gracefully.
+DateTime? _date(dynamic v) => jsonDate(v);
+int _intv(dynamic v) => jsonIntOrZero(v);
+int? _intn(dynamic v) => jsonInt(v);
+String _str(dynamic v) => jsonStr(v);
+
 class NexusCapabilities {
   final bool calling;
   final bool numbers;

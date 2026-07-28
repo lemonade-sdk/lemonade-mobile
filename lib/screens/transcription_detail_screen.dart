@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_mobile/models/transcription.dart';
+import 'package:lemonade_mobile/services/audio_recorder_service.dart';
 import 'package:lemonade_mobile/widgets/audio_waveform_bar.dart';
 
 class TranscriptionDetailScreen extends ConsumerStatefulWidget {
@@ -69,15 +69,19 @@ class _TranscriptionDetailScreenState
                 _formatDuration(transcription.audioDuration!),
               ),
 
-            // Audio playback
+            // Audio playback. The stored path is absolute and goes stale
+            // when iOS relocates the app container on update — re-root it
+            // under the current documents dir before touching the file.
             if (transcription.audioFilePath != null) ...[
               const SizedBox(height: 12),
-              FutureBuilder<bool>(
-                future: File(transcription.audioFilePath!).exists(),
+              FutureBuilder<String?>(
+                future: AudioRecorderService.resolveAudioPath(
+                    transcription.audioFilePath!),
                 builder: (context, snapshot) {
-                  if (snapshot.data == true) {
+                  final path = snapshot.data;
+                  if (path != null) {
                     return AudioWaveformBar(
-                      filePath: transcription.audioFilePath!,
+                      filePath: path,
                       duration: transcription.audioDuration ?? Duration.zero,
                     );
                   }

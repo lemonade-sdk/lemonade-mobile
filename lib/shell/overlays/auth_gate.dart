@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../api/exceptions.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/app_mode_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
 /// Subscription-mode sign-in / register gate. Wired to [authProvider]. Wholly
@@ -53,7 +55,14 @@ class _AuthGateState extends ConsumerState<AuthGate> {
             email: _email.text.trim(), password: _password.text);
       }
     } catch (e) {
-      setState(() => _error = '$e');
+      if (!mounted) return;
+      // On this screen a 401 means the credentials were wrong — not an
+      // expired session.
+      final msg = (e is LemonadeApiException && e.statusCode == 401)
+          ? 'Email or password is incorrect.'
+          : friendlyError(e,
+              action: _register ? 'create your account' : 'sign in');
+      setState(() => _error = msg);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

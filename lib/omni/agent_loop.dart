@@ -2,14 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../api/lemonade_client.dart';
+import '../api/net.dart';
 import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../api/types/chat_response.dart';
 import '../api/types/tool_call.dart';
 import '../api/types/tool_definition.dart';
+import '../constants/messages.dart';
+import 'cancel_token.dart';
 import 'capability_resolver.dart';
 import 'tool_definitions.dart';
 import 'tool_executor.dart';
+
+// Re-export so existing `import agent_loop.dart` sites keep working.
+export '../api/net.dart' show isRetryableTransportError;
 
 /// Hard upper bound on tool-call iterations per user turn. Set
 /// generously (30) so the model effectively decides when it's done —
@@ -45,7 +51,14 @@ class AgentStatus extends AgentEvent {
 /// A tool was executed; its artifact (image/audio) is available now.
 class AgentArtifact extends AgentEvent {
   final Artifact artifact;
-  const AgentArtifact(this.artifact);
+
+  /// True when this artifact REPLACES the previously emitted image artifact
+  /// of this turn (edit_image applied to a generate_image result) instead of
+  /// adding a new one. Consumers rendering artifacts incrementally must swap
+  /// the prior image out, or a generate-then-edit turn shows both.
+  final bool replacesPrevious;
+
+  const AgentArtifact(this.artifact, {this.replacesPrevious = false});
 }
 
 /// The LLM invoked an app-control tool that signals the host should end
@@ -72,13 +85,17 @@ class AgentLoop {
   final String llmModelId;
   final CapabilitySnapshot capabilities;
   final OmniToolExecutor executor;
+  final CancelToken? cancelToken;
 
   AgentLoop({
     required this.client,
     required this.llmModelId,
     required this.capabilities,
     required this.executor,
+    this.cancelToken,
   });
+
+  bool get _cancelled => cancelToken?.isCancelled ?? false;
 
   /// Runs the loop. [history] is a sequence of `(role, content)` pairs where
   /// content is either a plain string or a list of OpenAI-style content parts
@@ -119,6 +136,13 @@ class AgentLoop {
     var lastAssistantText = '';
 
     for (var iteration = 0; iteration < kAgentMaxIterations; iteration++) {
+      if (_cancelled) {
+        yield AgentDone(
+          text: _humanizeReactJson(lastAssistantText),
+          artifacts: ctx.turnArtifacts,
+        );
+        return;
+      }
       // Stream the model's turn so text renders token-by-token — the SSE
       // layer assembles indexed tool-call deltas into complete ToolCalls at
       // finish, so tool-calling loses nothing by streaming. (This used to be
@@ -133,6 +157,7 @@ class AgentLoop {
       var toolCalls = const <ToolCall>[];
       lastAssistantText = '';
       var streamedAny = false;
+      var interrupted = false;
       try {
         await for (final ev in client.chat.stream(request)) {
           switch (ev) {
@@ -146,15 +171,23 @@ class AgentLoop {
             case ChatStreamFinish():
               toolCalls = ev.toolCalls;
               lastAssistantText = ev.contentSoFar;
+              // The API layer reports mid-stream truncation as
+              // finishReason 'interrupted' (partial content preserved)
+              // instead of fabricating a clean 'stop'.
+              interrupted = ev.finishReason == 'interrupted';
           }
         }
       } catch (e) {
         // The SSE connection dropped mid-flight ("Connection closed while
         // receiving data" — a proxy/node streaming hiccup, common on vision +
-        // tool turns). Silently start a fresh NON-streaming request for this
-        // same turn (what the loop did before streaming, and proven reliable)
-        // instead of surfacing the error. Reset any partially-streamed text
-        // via a status so the retried result doesn't render doubled.
+        // tool turns). For TRANSPORT-level failures only, silently start a
+        // fresh NON-streaming request for this same turn (what the loop did
+        // before streaming, and proven reliable) instead of surfacing the
+        // error. Deterministic request errors (4xx, model mismatch, auth)
+        // propagate — retrying them just re-fails slower. Reset any
+        // partially-streamed text via a status so the retried result doesn't
+        // render doubled.
+        if (!isRetryableTransportError(e)) rethrow;
         if (streamedAny) yield const AgentStatus('Thinking…');
         final response = await client.chat.create(ChatCompletionRequest(
           model: llmModelId,
@@ -164,6 +197,24 @@ class AgentLoop {
         ));
         lastAssistantText = response.message.content ?? '';
         toolCalls = response.message.toolCalls ?? const <ToolCall>[];
+        interrupted = false;
+      }
+      if (interrupted && toolCalls.isEmpty) {
+        if (lastAssistantText.isEmpty) {
+          // Truncated before any content arrived — silent non-streaming retry.
+          final response = await client.chat.create(ChatCompletionRequest(
+            model: llmModelId,
+            messages: llmMessages,
+            tools: activeTools,
+            stream: false,
+          ));
+          lastAssistantText = response.message.content ?? '';
+          toolCalls = response.message.toolCalls ?? const <ToolCall>[];
+        } else {
+          // Partial content arrived — keep it and flag the interruption.
+          lastAssistantText =
+              '$lastAssistantText\n\n${AppMessages.streamInterruptedNotice}';
+        }
       }
       if (toolCalls.isEmpty) {
         yield AgentDone(
@@ -178,29 +229,54 @@ class AgentLoop {
         content: lastAssistantText.isEmpty ? null : lastAssistantText,
       ));
 
-      // Tool calls within a single LLM iteration are independent — kick
-      // them off concurrently so research-heavy turns (e.g. two
-      // web_search calls + a find_places) don't serialize. We still
-      // apply results in the original order so the conversation thread
-      // stays deterministic.
-      final inFlight = <Future<ToolExecutionResult>>[];
+      // Execute the round's tool calls SEQUENTIALLY, in order. Tool calls in
+      // one round are NOT independent: models chain context-dependent tools
+      // (generate_image → edit_image) within a single round, and edit_image
+      // reads the generate_image result out of ctx.turnArtifacts — running
+      // them concurrently made the edit see a context missing the image.
+      //
+      // Cancellation: [cancelToken] is checked before each tool; the status
+      // yield is also a tear-down point if the consumer cancelled the stream.
       for (final tc in toolCalls) {
+        if (_cancelled) {
+          yield AgentDone(
+            text: _humanizeReactJson(lastAssistantText),
+            artifacts: ctx.turnArtifacts,
+          );
+          return;
+        }
         yield AgentStatus(_statusForTool(tc.name));
-        inFlight.add(executor.execute(tc, ctx));
-      }
-      final results = await Future.wait(inFlight);
-
-      for (var i = 0; i < toolCalls.length; i++) {
-        final tc = toolCalls[i];
-        final result = results[i];
-        final summary = _applyResult(result, ctx);
-        if (result is ImageResult || result is AudioResult) {
-          yield AgentArtifact(ctx.turnArtifacts.last);
+        if (_cancelled) {
+          yield AgentDone(
+            text: _humanizeReactJson(lastAssistantText),
+            artifacts: ctx.turnArtifacts,
+          );
+          return;
+        }
+        final result = await executor.execute(tc, ctx, isCancelled: () => _cancelled);
+        if (_cancelled) {
+          // Keep any artifact the tool already produced; stop further tools.
+          final applied = _applyResult(result, ctx);
+          if (applied.artifact != null) {
+            yield AgentArtifact(applied.artifact!,
+                replacesPrevious: applied.replacedPrevious);
+          }
+          yield AgentDone(
+            text: _humanizeReactJson(lastAssistantText),
+            artifacts: ctx.turnArtifacts,
+          );
+          return;
+        }
+        final applied = _applyResult(result, ctx);
+        final artifact = applied.artifact;
+        if (artifact != null) {
+          yield AgentArtifact(artifact,
+              replacesPrevious: applied.replacedPrevious);
         }
         if (result is EndCallResult) {
           yield const AgentEndCall();
         }
-        llmMessages.add(ApiChatMessage.tool(summary, toolCallId: tc.id));
+        llmMessages.add(ApiChatMessage.tool(applied.summary, toolCallId: tc.id));
       }
     }
 
@@ -315,10 +391,19 @@ class AgentLoop {
     return null;
   }
 
-  String _applyResult(ToolExecutionResult result, ToolExecutionContext ctx) {
+  /// Applies a tool result to the turn context. Returns the tool-message
+  /// summary for the LLM, plus the artifact this call produced (if any) and
+  /// whether it replaced a prior turn artifact — so the caller emits the
+  /// ACTUAL artifact rather than guessing from `turnArtifacts.last`.
+  ({String summary, Artifact? artifact, bool replacedPrevious}) _applyResult(
+      ToolExecutionResult result, ToolExecutionContext ctx) {
     switch (result) {
       case TextResult():
-        return result.text.isEmpty ? 'Done.' : result.text;
+        return (
+          summary: result.text.isEmpty ? 'Done.' : result.text,
+          artifact: null,
+          replacedPrevious: false,
+        );
       case ImageResult():
         final art = Artifact(
           kind: ArtifactKind.image,
@@ -330,28 +415,50 @@ class AgentLoop {
           final lastIdx = ctx.turnArtifacts.lastIndexWhere(
             (a) => a.kind == ArtifactKind.image,
           );
-          if (lastIdx >= 0) {
+          final replaced = lastIdx >= 0;
+          if (replaced) {
             ctx.turnArtifacts[lastIdx] = art;
           } else {
             ctx.turnArtifacts.add(art);
           }
-          return 'Image edited successfully.';
+          return (
+            summary: 'Image edited successfully.',
+            artifact: art,
+            replacedPrevious: replaced,
+          );
         }
         ctx.turnArtifacts.add(art);
-        return 'Image generated successfully.';
+        return (
+          summary: 'Image generated successfully.',
+          artifact: art,
+          replacedPrevious: false,
+        );
       case AudioResult():
-        ctx.turnArtifacts.add(Artifact(
+        final art = Artifact(
           kind: ArtifactKind.audio,
           mime: result.mime,
           base64Data: result.base64Data,
-        ));
-        return 'Audio generated successfully.';
+        );
+        ctx.turnArtifacts.add(art);
+        return (
+          summary: 'Audio generated successfully.',
+          artifact: art,
+          replacedPrevious: false,
+        );
       case EndCallResult():
         // Feed a confirmation back to the LLM so its final iteration knows
         // to wrap up gracefully — usually a short "Goodbye!" or similar.
-        return 'Call ending — say a brief goodbye.';
+        return (
+          summary: 'Call ending — say a brief goodbye.',
+          artifact: null,
+          replacedPrevious: false,
+        );
       case ErrorResult():
-        return 'Error: ${result.message}';
+        return (
+          summary: 'Error: ${result.message}',
+          artifact: null,
+          replacedPrevious: false,
+        );
     }
   }
 

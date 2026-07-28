@@ -106,19 +106,31 @@ class ModelDownloadsNotifier extends StateNotifier<ModelDownloadsState> {
     state = state.copyWith(active: nextActive, finished: nextFinished);
   }
 
+  /// Cancel every in-flight pull (the active server changed, so the streams
+  /// point at the wrong server). Unlike a user-initiated [cancel], this EMITS
+  /// a finish entry per dropped download so listeners (snackbar / installed
+  /// refresh) fire — a 90%-done pull used to just silently vanish.
   void _cancelAll() {
     for (final s in _subs.values) {
       s.cancel();
     }
     _subs.clear();
-    if (state.active.isNotEmpty) {
-      state = state.copyWith(active: const {});
+    if (state.active.isEmpty) return;
+    final nextFinished = Map<String, ModelDownloadFinish>.from(state.finished);
+    for (final id in state.active.keys) {
+      nextFinished[id] =
+          ModelDownloadFinish(++_seq, 'Cancelled — the active server changed');
     }
+    state = state.copyWith(active: const {}, finished: nextFinished);
   }
 
   @override
   void dispose() {
-    _cancelAll();
+    // No state writes here — just release the subscriptions.
+    for (final s in _subs.values) {
+      s.cancel();
+    }
+    _subs.clear();
     super.dispose();
   }
 }

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -8,6 +7,8 @@ import 'package:record/record.dart';
 
 import '../api/nexus/nexus_call_takeover_socket.dart';
 import 'audio_recorder_service.dart';
+import 'data_url_audio_source.dart';
+import 'voice_record_config.dart';
 
 /// Drives the human-voice takeover: streams the operator's mic (PCM16 16 kHz)
 /// up the takeover socket and plays the caller's inbound audio.
@@ -28,13 +29,25 @@ class CallTakeoverAudio {
 
   static const _flushEvery = Duration(milliseconds: 400);
 
+  // Keep at most ~2s of caller PCM (16 kHz × 2 bytes/sample). If playback
+  // falls behind, drop the oldest audio so a long takeover stays near-realtime
+  // instead of accumulating an ever-growing delay.
+  static const _maxInboundBytes = 2 * 16000 * 2;
+
   CallTakeoverAudio(this.socket);
 
   Future<void> start() async {
-    socket.connect();
+    // Fail fast if the takeover socket can't connect — a "live" takeover with
+    // no uplink is dead air for the caller, so this must propagate before the
+    // UI claims the operator is on the line.
+    await socket.connect();
 
     // Downlink: accumulate caller PCM, flush to playback on a cadence.
-    _inSub = socket.inbound.listen((pcm) => _inboundBuf.addAll(pcm));
+    _inSub = socket.inbound.listen((pcm) {
+      _inboundBuf.addAll(pcm);
+      final overflow = _inboundBuf.length - _maxInboundBytes;
+      if (overflow > 0) _inboundBuf.removeRange(0, overflow);
+    });
     _flush = Timer.periodic(_flushEvery, (_) => _flushPlayback());
 
     // Uplink: stream mic PCM16 @16k as it's captured. If the mic can't start,
@@ -44,11 +57,7 @@ class CallTakeoverAudio {
       if (!await _recorder.hasPermission()) {
         throw StateError('Microphone permission denied.');
       }
-      final stream = await _recorder.startStream(const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: 16000,
-        numChannels: 1,
-      ));
+      final stream = await _recorder.startStream(kVoicePcm16Config);
       _micSub = stream.listen((pcm) {
         if (!_muted) socket.sendPcm(pcm);
       });
@@ -73,7 +82,7 @@ class CallTakeoverAudio {
     try {
       final wav = AudioRecorderService.buildWavBytes([pcm], sampleRate: 16000);
       final dataUrl = 'data:audio/wav;base64,${base64Encode(wav)}';
-      await _player.setAudioSource(_BytesSource(dataUrl));
+      await _player.setAudioSource(DataUrlAudioSource(dataUrl));
       await _player.play();
     } catch (e) {
       debugPrint('[Takeover] playback failed: $e');
@@ -95,28 +104,5 @@ class CallTakeoverAudio {
     await _recorder.dispose();
     await _player.dispose();
     socket.close();
-  }
-}
-
-/// Minimal just_audio source from a `data:` URL (one playback burst).
-class _BytesSource extends StreamAudioSource {
-  final List<int> _bytes;
-  final String _contentType;
-
-  _BytesSource(String dataUrl)
-      : _bytes = base64Decode(dataUrl.substring(dataUrl.indexOf(',') + 1)),
-        _contentType = dataUrl.substring(5, dataUrl.indexOf(';'));
-
-  @override
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
-    start ??= 0;
-    end ??= _bytes.length;
-    return StreamAudioResponse(
-      sourceLength: _bytes.length,
-      contentLength: end - start,
-      offset: start,
-      stream: Stream.value(_bytes.sublist(start, end)),
-      contentType: _contentType,
-    );
   }
 }

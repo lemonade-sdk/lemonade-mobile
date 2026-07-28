@@ -67,7 +67,10 @@ class NexusShell extends ConsumerWidget {
                           ],
                         ),
                 ),
-                const NexusBottomNav(),
+                // Hide the tab bar while the keyboard is open so the composer
+                // isn't squeezed above nav + system bar + IME on short phones.
+                if (MediaQuery.viewInsetsOf(context).bottom == 0)
+                  const NexusBottomNav(),
               ],
             ),
             const NexusOverlayHost(),

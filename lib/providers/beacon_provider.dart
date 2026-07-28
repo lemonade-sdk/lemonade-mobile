@@ -44,6 +44,10 @@ class DiscoveredServersNotifier extends StateNotifier<List<DiscoveredServer>> {
     try {
       await service.startListening();
 
+      // Disposed while the bind was in flight — assigning the subscription
+      // or timer now would leak them (dispose() already ran its cancels).
+      if (!mounted) return;
+
       _subscription = service.onServerDiscovered.listen(
         (server) {
           _handleDiscoveredServer(server);

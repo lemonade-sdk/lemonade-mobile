@@ -10,6 +10,7 @@ import '../providers/model_defaults_provider.dart';
 import '../providers/models_provider.dart';
 import '../providers/omni_router_provider.dart';
 import '../services/duplex_voice_session.dart';
+import '../utils/friendly_error.dart';
 
 /// Phone-call-style voice conversation. Pushes as a full-screen route from the
 /// chat screen. Uses the active server + selected LLM, plus the configured ASR
@@ -146,7 +147,7 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
       await session.start();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to start: $e');
+      setState(() => _error = friendlyError(e, action: 'start the call'));
     }
   }
 

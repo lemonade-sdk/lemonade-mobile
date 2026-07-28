@@ -20,6 +20,11 @@ class DeviceStatsCard extends ConsumerWidget {
     final info = ref.watch(systemInfoProvider).valueOrNull;
     final statsAsync = ref.watch(systemStatsProvider);
     final stats = statsAsync.valueOrNull;
+    // Distinguish "still connecting" (the first poll hasn't answered yet /
+    // the poller was just re-created for a new server) from "unreachable"
+    // (several consecutive polls failed) so a cold open doesn't flash
+    // Offline. "No server selected" is handled separately below.
+    final connecting = statsAsync.isLoading;
     final reachable = stats != null;
 
     if (server == null) {
@@ -87,13 +92,22 @@ class DeviceStatsCard extends ConsumerWidget {
               ),
             ),
             Row(children: [
-              NexusStatusDot(color: reachable ? t.good : t.danger, size: 6),
+              NexusStatusDot(
+                  color: reachable
+                      ? t.good
+                      : (connecting ? t.warn : t.danger),
+                  size: 6),
               const SizedBox(width: 5),
-              Text(reachable ? 'Online' : 'Offline',
+              Text(
+                  reachable
+                      ? 'Online'
+                      : (connecting ? 'Connecting' : 'Offline'),
                   style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w600,
-                      color: reachable ? t.good : t.danger)),
+                      color: reachable
+                          ? t.good
+                          : (connecting ? t.warn : t.danger))),
             ]),
           ]),
           const SizedBox(height: 12),
@@ -149,7 +163,9 @@ class DeviceStatsCard extends ConsumerWidget {
         final n = v['name'] ?? v['Name'];
         if (n != null) names.add('$n');
       } else if (v is List) {
-        for (final e in v) collect(e);
+        for (final e in v) {
+          collect(e);
+        }
       }
     }
 

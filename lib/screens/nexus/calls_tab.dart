@@ -8,6 +8,7 @@ import 'call_transcript_screen.dart';
 import 'get_number_screen.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/gateway_gate.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -64,6 +65,7 @@ class _CallsTabState extends ConsumerState<CallsTab> {
         systemPrompt: _systemPrompt,
         objective: objective,
       );
+      if (!mounted) return;
       _toCtrl.clear();
       _toNameCtrl.clear();
       _agentCtrl.clear();
@@ -71,9 +73,9 @@ class _CallsTabState extends ConsumerState<CallsTab> {
       _systemPrompt = '';
       ref.invalidate(callTasksProvider);
       ref.invalidate(activeCallTaskProvider);
-      if (mounted) ref.read(overlayProvider.notifier).openLiveCall(task.id);
+      ref.read(overlayProvider.notifier).openLiveCall(task.id);
     } catch (e) {
-      _toast('Could not place call: $e');
+      _toast(friendlyError(e, action: 'place the call'));
     } finally {
       if (mounted) setState(() => _placing = false);
     }
@@ -124,7 +126,7 @@ class _CallsTabState extends ConsumerState<CallsTab> {
             loading: () => const Padding(
                 padding: EdgeInsets.all(24),
                 child: Center(child: CircularProgressIndicator())),
-            error: (e, _) => _error(context, '$e'),
+            error: (e, _) => _error(context, e),
           ),
         ],
       ),
@@ -446,12 +448,13 @@ class _CallsTabState extends ConsumerState<CallsTab> {
     );
   }
 
-  Widget _error(BuildContext context, String msg) {
+  Widget _error(BuildContext context, Object error) {
     final t = context.nexus;
     // A raw "capability_required 401" means the account has no voice plan —
     // testers saw the literal exception text here. Show the upsell instead.
+    final raw = '$error';
     final needsPlan =
-        msg.contains('capability_required') || msg.contains('status=401');
+        raw.contains('capability_required') || raw.contains('status=401');
     if (needsPlan) {
       return NexusCard(
         radius: 18,
@@ -492,7 +495,33 @@ class _CallsTabState extends ConsumerState<CallsTab> {
     }
     return NexusCard(
       radius: 18,
-      child: Text(msg, style: TextStyle(fontSize: 12.5, color: t.danger)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(friendlyError(error, action: 'load your recent calls'),
+              style: TextStyle(fontSize: 12.5, height: 1.4, color: t.danger)),
+          const SizedBox(height: 12),
+          GestureDetector(
+            onTap: () {
+              ref.invalidate(callTasksProvider);
+              ref.invalidate(activeCallTaskProvider);
+            },
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: t.accent,
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Text('Retry',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

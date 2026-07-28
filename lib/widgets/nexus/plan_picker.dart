@@ -9,6 +9,8 @@ import '../../api/nexus/nexus_billing_models.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/billing_providers.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
+import 'error_retry.dart';
 import 'nexus_form.dart';
 
 /// Plan + add-on picker, pulled from `GET /plans` (the live catalog).
@@ -114,8 +116,10 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
           loading: () => const Padding(
               padding: EdgeInsets.all(24),
               child: Center(child: CircularProgressIndicator())),
-          error: (e, _) => Text('Could not load plans: $e',
-              style: TextStyle(color: t.danger, fontSize: 12.5)),
+          error: (e, _) => ErrorRetry(
+              error: e,
+              action: 'load the plans',
+              onRetry: () => ref.invalidate(plansProvider)),
           data: (catalog) {
             // Anything the account already OWNS is always visible, even when
             // the audience/segment filter would hide it — e.g. a Personal
@@ -493,7 +497,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
         _toast('Checkout failed: ${e.message}');
       }
     } catch (e) {
-      _toast('Checkout failed: $e');
+      _toast(friendlyError(e, action: 'start checkout'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -508,7 +512,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
       _refresh();
       _toast('Plan changed to $plan.');
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'change the plan'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -523,7 +527,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
       _refresh();
       _toast('Added.');
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'add the add-on'));
     } finally {
       if (mounted) setState(() => _busyKey = null);
     }
@@ -538,7 +542,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
       _refresh();
       _toast('Removed.');
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'remove the add-on'));
     } finally {
       if (mounted) setState(() => _busyKey = null);
     }
@@ -594,7 +598,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
           ? 'Subscription will cancel at period end.'
           : 'Subscription canceled.');
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'cancel the subscription'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -609,7 +613,7 @@ class _PlanPickerState extends ConsumerState<PlanPicker> {
         await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       }
     } catch (e) {
-      _toast('Portal failed: $e');
+      _toast(friendlyError(e, action: 'open the billing portal'));
     }
   }
 }

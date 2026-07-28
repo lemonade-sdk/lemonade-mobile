@@ -11,11 +11,18 @@ class FoldersNotifier extends StateNotifier<List<Folder>> {
     _load();
   }
 
+  /// Set on the first user mutation — a late-resolving [_load] must not
+  /// overwrite state that already contains changes made during the
+  /// cold-start window.
+  bool _userDirty = false;
+
   Future<void> _load() async {
     final all = await FolderRepository.loadAll();
+    if (_userDirty) return;
     if (all.isEmpty) {
       // Create Inbox on first run.
       final inbox = await FolderRepository.ensureInbox();
+      if (_userDirty) return;
       state = [inbox];
       return;
     }
@@ -23,6 +30,7 @@ class FoldersNotifier extends StateNotifier<List<Folder>> {
   }
 
   Future<Folder> create({String? parentFolderId, String name = 'New Folder'}) async {
+    _userDirty = true;
     final folder = await FolderRepository.create(
       name: name,
       parentFolderId: parentFolderId,
@@ -33,6 +41,7 @@ class FoldersNotifier extends StateNotifier<List<Folder>> {
   }
 
   Future<void> rename(String folderId, String newName) async {
+    _userDirty = true;
     await FolderRepository.rename(folderId, newName);
     state = state
         .map((f) => f.id == folderId ? f.copyWith(name: newName, updatedAt: DateTime.now()) : f)
@@ -40,6 +49,7 @@ class FoldersNotifier extends StateNotifier<List<Folder>> {
   }
 
   Future<void> remove(String folderId) async {
+    _userDirty = true;
     await FolderRepository.remove(folderId);
     state = state.where((f) => f.id != folderId).toList(growable: false);
     // Folders that previously parented to this one may have been promoted; reload to be safe.
@@ -48,6 +58,7 @@ class FoldersNotifier extends StateNotifier<List<Folder>> {
   }
 
   Future<void> move(String folderId, String? newParentId) async {
+    _userDirty = true;
     await FolderRepository.move(folderId: folderId, newParentId: newParentId);
     state = state
         .map((f) => f.id == folderId

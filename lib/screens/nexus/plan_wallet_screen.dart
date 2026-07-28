@@ -8,6 +8,8 @@ import '../../providers/account_provider.dart';
 import '../../providers/billing_providers.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
+import '../../widgets/nexus/error_retry.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 import '../../widgets/nexus/plan_picker.dart';
@@ -58,7 +60,7 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
         _toast('Finish in the browser, then pull to refresh.');
       }
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'start the top-up'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -77,7 +79,7 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
           ? 'Not enough balance — add funds first.'
           : e.message);
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'start the membership'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -103,18 +105,18 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
     try {
       await client.cancelMembership(id);
+      if (!mounted) return;
       _refresh();
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'cancel the membership'));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final t = context.nexus;
     final entAsync = ref.watch(entitlementsProvider);
     return NexusPage(
       title: 'Plan & wallet',
@@ -122,10 +124,15 @@ class _PlanWalletScreenState extends ConsumerState<PlanWalletScreen> {
         onRefresh: () async => _refresh(),
         child: entAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
+          // ListView keeps pull-to-refresh working on the error state too.
           error: (e, _) => ListView(children: [
             Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('$e', style: TextStyle(color: t.danger)))
+              padding: const EdgeInsets.all(24),
+              child: ErrorRetry(
+                  error: e,
+                  action: 'load your plan & wallet',
+                  onRetry: _refresh),
+            ),
           ]),
           data: (ent) => Scrollbar(
             controller: _scroll,

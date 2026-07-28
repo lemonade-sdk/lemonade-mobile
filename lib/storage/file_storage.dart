@@ -3,8 +3,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+import 'database.dart';
+import 'entities/attachment_entity.dart';
 
 /// Per-kind file storage rooted at `{appDocDir}/<kind>/`.
 ///
@@ -25,8 +29,26 @@ class AttachmentStore {
     final hash = sha256.convert(bytes).toString();
     final path = p.join(root.path, '$hash$extension');
     final file = File(path);
-    if (!await file.exists()) {
-      await file.writeAsBytes(bytes, flush: true);
+    // Dedup hit — but treat a zero-length file as missing: it's a truncated
+    // write from a previous kill, and skipping here would make the corruption
+    // permanent.
+    if (await file.exists() && (await file.length()) > 0) {
+      return path;
+    }
+    // Write to a temp sibling then rename into place so a kill mid-write can
+    // never leave a partial file at the content-addressed path.
+    final tmp = File('$path.tmp-$pid-${DateTime.now().microsecondsSinceEpoch}');
+    await tmp.writeAsBytes(bytes, flush: true);
+    try {
+      await tmp.rename(path);
+    } catch (_) {
+      // Rename failed (e.g. lost a race with a concurrent writer of the same
+      // content — their copy is byte-identical). Drop our temp file; only
+      // rethrow if the destination genuinely doesn't exist.
+      try {
+        await tmp.delete();
+      } catch (_) {}
+      if (!await file.exists()) rethrow;
     }
     return path;
   }
@@ -62,6 +84,45 @@ class AttachmentStore {
     if (!await f.exists()) return false;
     await f.delete();
     return true;
+  }
+
+  /// Conservative GC for attachment files orphaned by deleted chats (chat
+  /// deletion removes the DB rows but historically never the files).
+  ///
+  /// Sweeps the images dir and deletes files that (a) are not referenced by
+  /// any [AttachmentEntity] row and (b) are older than [minAge] — the age
+  /// guard avoids racing an in-flight save whose file lands on disk before
+  /// its row commits. Stored paths can be stale absolute paths from a
+  /// previous iOS container, so referenced-ness is keyed on the
+  /// content-addressed basename (see [resolveExisting]).
+  static Future<({int deleted, int failed})> gcOrphans({
+    Duration minAge = const Duration(hours: 24),
+  }) async {
+    if (!AppDatabase.isOpen) return (deleted: 0, failed: 0);
+    final referenced = (await AppDatabase.instance.attachments
+            .where()
+            .filePathProperty()
+            .findAll())
+        .map(p.basename)
+        .toSet();
+
+    final root = await _rootFor('image');
+    final cutoff = DateTime.now().subtract(minAge);
+    var deleted = 0;
+    var failed = 0;
+    await for (final entry in root.list(followLinks: false)) {
+      if (entry is! File) continue;
+      if (referenced.contains(p.basename(entry.path))) continue;
+      try {
+        final stat = await entry.stat();
+        if (stat.modified.isAfter(cutoff)) continue;
+        await entry.delete();
+        deleted++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    return (deleted: deleted, failed: failed);
   }
 
   /// Resolve a stored attachment path to an existing file. iOS relocates the

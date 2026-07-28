@@ -4,9 +4,12 @@ import '../api/lemonade_client.dart';
 import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../api/types/chat_response.dart';
+import '../constants/messages.dart';
 import '../models/chat_message.dart' as ui;
 import '../omni/agent_loop.dart';
+import '../omni/cancel_token.dart';
 import '../omni/capability_resolver.dart';
+import '../omni/message_mapper.dart';
 import '../omni/tool_executor.dart';
 
 /// Orchestrates a chat turn against the active server. Two paths:
@@ -19,16 +22,18 @@ class ChatService {
   final LemonadeApiClient client;
   ChatService(this.client);
 
-  /// Rough character budget for the wire history (~6k tokens at ~4 chars per
-  /// token). Local models often run 4k–8k-token contexts; sending the whole
-  /// unbounded conversation each turn is what made chats work for a few
-  /// rounds and then start failing with HTTP 500s once the prompt outgrew
-  /// the model's context window.
+  /// Default character budget for the wire history when the model doesn't
+  /// advertise [maxContextTokens] (~6k tokens at ~4 chars/token). Local
+  /// models often run 4k–8k-token contexts; unbounded history is what made
+  /// chats die with HTTP 500 after a few rounds.
   static const int kHistoryCharBudget = 24000;
 
   /// Run a chat turn. Caller passes the full conversation [history] (already
   /// containing the new user message). Older turns beyond the char budget are
   /// dropped from the wire request (the on-device chat log keeps everything).
+  ///
+  /// [maxContextTokens] (from `ModelInfo.maxContextWindow`) sizes the budget
+  /// when known; ~3 chars/token with 25% headroom left for system/tools.
   Stream<ChatTurnEvent> run({
     required String llmModel,
     required List<ui.ChatMessage> history,
@@ -36,35 +41,121 @@ class ChatService {
     CapabilitySnapshot? capabilities,
     OmniToolExecutor? executor,
     String? extraSystemPrompt,
-  }) {
-    final trimmed = _trimHistory(history);
+    int? maxContextTokens,
+    CancelToken? cancelToken,
+  }) async* {
+    final budget = _charBudgetFor(maxContextTokens);
+    // Expand file-backed attachment refs to data URLs for the wire only
+    // (cold-start history keeps paths in RAM until here).
+    final resolved = await _resolveMediaForWire(history);
+    final trimmed = _trimHistory(_sanitizeHistory(resolved), budget);
     final useOmni = omniRouterEnabled &&
         capabilities != null &&
         capabilities.isUsable &&
         executor != null;
 
     if (useOmni) {
-      return _runOmni(
+      yield* _runOmni(
         llmModel: llmModel,
         history: trimmed,
         capabilities: capabilities,
         executor: executor,
         extraSystemPrompt: extraSystemPrompt,
+        cancelToken: cancelToken,
       );
+    } else {
+      yield* _runPlainStream(llmModel: llmModel, history: trimmed);
     }
-    return _runPlainStream(llmModel: llmModel, history: trimmed);
+  }
+
+  /// Load disk-backed attachments into data URLs for the model API.
+  Future<List<ui.ChatMessage>> _resolveMediaForWire(
+      List<ui.ChatMessage> history) async {
+    final out = <ui.ChatMessage>[];
+    for (final m in history) {
+      final parts = <ui.MessageContent>[];
+      for (final c in m.content) {
+        if ((c.type == ui.MessageContentType.image ||
+                c.type == ui.MessageContentType.audio) &&
+            c.isFileRef) {
+          try {
+            parts.add(ui.MessageContent(
+                type: c.type, value: await c.resolveDataUrl()));
+          } catch (_) {
+            // Drop unreadable attachment for the wire; UI still has the ref.
+          }
+        } else {
+          parts.add(c);
+        }
+      }
+      out.add(ui.ChatMessage(
+        id: m.id,
+        role: m.role,
+        content: parts,
+        timestamp: m.timestamp,
+      ));
+    }
+    return out;
+  }
+
+  /// Map a token context window to a character budget for history trimming.
+  static int _charBudgetFor(int? maxContextTokens) {
+    if (maxContextTokens == null || maxContextTokens <= 0) {
+      return kHistoryCharBudget;
+    }
+    // ~3 chars/token for mixed text; reserve ~25% for system + tools + reply.
+    final chars = ((maxContextTokens * 3) * 0.75).floor();
+    return chars.clamp(8000, 200000);
+  }
+
+  /// Remove error/interruption notices (assistant-bubble lines marked with
+  /// [AppMessages.errorNoticeMarker]) from the wire history. They're UI-only:
+  /// replaying "Can't reach the server…" back to the model as assistant
+  /// content pollutes the context on every later turn. Assistant messages
+  /// that were PURE error bubbles are dropped entirely.
+  List<ui.ChatMessage> _sanitizeHistory(List<ui.ChatMessage> history) {
+    final out = <ui.ChatMessage>[];
+    for (final m in history) {
+      final hasMarker = m.content.any((c) =>
+          c.type == ui.MessageContentType.text &&
+          c.value.contains(AppMessages.errorNoticeMarker));
+      if (!hasMarker) {
+        out.add(m);
+        continue;
+      }
+      final parts = <ui.MessageContent>[];
+      for (final c in m.content) {
+        if (c.type != ui.MessageContentType.text) {
+          parts.add(c);
+          continue;
+        }
+        final stripped = AppMessages.stripErrorNotices(c.value);
+        if (stripped.isNotEmpty) {
+          parts.add(ui.MessageContent(
+              type: ui.MessageContentType.text, value: stripped));
+        }
+      }
+      if (parts.isEmpty) continue;
+      out.add(ui.ChatMessage(
+        id: m.id,
+        role: m.role,
+        content: parts,
+        timestamp: m.timestamp,
+      ));
+    }
+    return out;
   }
 
   /// Keep the most recent messages that fit the char budget. The newest
   /// message is always kept, and we prefer starting the window on a user turn
   /// so the model doesn't see a conversation opening mid-answer.
-  List<ui.ChatMessage> _trimHistory(List<ui.ChatMessage> history) {
+  List<ui.ChatMessage> _trimHistory(List<ui.ChatMessage> history, int budget) {
     if (history.isEmpty) return history;
     var used = 0;
     var start = history.length;
     for (var i = history.length - 1; i >= 0; i--) {
       final cost = history[i].textContent.length + 64; // ≈ per-message overhead
-      if (start < history.length && used + cost > kHistoryCharBudget) break;
+      if (start < history.length && used + cost > budget) break;
       start = i;
       used += cost;
     }
@@ -81,33 +172,42 @@ class ChatService {
     required CapabilitySnapshot capabilities,
     required OmniToolExecutor executor,
     String? extraSystemPrompt,
+    CancelToken? cancelToken,
   }) async* {
     final loop = AgentLoop(
       client: client,
       llmModelId: llmModel,
       capabilities: capabilities,
       executor: executor,
+      cancelToken: cancelToken,
     );
 
     final agentMessages = history.map(_toAgentMessage).toList(growable: false);
 
-    await for (final event in loop.run(
-      history: agentMessages,
-      extraSystemPrompt: extraSystemPrompt,
-    )) {
-      switch (event) {
-        case AgentDelta():
-          yield ChatTurnEvent.tokens(event.text);
-        case AgentStatus():
-          yield ChatTurnEvent.status(event.message);
-        case AgentArtifact():
-          yield ChatTurnEvent.artifact(event.artifact);
-        case AgentEndCall():
-          // end_call is a voice-mode control signal; plain chat ignores it.
-          break;
-        case AgentDone():
-          yield ChatTurnEvent.done(text: event.text, artifacts: event.artifacts);
+    try {
+      await for (final event in loop.run(
+        history: agentMessages,
+        extraSystemPrompt: extraSystemPrompt,
+      )) {
+        switch (event) {
+          case AgentDelta():
+            yield ChatTurnEvent.tokens(event.text);
+          case AgentStatus():
+            yield ChatTurnEvent.status(event.message);
+          case AgentArtifact():
+            yield ChatTurnEvent.artifact(event.artifact,
+                replacesPrevious: event.replacesPrevious);
+          case AgentEndCall():
+            // end_call is a voice-mode control signal; plain chat ignores it.
+            break;
+          case AgentDone():
+            yield ChatTurnEvent.done(
+                text: event.text, artifacts: event.artifacts);
+        }
       }
+    } on TurnCancelledException {
+      // Stop pressed mid-tools — surface whatever we already had as done.
+      yield ChatTurnEvent.done(text: '', artifacts: const []);
     }
   }
 
@@ -119,6 +219,7 @@ class ChatService {
 
     final buf = StringBuffer();
     var streamedAny = false;
+    var interrupted = false;
     try {
       final stream = client.chat.stream(ChatCompletionRequest(
         model: llmModel,
@@ -135,38 +236,59 @@ class ChatService {
             // Plain mode: ignore tool deltas (we didn't request tools).
             break;
           case ChatStreamFinish():
-            yield ChatTurnEvent.done(text: buf.toString(), artifacts: const []);
+            // The API layer reports mid-stream truncation as finishReason
+            // 'interrupted' (partial content preserved) instead of
+            // fabricating a clean 'stop'.
+            interrupted = ev.finishReason == 'interrupted';
+            if (!interrupted) {
+              yield ChatTurnEvent.done(text: buf.toString(), artifacts: const []);
+            }
         }
       }
     } catch (e) {
-      // SSE dropped mid-flight — silently retry once as a blocking request
-      // (a clean status resets any partial text the UI already rendered).
-      if (streamedAny) yield ChatTurnEvent.status('Thinking…');
+      // Only TRANSPORT-level drops (socket died, timeout, truncated SSE) get
+      // the silent retry — deterministic request errors (4xx, model
+      // mismatch, auth) propagate to the caller's error handling.
+      if (!isRetryableTransportError(e)) rethrow;
+      if (streamedAny) {
+        // Partial content already rendered — keep it, flag the interruption.
+        yield ChatTurnEvent.done(
+          text: '$buf\n\n${AppMessages.streamInterruptedNotice}',
+          artifacts: const [],
+        );
+        return;
+      }
       final response = await client.chat.create(ChatCompletionRequest(
         model: llmModel,
         messages: apiMessages,
         stream: false,
       ));
       yield ChatTurnEvent.done(
-          text: response.message.content ?? buf.toString(),
-          artifacts: const []);
+          text: response.message.content ?? '', artifacts: const []);
+      return;
+    }
+    if (interrupted) {
+      if (streamedAny) {
+        // Partial content arrived — keep it and append the interruption
+        // notice (marked so it's stripped from later model payloads).
+        yield ChatTurnEvent.done(
+          text: '$buf\n\n${AppMessages.streamInterruptedNotice}',
+          artifacts: const [],
+        );
+      } else {
+        // Truncated before any content — silent non-streaming retry.
+        final response = await client.chat.create(ChatCompletionRequest(
+          model: llmModel,
+          messages: apiMessages,
+          stream: false,
+        ));
+        yield ChatTurnEvent.done(
+            text: response.message.content ?? '', artifacts: const []);
+      }
     }
   }
 
-  AgentMessage _toAgentMessage(ui.ChatMessage m) {
-    final role = m.isUser ? 'user' : 'assistant';
-    if (!m.hasImages) {
-      return AgentMessage(role: role, text: m.textContent);
-    }
-    final parts = <ApiContentPart>[];
-    if (m.textContent.isNotEmpty) parts.add(ApiContentPart.text(m.textContent));
-    for (final c in m.content) {
-      if (c.type == ui.MessageContentType.image && c.value.startsWith('data:')) {
-        parts.add(ApiContentPart.imageUrl(c.value));
-      }
-    }
-    return AgentMessage(role: role, parts: parts);
-  }
+  AgentMessage _toAgentMessage(ui.ChatMessage m) => agentMessageFromUi(m);
 
   /// Build the wire history for plain chat, keeping the (large) base64 image
   /// parts ONLY on the most recent image-bearing message. Older images collapse
@@ -215,7 +337,8 @@ sealed class ChatTurnEvent {
 
   factory ChatTurnEvent.tokens(String delta) = ChatTokens;
   factory ChatTurnEvent.status(String message) = ChatStatus;
-  factory ChatTurnEvent.artifact(Artifact artifact) = ChatArtifact;
+  factory ChatTurnEvent.artifact(Artifact artifact, {bool replacesPrevious}) =
+      ChatArtifact;
   factory ChatTurnEvent.done({required String text, required List<Artifact> artifacts}) = ChatDone;
 }
 
@@ -231,7 +354,12 @@ class ChatStatus extends ChatTurnEvent {
 
 class ChatArtifact extends ChatTurnEvent {
   final Artifact artifact;
-  const ChatArtifact(this.artifact);
+
+  /// True when this artifact replaces the previously emitted image artifact
+  /// of the turn (edit_image over a generate_image) instead of adding one.
+  final bool replacesPrevious;
+
+  const ChatArtifact(this.artifact, {this.replacesPrevious = false});
 }
 
 class ChatDone extends ChatTurnEvent {

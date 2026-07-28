@@ -10,7 +10,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../exceptions.dart';
+import '../http_errors.dart';
+import '../net.dart';
+import '../url_utils.dart';
 import 'nexus_account_client.dart' show kNexusGatewayBaseUrl;
 
 /// Base for token-authenticated gateway clients. Construct with the account
@@ -22,18 +24,9 @@ abstract class NexusGatewayClient {
   NexusGatewayClient({required this.token, http.Client? client})
       : _http = client ?? http.Client();
 
-  // ── URL helpers (identical normalization to NexusAccountClient) ──────
-  String get apiBase {
-    String url = kNexusGatewayBaseUrl.trim();
-    if (!url.contains('://')) url = 'https://$url';
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-    if (url.endsWith('/api/v1')) return url;
-    if (url.endsWith('/v1')) return url;
-    if (url.endsWith('/api')) return '$url/v1';
-    return '$url/api/v1';
-  }
+  // ── URL helpers (shared with NexusAccountClient via normalizeApiV1Base) ──
+  String get apiBase =>
+      normalizeApiV1Base(kNexusGatewayBaseUrl, assumeHttps: true);
 
   Uri uri(String path, [Map<String, dynamic>? query]) {
     final base = apiBase;
@@ -56,39 +49,56 @@ abstract class NexusGatewayClient {
       };
 
   // ── JSON verbs ──────────────────────────────────────────────────────
-  Future<Map<String, dynamic>> getJson(Uri u) => _wrap(u.path, () async {
-        final resp = await _http.get(u, headers: _jsonHeaders);
-        _ensureOk(resp, u);
-        return _decodeObject(resp.body);
+  // GETs are idempotent: default timeout + transient-error retry with backoff.
+  // Mutations (POST/PUT/DELETE) are single-shot — a resend could double-order
+  // a number, double-charge a top-up, etc. — with a timeout only.
+  Future<Map<String, dynamic>> getJson(Uri u, {Duration? timeout}) =>
+      _wrap(u.path, () {
+        return retryTransientGet(() async {
+          final resp = await _http
+              .get(u, headers: _jsonHeaders)
+              .timeout(timeout ?? kDefaultGetTimeout);
+          _ensureOk(resp, u);
+          return _decodeObject(resp.body);
+        });
       });
 
   Future<Map<String, dynamic>> postJson(Uri u,
-          [Map<String, dynamic> body = const {}]) =>
+          [Map<String, dynamic> body = const {}, Duration? timeout]) =>
       _wrap(u.path, () async {
-        final resp =
-            await _http.post(u, headers: _jsonHeaders, body: jsonEncode(body));
+        final resp = await _http
+            .post(u, headers: _jsonHeaders, body: jsonEncode(body))
+            .timeout(timeout ?? kDefaultMutationTimeout);
         _ensureOk(resp, u);
         return _decodeObject(resp.body);
       });
 
   Future<Map<String, dynamic>> putJson(Uri u,
-          [Map<String, dynamic> body = const {}]) =>
+          [Map<String, dynamic> body = const {}, Duration? timeout]) =>
       _wrap(u.path, () async {
-        final resp =
-            await _http.put(u, headers: _jsonHeaders, body: jsonEncode(body));
+        final resp = await _http
+            .put(u, headers: _jsonHeaders, body: jsonEncode(body))
+            .timeout(timeout ?? kDefaultMutationTimeout);
         _ensureOk(resp, u);
         return _decodeObject(resp.body);
       });
 
-  Future<void> delete(Uri u) => _wrap(u.path, () async {
-        final resp = await _http.delete(u, headers: _jsonHeaders);
+  Future<void> delete(Uri u, {Duration? timeout}) => _wrap(u.path, () async {
+        final resp = await _http
+            .delete(u, headers: _jsonHeaders)
+            .timeout(timeout ?? kDefaultMutationTimeout);
         _ensureOk(resp, u);
       });
 
-  Future<Uint8List> getBytes(Uri u) => _wrap(u.path, () async {
-        final resp = await _http.get(u, headers: _authHeaders);
-        _ensureOk(resp, u);
-        return resp.bodyBytes;
+  Future<Uint8List> getBytes(Uri u, {Duration? timeout}) =>
+      _wrap(u.path, () {
+        return retryTransientGet(() async {
+          final resp = await _http
+              .get(u, headers: _authHeaders)
+              .timeout(timeout ?? kDefaultUploadTimeout);
+          _ensureOk(resp, u);
+          return resp.bodyBytes;
+        });
       });
 
   /// Multipart upload (used for Knowledge PDF ingest).
@@ -99,6 +109,7 @@ abstract class NexusGatewayClient {
     required String filename,
     required List<int> bytes,
     String? contentType,
+    Duration? timeout,
   }) =>
       _wrap(u.path, () async {
         final req = http.MultipartRequest('POST', u)
@@ -106,79 +117,28 @@ abstract class NexusGatewayClient {
           ..fields.addAll(fields)
           ..files.add(http.MultipartFile.fromBytes(fileField, bytes,
               filename: filename));
-        final streamed = await _http.send(req);
-        final resp = await http.Response.fromStream(streamed);
+        final streamed =
+            await _http.send(req).timeout(timeout ?? kDefaultUploadTimeout);
+        final resp = await http.Response.fromStream(streamed)
+            .timeout(timeout ?? kDefaultUploadTimeout);
         _ensureOk(resp, u);
         return _decodeObject(resp.body);
       });
 
   void close() => _http.close();
 
-  // ── Decoding / errors ───────────────────────────────────────────────
-  Map<String, dynamic> _decodeObject(String body) {
-    if (body.isEmpty) return const {};
-    final decoded = jsonDecode(body);
-    if (decoded is Map<String, dynamic>) return decoded;
-    return {'data': decoded};
-  }
+  // ── Decoding / errors (shared with account + lemonade clients) ──────
+  Map<String, dynamic> _decodeObject(String body) => decodeJsonObject(body);
 
   void _ensureOk(http.Response resp, Uri u) {
     final status = resp.statusCode;
-    if (status >= 200 && status < 300) return;
-    debugPrint('[NexusGateway] $status ${u.path} — '
-        '${resp.body.isEmpty ? '(empty)' : resp.body}');
-    final message = _extractError(resp.body) ?? 'HTTP $status';
-    switch (status) {
-      case 401:
-      case 403:
-        throw UnauthorizedException(message, endpoint: u.path);
-      case 404:
-        throw NotFoundException(message, endpoint: u.path);
-      default:
-        throw ServerException(message, statusCode: status, endpoint: u.path);
+    if (status < 200 || status >= 300) {
+      debugPrint('[NexusGateway] $status ${u.path} — '
+          '${resp.body.isEmpty ? '(empty)' : resp.body}');
     }
+    ensureHttpOk(status, resp.body, u.path);
   }
 
-  String? _extractError(String body) {
-    if (body.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) {
-        // Gateway errors often carry BOTH a machine code (`error`, e.g.
-        // "voice_node_error") and the human reason (`message`, e.g. "all
-        // lines busy…"). Returning the first key found hid the reason —
-        // prefer the message and append the code for context.
-        final code = decoded['error'];
-        for (final key in ['message', 'detail', 'title']) {
-          final v = decoded[key];
-          if (v is String && v.isNotEmpty) {
-            return (code is String && code.isNotEmpty && code != v)
-                ? '$v ($code)'
-                : v;
-          }
-        }
-        if (code is String && code.isNotEmpty) return code;
-        final errors = decoded['errors'];
-        if (errors is List && errors.isNotEmpty) {
-          return errors.map((e) => e.toString()).join('; ');
-        }
-        if (errors is Map && errors.isNotEmpty) {
-          return errors.values.map((v) => '$v').join('; ');
-        }
-      }
-    } catch (_) {}
-    return body.length > 400 ? body.substring(0, 400) : body;
-  }
-
-  Future<T> _wrap<T>(String endpoint, Future<T> Function() run) async {
-    try {
-      return await run();
-    } on LemonadeApiException {
-      rethrow;
-    } on TimeoutException catch (e) {
-      throw ServerException('Request timed out', endpoint: endpoint, cause: e);
-    } catch (e) {
-      throw ServerException('Network error: $e', endpoint: endpoint, cause: e);
-    }
-  }
+  Future<T> _wrap<T>(String endpoint, Future<T> Function() run) =>
+      withTransportMapping(endpoint, run);
 }

@@ -6,7 +6,10 @@
 library;
 
 export 'exceptions.dart';
+export 'http_errors.dart';
 export 'lemonade_client.dart';
+export 'net.dart';
+export 'url_utils.dart';
 export 'sse/sse_parser.dart';
 export 'sse/tool_call_assembler.dart';
 export 'types/audio_request.dart';

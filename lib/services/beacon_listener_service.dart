@@ -37,8 +37,11 @@ class BeaconListenerService {
       _isListening = true;
       _socketSub = _socket!.listen(
         _onSocketEvent,
-        onError: (_) {},
-        onDone: () {},
+        // A socket error/close would otherwise leave `_isListening == true`
+        // with a dead socket — discovery silently gone until app restart.
+        // Reset state so the next startListening() can re-bind.
+        onError: (_) => _resetSocket(),
+        onDone: _resetSocket,
       );
     } catch (_) {
       // Bind failure typically means a same-machine Lemonade server already
@@ -101,12 +104,18 @@ class BeaconListenerService {
     }
   }
 
-  void stopListening() {
+  /// Tear down a dead socket so [isListening] reads false and a later
+  /// [startListening] can bind a fresh one.
+  void _resetSocket() {
     _isListening = false;
     _socketSub?.cancel();
     _socketSub = null;
     _socket?.close();
     _socket = null;
+  }
+
+  void stopListening() {
+    _resetSocket();
   }
 
   void dispose() {

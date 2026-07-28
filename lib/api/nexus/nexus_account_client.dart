@@ -20,7 +20,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../exceptions.dart';
+import '../http_errors.dart';
+import '../net.dart';
+import '../url_utils.dart';
 import 'nexus_account_models.dart';
 
 /// The managed subscription gateway. Hardcoded: this is not a local AI server.
@@ -41,20 +43,9 @@ class NexusAccountClient {
   NexusAccountClient({this.token, http.Client? client})
       : _http = client ?? http.Client();
 
-  // ── URL helpers ─────────────────────────────────────────────────────
-  // Mirrors ServerConfig.apiUrl: normalize the hardcoded gateway to a
-  // `/api/v1` base.
-  String get _apiBase {
-    String url = kNexusGatewayBaseUrl.trim();
-    if (!url.contains('://')) url = 'https://$url';
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-    if (url.endsWith('/api/v1')) return url;
-    if (url.endsWith('/v1')) return url;
-    if (url.endsWith('/api')) return '$url/v1';
-    return '$url/api/v1';
-  }
+  // ── URL helpers (shared normalizeApiV1Base) ─────────────────────────
+  String get _apiBase =>
+      normalizeApiV1Base(kNexusGatewayBaseUrl, assumeHttps: true);
 
   Uri _uri(String path) {
     final base = _apiBase;
@@ -229,9 +220,11 @@ class NexusAccountClient {
   // ── Core request helpers ────────────────────────────────────────────
 
   Future<Map<String, dynamic>> _postJson(Uri uri, Map<String, dynamic> body) {
+    // Mutations are single-shot (no retry) — a resend could duplicate work.
     return _withErrorMapping(uri.path, () async {
-      final resp =
-          await _http.post(uri, headers: _jsonHeaders, body: jsonEncode(body));
+      final resp = await _http
+          .post(uri, headers: _jsonHeaders, body: jsonEncode(body))
+          .timeout(kDefaultMutationTimeout);
       _logIfError(resp, uri);
       _ensureOk(resp.statusCode, resp.body, uri.path);
       return _decodeJsonObject(resp.body);
@@ -239,11 +232,16 @@ class NexusAccountClient {
   }
 
   Future<Map<String, dynamic>> _getJson(Uri uri) {
-    return _withErrorMapping(uri.path, () async {
-      final resp = await _http.get(uri, headers: _jsonHeaders);
-      _logIfError(resp, uri);
-      _ensureOk(resp.statusCode, resp.body, uri.path);
-      return _decodeJsonObject(resp.body);
+    // Idempotent GET: retried on transient transport errors with backoff.
+    return _withErrorMapping(uri.path, () {
+      return retryTransientGet(() async {
+        final resp = await _http
+            .get(uri, headers: _jsonHeaders)
+            .timeout(kDefaultGetTimeout);
+        _logIfError(resp, uri);
+        _ensureOk(resp.statusCode, resp.body, uri.path);
+        return _decodeJsonObject(resp.body);
+      });
     });
   }
 
@@ -257,76 +255,11 @@ class NexusAccountClient {
 
   // ── Error handling (mirrors LemonadeApiClient) ──────────────────────
 
-  void _ensureOk(int status, String body, String endpoint) {
-    if (status >= 200 && status < 300) return;
-    final message = _extractErrorMessage(body) ?? 'HTTP $status';
-    switch (status) {
-      case 401:
-      case 403:
-        throw UnauthorizedException(message, endpoint: endpoint);
-      case 404:
-        throw NotFoundException(message, endpoint: endpoint);
-      default:
-        // 400 (validation) and 5xx → ServerException carrying the server text.
-        throw ServerException(message, statusCode: status, endpoint: endpoint);
-    }
-  }
+  void _ensureOk(int status, String body, String endpoint) =>
+      ensureHttpOk(status, body, endpoint);
 
-  /// Extracts a human message from the gateway's error envelopes. The C# router
-  /// returns {error, errors[]}; FastAPI-style services use {detail}; some use
-  /// {message}. Concatenate field-level `errors` when present.
-  String? _extractErrorMessage(String body) {
-    if (body.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) {
-        final parts = <String>[];
-        final err = decoded['error'];
-        if (err is String && err.isNotEmpty) parts.add(err);
-        if (err is Map && err['message'] is String) {
-          parts.add(err['message'] as String);
-        }
-        final errors = decoded['errors'];
-        if (errors is List && errors.isNotEmpty) {
-          parts.add(errors.map((e) => e.toString()).join('; '));
-        }
-        if (parts.isEmpty && decoded['message'] is String) {
-          parts.add(decoded['message'] as String);
-        }
-        if (parts.isEmpty) {
-          final detail = decoded['detail'];
-          if (detail is String) {
-            parts.add(detail);
-          } else if (detail is List && detail.isNotEmpty) {
-            parts.add(detail
-                .map((e) => e is Map
-                    ? (e['msg'] ?? e['message'] ?? e.toString())
-                    : e.toString())
-                .join('; '));
-          }
-        }
-        if (parts.isNotEmpty) return parts.join(' ');
-      }
-    } catch (_) {}
-    return body.length > 500 ? body.substring(0, 500) : body;
-  }
+  Map<String, dynamic> _decodeJsonObject(String body) => decodeJsonObject(body);
 
-  Map<String, dynamic> _decodeJsonObject(String body) {
-    if (body.isEmpty) return const {};
-    final decoded = jsonDecode(body);
-    if (decoded is Map<String, dynamic>) return decoded;
-    return {'data': decoded};
-  }
-
-  Future<T> _withErrorMapping<T>(String endpoint, Future<T> Function() run) async {
-    try {
-      return await run();
-    } on LemonadeApiException {
-      rethrow;
-    } on TimeoutException catch (e) {
-      throw ServerException('Request timed out', endpoint: endpoint, cause: e);
-    } catch (e) {
-      throw ServerException('Network error: $e', endpoint: endpoint, cause: e);
-    }
-  }
+  Future<T> _withErrorMapping<T>(String endpoint, Future<T> Function() run) =>
+      withTransportMapping(endpoint, run);
 }

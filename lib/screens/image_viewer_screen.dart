@@ -8,6 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../utils/friendly_error.dart';
+
 /// Fullscreen image viewer.
 ///
 /// Tap the image in a chat bubble → this screen opens with the image
@@ -84,7 +86,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
         subject: 'Image from Lemonade',
       );
     } catch (e) {
-      _showError('Share failed: $e');
+      _showError(friendlyError(e, action: 'share the image'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -112,7 +114,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
     } on GalException catch (e) {
       _showError('Save failed: ${e.type.message}');
     } catch (e) {
-      _showError('Save failed: $e');
+      _showError(friendlyError(e, action: 'save the image'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -149,7 +151,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
       await widget.onDelete!();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _showError('Delete failed: $e');
+      _showError(friendlyError(e, action: 'delete the image'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

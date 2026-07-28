@@ -18,12 +18,21 @@ class SseEvent {
 /// - Multi-line `data:` field (per W3C, lines are joined with `\n`).
 /// - Comment lines (`:` prefix) which are skipped.
 ///
-/// Frames terminate on a blank line.
+/// Frames terminate on a blank line. A final frame left unterminated when the
+/// stream closes is flushed rather than dropped. Malformed UTF-8 is replaced
+/// (U+FFFD) instead of killing the whole stream on one bad byte.
 Stream<SseEvent> parseSseStream(Stream<List<int>> bytes) {
-  return bytes.transform(utf8.decoder).transform(const LineSplitter()).transform(
+  final handler = _SseLineHandler();
+  return bytes
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .transform(const LineSplitter())
+      .transform(
         StreamTransformer<String, SseEvent>.fromHandlers(
-          handleData: _SseLineHandler().handle,
-          handleDone: (sink) => sink.close(),
+          handleData: handler.handle,
+          handleDone: (sink) {
+            handler.flush(sink);
+            sink.close();
+          },
         ),
       );
 }
@@ -36,13 +45,7 @@ class _SseLineHandler {
 
   void handle(String line, EventSink<SseEvent> sink) {
     if (line.isEmpty) {
-      if (_hasData || _event != null) {
-        sink.add(SseEvent(event: _event, data: _data.toString(), id: _id));
-      }
-      _event = null;
-      _data.clear();
-      _id = null;
-      _hasData = false;
+      flush(sink);
       return;
     }
 
@@ -72,5 +75,17 @@ class _SseLineHandler {
         // ignored — not implementing reconnection backoff
         break;
     }
+  }
+
+  /// Emit the buffered frame (if any) and reset. Called on each blank line and
+  /// once more on stream close so a final unterminated frame isn't dropped.
+  void flush(EventSink<SseEvent> sink) {
+    if (_hasData || _event != null) {
+      sink.add(SseEvent(event: _event, data: _data.toString(), id: _id));
+    }
+    _event = null;
+    _data.clear();
+    _id = null;
+    _hasData = false;
   }
 }

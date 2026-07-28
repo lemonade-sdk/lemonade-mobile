@@ -79,12 +79,25 @@ class SecureKeyStore {
   // NOT cleared by clearAccount).
   static const _deviceIdKey = 'nexus/device_id';
 
-  static Future<String> deviceId() async {
-    final existing = await _get(_deviceIdKey);
-    if (existing != null && existing.isNotEmpty) return existing;
-    final id = const Uuid().v4();
-    await _put(_deviceIdKey, id);
-    return id;
+  /// Single-flight memo: concurrent deviceId() callers must all get the same
+  /// generated id — a get-then-put race would mint two rotation keys.
+  static Future<String>? _deviceIdInFlight;
+
+  static Future<String> deviceId() =>
+      _deviceIdInFlight ??= _readOrCreateDeviceId();
+
+  static Future<String> _readOrCreateDeviceId() async {
+    try {
+      final existing = await _get(_deviceIdKey);
+      if (existing != null && existing.isNotEmpty) return existing;
+      final id = const Uuid().v4();
+      await _put(_deviceIdKey, id);
+      return id;
+    } catch (_) {
+      // Don't memoize a failure (e.g. keychain hiccup) — allow a retry.
+      _deviceIdInFlight = null;
+      rethrow;
+    }
   }
 
   // ── Nexus account credential ────────────────────────────────────────

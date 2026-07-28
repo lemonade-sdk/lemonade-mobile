@@ -5,7 +5,7 @@ import 'dart:typed_data';
 ///
 ///   1. **OS voice processing** (iOS AVAudioSession voiceChat mode, Android
 ///      `AudioSource.VOICE_COMMUNICATION`) — handles AEC + steady-state
-///      noise. Configured in `voice_mode_provider`. Always on.
+///      noise. Configured in `DuplexVoiceSession`. Always on.
 ///   2. **Silero VAD** (via the `vad` package) — decides when the user
 ///      stopped talking. Robust to background noise that the OS layer
 ///      can't filter (other voices, music, transient sounds). Also always

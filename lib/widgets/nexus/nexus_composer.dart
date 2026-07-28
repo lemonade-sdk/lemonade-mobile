@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../providers/chat_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
 import '../voice_input_sheet.dart';
 
 /// Design-faithful chat composer: attach (+), input pill with inline mic, and a
@@ -92,7 +93,7 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
       final picked = await _picker.pickImage(source: ImageSource.camera);
       if (picked != null) setState(() => _attached.add(picked.path));
     } catch (e) {
-      _toast('Could not open the camera: $e');
+      _toast(friendlyError(e, action: 'open the camera'));
     }
   }
 
@@ -101,7 +102,7 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
       final picked = await _picker.pickImage(source: ImageSource.gallery);
       if (picked != null) setState(() => _attached.add(picked.path));
     } catch (e) {
-      _toast('Could not open the photo library: $e');
+      _toast(friendlyError(e, action: 'open your photo library'));
     }
   }
 
@@ -111,7 +112,7 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
       final path = result?.files.singleOrNull?.path;
       if (path != null) setState(() => _attached.add(path));
     } catch (e) {
-      _toast('Could not open files: $e');
+      _toast(friendlyError(e, action: 'open your files'));
     }
   }
 
@@ -198,12 +199,14 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
               const SizedBox(width: 8),
               Expanded(
                 child: Container(
+                  // Clip so selection/focus paint can't square-cut the stroke
+                  // (the classic "round over square" composer glitch).
+                  clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: t.surface,
-                    // Full pill — half the 44px single-line height. A smaller
-                    // radius here read as "square with slightly rounded
-                    // corners" next to the round action buttons.
-                    borderRadius: BorderRadius.circular(22),
+                    // Squircle that matches the attach/send buttons (radius 14)
+                    // rather than a full pill that fights multi-line growth.
+                    borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: t.line2),
                   ),
                   padding: const EdgeInsets.fromLTRB(14, 4, 8, 4),
@@ -223,7 +226,8 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
                             contentPadding:
                                 const EdgeInsets.symmetric(vertical: 11),
                             hintText: 'Message Lemonade…',
-                            hintStyle: TextStyle(color: t.faint, fontSize: 14.5),
+                            hintStyle:
+                                TextStyle(color: t.faint, fontSize: 14.5),
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,

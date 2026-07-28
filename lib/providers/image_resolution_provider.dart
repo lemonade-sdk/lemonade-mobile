@@ -33,11 +33,15 @@ class ImageResolutionNotifier extends StateNotifier<ImageResolutionPreset> {
     _load();
   }
 
+  /// A preset picked before [_load] resolves must win over the stale
+  /// snapshot it read (cold-start window).
+  bool _userDirty = false;
+
   Future<void> _load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getInt(_prefsKey);
-      if (saved == null) return;
+      if (saved == null || _userDirty) return;
       for (final p in ImageResolutionPreset.values) {
         if (p.basePx == saved) {
           state = p;
@@ -50,6 +54,7 @@ class ImageResolutionNotifier extends StateNotifier<ImageResolutionPreset> {
   }
 
   Future<void> set(ImageResolutionPreset preset) async {
+    _userDirty = true;
     state = preset;
     try {
       final prefs = await SharedPreferences.getInstance();

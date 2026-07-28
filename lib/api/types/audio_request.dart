@@ -26,6 +26,27 @@ class TextToSpeechRequest {
   }
 }
 
+/// MIME type for a TTS `response_format` wire value. Shared by AudioEndpoint
+/// and TtsService (they previously each had a copy of this switch).
+String mimeForTtsFormat(String responseFormat) {
+  switch (responseFormat) {
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'opus':
+      return 'audio/opus';
+    case 'aac':
+      return 'audio/aac';
+    case 'flac':
+      return 'audio/flac';
+    case 'pcm':
+      return 'audio/pcm';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
 /// Body for `POST /v1/audio/transcriptions` (multipart/form-data).
 class TranscriptionRequest {
   final String model;

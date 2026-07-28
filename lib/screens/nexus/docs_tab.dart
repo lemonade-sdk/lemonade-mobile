@@ -6,6 +6,8 @@ import '../../api/nexus/nexus_knowledge_models.dart';
 import '../../providers/knowledge_providers.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
+import '../../widgets/nexus/error_retry.dart';
 import '../../widgets/nexus/gateway_gate.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -61,8 +63,8 @@ class _DocsTabState extends ConsumerState<DocsTab> {
       ref.invalidate(kbDocumentsProvider);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(friendlyError(e, action: 'upload the document'))));
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -213,38 +215,23 @@ class _DocsTabState extends ConsumerState<DocsTab> {
   }
 
   Future<void> _createCollection() async {
-    final t = context.nexus;
-    final ctrl = TextEditingController();
     final name = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New collection'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Collection name'),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: Text('Create', style: TextStyle(color: t.accent))),
-        ],
-      ),
+      builder: (_) => const _NewCollectionDialog(),
     );
-    if (name == null || name.isEmpty) return;
+    if (name == null || name.isEmpty || !mounted) return;
     final client = ref.read(nexusKnowledgeClientProvider);
     try {
       final created = await client?.createCollection(name);
+      if (!mounted) return;
       ref.invalidate(kbCollectionsProvider);
       if (created != null) {
         ref.read(selectedCollectionIdProvider.notifier).state = created.id;
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(friendlyError(e, action: 'create the collection'))));
       }
     }
   }
@@ -299,7 +286,10 @@ class _DocsTabState extends ConsumerState<DocsTab> {
     final async = ref.watch(kbSearchProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _err(context, '$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'search your docs',
+          onRetry: () => ref.invalidate(kbSearchProvider)),
       data: (hits) {
         if (hits.isEmpty) {
           return _empty(context, 'No matches.');
@@ -344,7 +334,10 @@ class _DocsTabState extends ConsumerState<DocsTab> {
     final async = ref.watch(kbDocumentsProvider);
     return async.when(
       loading: () => const _Loading(),
-      error: (e, _) => _err(context, '$e'),
+      error: (e, _) => ErrorRetry(
+          error: e,
+          action: 'load your documents',
+          onRetry: () => ref.invalidate(kbDocumentsProvider)),
       data: (docs) {
         if (docs.isEmpty) {
           return _empty(context, 'No documents yet — upload a PDF.');
@@ -433,13 +426,6 @@ class _DocsTabState extends ConsumerState<DocsTab> {
     );
   }
 
-  Widget _err(BuildContext context, String msg) {
-    final t = context.nexus;
-    return NexusCard(
-      radius: 15,
-      child: Text(msg, style: TextStyle(fontSize: 12.5, color: t.danger)),
-    );
-  }
 }
 
 class _Loading extends StatelessWidget {
@@ -448,4 +434,44 @@ class _Loading extends StatelessWidget {
   Widget build(BuildContext context) => const Padding(
       padding: EdgeInsets.all(24),
       child: Center(child: CircularProgressIndicator()));
+}
+
+/// "New collection" name prompt. A StatefulWidget so the text controller is
+/// owned — and disposed — with the dialog itself.
+class _NewCollectionDialog extends StatefulWidget {
+  const _NewCollectionDialog();
+
+  @override
+  State<_NewCollectionDialog> createState() => _NewCollectionDialogState();
+}
+
+class _NewCollectionDialogState extends State<_NewCollectionDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.nexus;
+    return AlertDialog(
+      title: const Text('New collection'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: 'Collection name'),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        TextButton(
+            onPressed: () => Navigator.pop(context, _ctrl.text.trim()),
+            child: Text('Create', style: TextStyle(color: t.accent))),
+      ],
+    );
+  }
 }

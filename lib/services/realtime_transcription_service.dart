@@ -36,6 +36,7 @@ class RealtimeTranscriptionService {
   RealtimeConnectionState _state = RealtimeConnectionState.disconnected;
   Completer<void>? _finalTranscriptCompleter;
   Timer? _drainTimer;
+  Duration _drainDelay = const Duration(seconds: 5);
 
   RealtimeTranscriptionService(this.server)
       : _socket = RealtimeAudioSocket(server) {
@@ -58,11 +59,12 @@ class RealtimeTranscriptionService {
       return;
     }
     _accumulatedText = '';
-    try {
-      await _socket.connect(model: model ?? 'whisper-1', port: port);
-    } catch (e) {
-      _errorController.add(e.toString());
-    }
+    // Let a connect failure propagate to the caller. Callers wire their
+    // error listeners only AFTER awaiting connect(), so pushing the error
+    // onto the broadcast stream here would silently drop it and let the
+    // session record against a dead socket. The error stream stays in use
+    // for mid-session errors.
+    await _socket.connect(model: model ?? 'whisper-1', port: port);
   }
 
   void sendAudioChunk(String base64Audio) {
@@ -86,6 +88,7 @@ class RealtimeTranscriptionService {
   }) async {
     if (_state != RealtimeConnectionState.connected) return;
 
+    _drainDelay = drainDelay;
     _finalTranscriptCompleter = Completer<void>();
     _drainTimer?.cancel();
     commitAudioBuffer();
@@ -142,10 +145,10 @@ class RealtimeTranscriptionService {
         }
         _transcriptController.add(_accumulatedText);
         // Drain debounce: each completion resets the timer. Once no more
-        // arrive for 25s we resolve commitAndWaitForFinal.
+        // arrive for the caller's drainDelay we resolve commitAndWaitForFinal.
         if (!(_finalTranscriptCompleter?.isCompleted ?? true)) {
           _drainTimer?.cancel();
-          _drainTimer = Timer(const Duration(seconds: 25), () {
+          _drainTimer = Timer(_drainDelay, () {
             if (!(_finalTranscriptCompleter?.isCompleted ?? true)) {
               _finalTranscriptCompleter!.complete();
             }

@@ -11,6 +11,8 @@ import 'endpoints/chat_endpoint.dart';
 import 'endpoints/images_endpoint.dart';
 import 'endpoints/models_endpoint.dart';
 import 'exceptions.dart';
+import 'http_errors.dart';
+import 'net.dart';
 import 'sse/sse_parser.dart';
 import '../models/server_config.dart';
 
@@ -21,9 +23,14 @@ import '../models/server_config.dart';
 ///
 /// Endpoints are exposed via grouped sub-objects ([chat], [images], [audio], [models],
 /// [admin]). Each sub-object uses this instance for its request plumbing.
+///
+/// [abortInFlight] is how Stop works for OpenAI-compatible streaming: the
+/// API defines **no cancel request** — the client simply drops the HTTP
+/// connection (close the TCP client). That aborts mid-body SSE / downloads;
+/// a fresh client is installed so later calls still work.
 class LemonadeApiClient {
   final ServerConfig server;
-  final http.Client _http;
+  http.Client _http;
 
   late final ChatEndpoint chat;
   late final ImagesEndpoint images;
@@ -31,13 +38,23 @@ class LemonadeApiClient {
   late final ModelsEndpoint models;
   late final AdminEndpoint admin;
 
-  LemonadeApiClient(this.server, {http.Client? client}) : _http = client ?? http.Client() {
+  /// When non-null, this instance does not own [_http] and must not replace
+  /// it on abort (tests inject a mock client).
+  final bool _ownsHttp;
+
+  LemonadeApiClient(this.server, {http.Client? client})
+      : _http = client ?? http.Client(),
+        _ownsHttp = client == null {
     chat = ChatEndpoint(this);
     images = ImagesEndpoint(this);
     audio = AudioEndpoint(this);
     models = ModelsEndpoint(this);
     admin = AdminEndpoint(this);
   }
+
+  /// Exposed for endpoints that need the live client (after [abortInFlight]
+  /// may have replaced it).
+  http.Client get httpClient => _http;
 
   // ---------------------------------------------------------------------------
   // URL construction
@@ -55,13 +72,28 @@ class LemonadeApiClient {
   }
 
   /// Root URL — for unversioned paths like `/live` and the WebSocket host.
+  ///
+  /// Preserves any reverse-proxy path prefix of the base URL: for a server at
+  /// `https://host/lemonade/api/v1`, `/live` lives at `https://host/lemonade/live`,
+  /// not `https://host/live`. Only the trailing `/api/v1` / `/v1` segment that
+  /// [ServerConfig.apiUrl] appends is stripped.
   Uri rootUriFor(String path) {
     final apiUri = Uri.parse(server.apiUrl);
+    var prefix = apiUri.path;
+    while (prefix.endsWith('/')) {
+      prefix = prefix.substring(0, prefix.length - 1);
+    }
+    if (prefix.endsWith('/api/v1')) {
+      prefix = prefix.substring(0, prefix.length - '/api/v1'.length);
+    } else if (prefix.endsWith('/v1')) {
+      prefix = prefix.substring(0, prefix.length - '/v1'.length);
+    }
+    final rooted = path.startsWith('/') ? path : '/$path';
     return Uri(
       scheme: apiUri.scheme,
       host: apiUri.host,
       port: apiUri.hasPort ? apiUri.port : null,
-      path: path,
+      path: '$prefix$rooted',
     );
   }
 
@@ -99,20 +131,26 @@ class LemonadeApiClient {
     Map<String, dynamic> body, {
     Duration? timeout,
   }) async {
+    // Mutations are single-shot (no retry) — a resend could duplicate work.
     return _withErrorMapping(uri.path, () async {
-      final req = _http.post(uri, headers: jsonHeaders, body: jsonEncode(body));
-      final resp = timeout != null ? await req.timeout(timeout) : await req;
+      final resp = await _http
+          .post(uri, headers: jsonHeaders, body: jsonEncode(body))
+          .timeout(timeout ?? kDefaultMutationTimeout);
       _ensureOk(resp.statusCode, resp.body, uri.path);
       return _decodeJsonObject(resp.body);
     });
   }
 
   Future<Map<String, dynamic>> getJson(Uri uri, {Duration? timeout}) async {
-    return _withErrorMapping(uri.path, () async {
-      final req = _http.get(uri, headers: authOnlyHeaders);
-      final resp = timeout != null ? await req.timeout(timeout) : await req;
-      _ensureOk(resp.statusCode, resp.body, uri.path);
-      return _decodeJsonObject(resp.body);
+    // Idempotent GET: retried on transient transport errors with backoff.
+    return _withErrorMapping(uri.path, () {
+      return retryTransientGet(() async {
+        final resp = await _http
+            .get(uri, headers: authOnlyHeaders)
+            .timeout(timeout ?? kDefaultGetTimeout);
+        _ensureOk(resp.statusCode, resp.body, uri.path);
+        return _decodeJsonObject(resp.body);
+      });
     });
   }
 
@@ -122,8 +160,9 @@ class LemonadeApiClient {
     Duration? timeout,
   }) async {
     return _withErrorMapping(uri.path, () async {
-      final req = _http.post(uri, headers: jsonHeaders, body: jsonEncode(body));
-      final resp = timeout != null ? await req.timeout(timeout) : await req;
+      final resp = await _http
+          .post(uri, headers: jsonHeaders, body: jsonEncode(body))
+          .timeout(timeout ?? kDefaultMutationTimeout);
       _ensureOk(resp.statusCode, resp.body, uri.path);
       return resp.bodyBytes;
     });
@@ -149,9 +188,13 @@ class LemonadeApiClient {
           contentType: f.mediaType,
         ));
       }
-      final send = _http.send(req);
-      final streamed = timeout != null ? await send.timeout(timeout) : await send;
-      final body = await streamed.stream.bytesToString();
+      final streamed = await _http
+          .send(req)
+          .timeout(timeout ?? kDefaultUploadTimeout);
+      // The header timeout above doesn't cover a stalled body; bound it too.
+      final body = await streamed.stream
+          .bytesToString()
+          .timeout(timeout ?? kDefaultUploadTimeout);
       _ensureOk(streamed.statusCode, body, uri.path);
       return _decodeJsonObject(body);
     });
@@ -159,78 +202,108 @@ class LemonadeApiClient {
 
   /// Stream SSE from a POST with a JSON body. Used by chat streaming and admin
   /// endpoints that emit progress (e.g. `/v1/pull` with `stream: true`).
+  ///
+  /// [connectTimeout] bounds connect + response headers (first byte);
+  /// [idleTimeout] bounds the gap between SSE events once the stream is open.
+  /// All failures surface as typed [LemonadeApiException]s — a stall throws
+  /// [StreamProtocolException]; raw ClientException/SocketException never escape.
   Stream<SseEvent> streamSseFromJsonPost(
     Uri uri,
-    Map<String, dynamic> body,
-  ) async* {
-    final req = http.Request('POST', uri)
-      ..headers.addAll(sseHeaders)
-      ..body = jsonEncode(body);
-    final resp = await _http.send(req);
-    if (resp.statusCode != 200) {
-      final errBody = await resp.stream.bytesToString();
-      _ensureOk(resp.statusCode, errBody, uri.path);
+    Map<String, dynamic> body, {
+    Duration connectTimeout = kDefaultSseConnectTimeout,
+    Duration idleTimeout = kDefaultSseIdleTimeout,
+  }) async* {
+    final endpoint = uri.path;
+    http.StreamedResponse resp;
+    try {
+      final req = http.Request('POST', uri)
+        ..headers.addAll(sseHeaders)
+        ..body = jsonEncode(body);
+      resp = await _http.send(req).timeout(connectTimeout);
+    } on TimeoutException catch (e) {
+      throw ServerException('Request timed out', endpoint: endpoint, cause: e);
+    } catch (e) {
+      throw ServerException('Network error: $e', endpoint: endpoint, cause: e);
     }
-    yield* parseSseStream(resp.stream);
+    if (resp.statusCode != 200) {
+      String errBody;
+      try {
+        errBody = await resp.stream.bytesToString().timeout(connectTimeout);
+      } catch (_) {
+        errBody = '';
+      }
+      _ensureOk(resp.statusCode, errBody, endpoint);
+    }
+    // Idle guard: if the body goes quiet for [idleTimeout] the stream is
+    // considered dead — surface an error and close instead of hanging forever.
+    final guarded = resp.stream.timeout(idleTimeout, onTimeout: (sink) {
+      sink.addError(TimeoutException(
+        'No SSE data for ${idleTimeout.inSeconds}s',
+        idleTimeout,
+      ));
+      sink.close();
+    });
+    try {
+      await for (final event in parseSseStream(guarded)) {
+        yield event;
+      }
+    } on LemonadeApiException {
+      rethrow;
+    } on TimeoutException catch (e) {
+      throw StreamProtocolException(
+        'Stream stalled: no data for ${idleTimeout.inSeconds}s',
+        endpoint: endpoint,
+        cause: e,
+      );
+    } catch (e) {
+      throw StreamProtocolException(
+        'Stream error: $e',
+        endpoint: endpoint,
+        cause: e,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  void close() => _http.close();
+  /// Abort in-flight work the OpenAI-compatible way: **close the connection**.
+  ///
+  /// Chat Completions streaming (`stream: true`) has no cancel/stop request
+  /// in the wire protocol — generation stops when the client disconnects.
+  /// Closing [_http] tears down every open body (SSE tokens, image download,
+  /// multipart) mid-stream. A new [http.Client] is installed so the next
+  /// call works. No-op when a test-injected client is in use.
+  void abortInFlight() {
+    if (!_ownsHttp) return;
+    try {
+      _http.close();
+    } catch (_) {}
+    _http = http.Client();
+  }
+
+  void close() {
+    try {
+      _http.close();
+    } catch (_) {}
+  }
 
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
 
-  void _ensureOk(int status, String body, String endpoint) {
-    if (status >= 200 && status < 300) return;
-    final message = _extractErrorMessage(body) ?? 'HTTP $status';
-    switch (status) {
-      case 400:
-        throw ModelMismatchException(message, endpoint: endpoint);
-      case 401:
-      case 403:
-        throw UnauthorizedException(message, endpoint: endpoint);
-      case 404:
-        throw NotFoundException(message, endpoint: endpoint);
-      default:
-        throw ServerException(message, statusCode: status, endpoint: endpoint);
-    }
-  }
+  void _ensureOk(int status, String body, String endpoint) => ensureHttpOk(
+        status,
+        body,
+        endpoint,
+        map400ToModelMismatch: true,
+      );
 
-  String? _extractErrorMessage(String body) {
-    if (body.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) {
-        final err = decoded['error'];
-        if (err is Map && err['message'] is String) return err['message'] as String;
-        if (err is String) return err;
-        if (decoded['message'] is String) return decoded['message'] as String;
-      }
-    } catch (_) {}
-    return body.length > 200 ? body.substring(0, 200) : body;
-  }
+  Map<String, dynamic> _decodeJsonObject(String body) => decodeJsonObject(body);
 
-  Map<String, dynamic> _decodeJsonObject(String body) {
-    final decoded = jsonDecode(body);
-    if (decoded is Map<String, dynamic>) return decoded;
-    return {'data': decoded};
-  }
-
-  Future<T> _withErrorMapping<T>(String endpoint, Future<T> Function() run) async {
-    try {
-      return await run();
-    } on LemonadeApiException {
-      rethrow;
-    } on TimeoutException catch (e) {
-      throw ServerException('Request timed out', endpoint: endpoint, cause: e);
-    } catch (e) {
-      throw ServerException('Network error: $e', endpoint: endpoint, cause: e);
-    }
-  }
+  Future<T> _withErrorMapping<T>(String endpoint, Future<T> Function() run) =>
+      withTransportMapping(endpoint, run);
 }
 
 class MultipartFile {

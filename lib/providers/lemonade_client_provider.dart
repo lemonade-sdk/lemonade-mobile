@@ -8,6 +8,12 @@ final lemonadeClientProvider = Provider<LemonadeApiClient?>((ref) {
   final server = ref.watch(selectedServerProvider);
   if (server == null) return null;
   final client = LemonadeApiClient(server);
-  ref.onDispose(client.close);
+  ref.onDispose(() {
+    // Delay the close: closing immediately on server change kills any
+    // still-running requests/SSE streams on the OLD client mid-flight (they
+    // hold a reference to it, not to this provider). Two minutes comfortably
+    // outlives the default request timeouts, after which the sockets are freed.
+    Future.delayed(const Duration(minutes: 2), client.close);
+  });
   return client;
 });

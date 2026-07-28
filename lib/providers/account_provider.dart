@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import '../api/nexus/nexus_account_client.dart';
 import '../api/nexus/nexus_account_models.dart';
 import '../models/server_config.dart';
 import '../storage/secure_storage.dart';
+import 'app_mode_provider.dart';
 import 'models_provider.dart';
 import 'servers_provider.dart';
 
@@ -76,42 +78,53 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthState(busy: false);
   }
 
-  /// Sign in. If this device already holds a Nexus app token, reuse it instead
-  /// of minting a new one; only mint (POST /auth/login) when none exists. When
-  /// minting, sends this device's identity so the token is per-device.
+  /// Sign in with the typed credentials (POST /auth/login), sending this
+  /// device's identity so the token is per-device. ALWAYS mints a token for
+  /// THESE credentials — a token already in the keychain (a stale session,
+  /// a failed logout) is replaced, never silently reused, so entering account
+  /// B's credentials can't "sign in" as account A. Silent token reuse lives
+  /// only in the launch-time [_hydrate] path.
   Future<void> login({required String email, required String password}) async {
-    if (await _reuseExistingToken()) return;
     final device = await _deviceContext();
-    final result = await NexusAccountClient().login(
-      email: email,
-      password: password,
-      deviceId: device.id,
-      deviceName: device.name,
-      appName: kNexusAppName,
-    );
-    await _persist(result);
+    final api = NexusAccountClient();
+    try {
+      final result = await api.login(
+        email: email,
+        password: password,
+        deviceId: device.id,
+        deviceName: device.name,
+        appName: kNexusAppName,
+      );
+      await _persist(result);
+    } finally {
+      api.close();
+    }
   }
 
-  /// Register. Same reuse-then-mint rule as [login]. [segment] is the account
-  /// type the user picked at signup: 'personal' or 'business'.
+  /// Register. Same always-use-typed-credentials rule as [login]. [segment] is
+  /// the account type the user picked at signup: 'personal' or 'business'.
   Future<void> register({
     required String clientName,
     required String email,
     required String password,
     String segment = 'personal',
   }) async {
-    if (await _reuseExistingToken()) return;
     final device = await _deviceContext();
-    final result = await NexusAccountClient().register(
-      clientName: clientName,
-      email: email,
-      password: password,
-      segment: segment,
-      deviceId: device.id,
-      deviceName: device.name,
-      appName: kNexusAppName,
-    );
-    await _persist(result);
+    final api = NexusAccountClient();
+    try {
+      final result = await api.register(
+        clientName: clientName,
+        email: email,
+        password: password,
+        segment: segment,
+        deviceId: device.id,
+        deviceName: device.name,
+        appName: kNexusAppName,
+      );
+      await _persist(result);
+    } finally {
+      api.close();
+    }
   }
 
   /// The stable per-device id (rotation key) + a friendly display label. The id
@@ -132,29 +145,14 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     return (id: id, name: name);
   }
 
-  /// If a Nexus app token is already stored on this device, adopt it (and the
-  /// cached identity) and provision the subscription server — no new token is
-  /// minted. Returns true when an existing token was used.
-  Future<bool> _reuseExistingToken() async {
-    String? existing;
-    try {
-      existing = await SecureKeyStore.readAccountToken();
-    } catch (_) {
-      return false;
-    }
-    if (existing == null || existing.isEmpty) return false;
-    final identity = await SecureKeyStore.readAccountIdentity();
-    state = AuthState(
-      token: existing,
-      user: identity?.user,
-      client: identity?.client,
-      busy: false,
-    );
-    await _provisionSubscriptionServer(existing, select: true);
-    return true;
-  }
-
   Future<void> _persist(AuthResult result) async {
+    // Drop any previously stored credential first so a stale token/identity
+    // from another account can never survive alongside the new one.
+    try {
+      await SecureKeyStore.clearAccount();
+    } catch (e) {
+      debugPrint('[Account] clearAccount before persist failed: $e');
+    }
     await SecureKeyStore.writeAccountToken(result.token);
     await SecureKeyStore.writeAccountIdentity(result.user, result.client);
     state = AuthState(
@@ -220,7 +218,13 @@ class _AuthNotifier extends StateNotifier<AuthState> {
           await serversNotifier.updateServer(cfg, cfg);
         }
       }
-      if (select) {
+      // Only steal the selection when the app is actually in Subscription
+      // mode. Signing in while in Local AI / Mesh must not force-switch the
+      // user off their local server + model (app_mode_provider would fight
+      // the selection right back, ending with the local model silently
+      // replaced) — the gateway server is provisioned quietly and becomes
+      // active the next time they enter Subscription mode.
+      if (select && ref.read(appModeProvider) == AppMode.subscription) {
         await ref.read(selectedServerProvider.notifier).selectServer(cfg);
         // Pull the subscription server's model list now and default to the
         // preferred Halo collection, so the main screen is ready right after
@@ -260,17 +264,43 @@ final authProvider = StateNotifierProvider<_AuthNotifier, AuthState>(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Read-only data providers (auto-dispose; re-fetch whenever the token changes).
+// Read-only data providers (auto-dispose with a TTL — reopening a screen
+// within the window shows cached data instantly; re-fetch on token change).
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Keeps an `.autoDispose` provider's state alive for [ttl] after its last
+/// listener is removed, so reopening a screen inside the window renders the
+/// cached data instantly instead of a full-screen spinner. `ref.invalidate` /
+/// `ref.refresh` after a mutation still force an immediate refetch (and the
+/// previous value is shown while it reloads).
+extension CacheForExtension on Ref<Object?> {
+  void cacheFor(Duration ttl) {
+    final link = keepAlive();
+    final timer = Timer(ttl, link.close);
+    onDispose(timer.cancel);
+  }
+}
+
+/// One shared [NexusAccountClient] (one underlying `http.Client`) per token.
+/// The per-fetch clients this replaces were constructed on every rebuild and
+/// never closed — a socket-pool leak. Rebuilt (old one closed) only when the
+/// token itself changes, not on unrelated auth-state churn like `busy` flips.
+final nexusAccountClientProvider = Provider<NexusAccountClient>((ref) {
+  final token = ref.watch(authProvider.select((a) => a.token));
+  final client = NexusAccountClient(token: token);
+  ref.onDispose(client.close);
+  return client;
+});
 
 /// GET /account — account + subscription summary (auth required).
 final accountSummaryProvider =
     FutureProvider.autoDispose<AccountSummary>((ref) async {
-  final auth = ref.watch(authProvider);
-  if (!auth.isSignedIn) {
+  ref.cacheFor(const Duration(minutes: 5));
+  final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
+  if (!signedIn) {
     throw UnauthorizedException('Not signed in', endpoint: '/account');
   }
-  return NexusAccountClient(token: auth.token).fetchAccount();
+  return ref.watch(nexusAccountClientProvider).fetchAccount();
 });
 
 /// GET /usage/agents — per-agent cost + token history for the current period.
@@ -278,16 +308,19 @@ final accountSummaryProvider =
 /// router has no standalone /usage endpoint; capacity/limits come from /account.
 final agentUsageProvider =
     FutureProvider.autoDispose<AgentUsageReport>((ref) async {
-  final auth = ref.watch(authProvider);
-  if (!auth.isSignedIn) {
+  ref.cacheFor(const Duration(minutes: 2));
+  final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
+  if (!signedIn) {
     throw UnauthorizedException('Not signed in', endpoint: '/usage/agents');
   }
-  return NexusAccountClient(token: auth.token).fetchAgentUsage();
+  return ref.watch(nexusAccountClientProvider).fetchAgentUsage();
 });
 
-/// GET /plans — public plan + add-on catalog (no auth).
+/// GET /plans — public plan + add-on catalog (no auth). Static catalog, so it
+/// gets the longest TTL.
 final plansProvider = FutureProvider.autoDispose<PlanCatalog>((ref) async {
-  return NexusAccountClient().fetchPlans();
+  ref.cacheFor(const Duration(minutes: 30));
+  return ref.watch(nexusAccountClientProvider).fetchPlans();
 });
 
 /// GET /billing/subscription — current plan + ACTIVE add-on lines. Null when
@@ -295,7 +328,8 @@ final plansProvider = FutureProvider.autoDispose<PlanCatalog>((ref) async {
 /// Invalidate after any plan/add-on/cancel change.
 final subscriptionDetailProvider =
     FutureProvider.autoDispose<SubscriptionDetail?>((ref) async {
-  final auth = ref.watch(authProvider);
-  if (!auth.isSignedIn) return null;
-  return NexusAccountClient(token: auth.token).fetchSubscription();
+  ref.cacheFor(const Duration(minutes: 5));
+  final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
+  if (!signedIn) return null;
+  return ref.watch(nexusAccountClientProvider).fetchSubscription();
 });

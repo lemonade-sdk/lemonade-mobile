@@ -84,6 +84,33 @@ class AppMessages {
   // Generic errors
   static String genericError(String error) => 'Error: $error';
 
+  // Error notices rendered inside assistant chat bubbles.
+  //
+  // Assistant messages are replayed to the model on later turns, so an error
+  // notice persisted as assistant text would pollute the context. There is no
+  // Isar schema slot to flag them, so notices are marked with an invisible
+  // Unicode character (INVISIBLE SEPARATOR) that the UI renders as nothing and
+  // the request builders strip via [stripErrorNotices].
+  static const String errorNoticeMarker = '\u2063';
+
+  /// Wrap a user-facing error message so it renders normally in the chat but
+  /// is recognizable (and strippable) when building model payloads.
+  static String errorNotice(String message) => '$errorNoticeMarker$message';
+
+  /// Appended to a partially-streamed reply when the connection drops mid-turn.
+  static final String streamInterruptedNotice =
+      errorNotice('⚠ The connection was interrupted — this reply may be incomplete.');
+
+  /// Remove any error-notice lines from [text] before sending it to the model.
+  static String stripErrorNotices(String text) {
+    if (!text.contains(errorNoticeMarker)) return text;
+    return text
+        .split('\n')
+        .where((line) => !line.trimLeft().startsWith(errorNoticeMarker))
+        .join('\n')
+        .trim();
+  }
+
   // Server testing
   static const String serverTestFailed = 'Failed to connect to server';
 

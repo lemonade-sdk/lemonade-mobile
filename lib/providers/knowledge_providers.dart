@@ -1,11 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/nexus/nexus_knowledge_models.dart';
+import 'account_provider.dart' show CacheForExtension;
 import 'nexus_gateway_provider.dart';
 
 /// KB collections (Docs tab). Empty when signed out.
 final kbCollectionsProvider =
     FutureProvider.autoDispose<List<NexusCollection>>((ref) async {
+  ref.cacheFor(const Duration(minutes: 5));
   final client = ref.watch(nexusKnowledgeClientProvider);
   if (client == null) return const [];
   return client.listCollections();
@@ -17,6 +19,7 @@ final selectedCollectionIdProvider = StateProvider<int?>((ref) => null);
 /// Documents in the selected collection.
 final kbDocumentsProvider =
     FutureProvider.autoDispose<List<NexusDocument>>((ref) async {
+  ref.cacheFor(const Duration(minutes: 5));
   final client = ref.watch(nexusKnowledgeClientProvider);
   if (client == null) return const [];
   final collections = await ref.watch(kbCollectionsProvider.future);
@@ -39,8 +42,16 @@ final kbSearchProvider =
   if (query.isEmpty) return const [];
   final client = ref.watch(nexusKnowledgeClientProvider);
   if (client == null) return const [];
+  // Debounce: the query changes on every keystroke, and each change rebuilds
+  // this provider. Wait out a typing pause and bail if this execution was
+  // superseded in the meantime (the rebuild/dispose flips [stale]) before
+  // spending a network round-trip per character.
+  var stale = false;
+  ref.onDispose(() => stale = true);
+  await Future.delayed(const Duration(milliseconds: 300));
+  if (stale) return const [];
   final collections = await ref.watch(kbCollectionsProvider.future);
-  if (collections.isEmpty) return const [];
+  if (stale || collections.isEmpty) return const [];
   final selectedId = ref.watch(selectedCollectionIdProvider);
   final collection = collections.firstWhere(
     (c) => c.id == selectedId,

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/realtime/logs_socket.dart';
 import '../../providers/lemonade_client_provider.dart';
+import '../../utils/friendly_error.dart';
 
 class AdminLogsTab extends ConsumerStatefulWidget {
   const AdminLogsTab({super.key});
@@ -49,7 +50,10 @@ class _AdminLogsTabState extends ConsumerState<AdminLogsTab> {
       _sub = s.events.listen(_handleEvent);
       if (mounted) setState(() => _connected = true);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(
+            () => _error = friendlyError(e, action: 'connect to server logs'));
+      }
     }
   }
 

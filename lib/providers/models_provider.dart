@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lemonade_mobile/api/lemonade_client.dart';
 import 'package:lemonade_mobile/api/nexus/nexus_account_client.dart'
     show kNexusGatewayBaseUrl;
+import 'package:lemonade_mobile/models/server_config.dart';
 import 'package:lemonade_mobile/providers/app_mode_provider.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
 import 'package:lemonade_mobile/utils/model_utils.dart';
@@ -99,7 +100,11 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // otherwise wipe the user's persisted model (e.g. their selected
       // Omni Collection) on every app start.
       if (previous != null && previous.baseUrl != next.baseUrl) {
-        ref.read(selectedModelProvider.notifier).clearSelection();
+        // Clear only the IN-MEMORY selection. The persisted value is kept
+        // until the new server's fetch succeeds and confirms/replaces it
+        // (see _fetchModels) — persisting the clear here meant switching
+        // servers while offline permanently erased the previous selection.
+        ref.read(selectedModelProvider.notifier).clearSelectionInMemory();
         state = [];
       }
       _hydrateFromCache();
@@ -145,14 +150,57 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     }
   }
 
-  Future<void> fetchModels() async {
-    final selectedServer = ref.read(selectedServerProvider);
-    if (selectedServer == null) return;
+  /// Monotonic fetch generation. Every real fetch bumps it; a fetch whose
+  /// generation is no longer current discards its results.
+  int _fetchEpoch = 0;
 
+  /// In-flight fetch (with the server+mode it was started for) so concurrent
+  /// callers coalesce into one request instead of last-write-wins races.
+  Future<void>? _inFlight;
+  String? _inFlightKey;
+
+  /// True when [epoch] is no longer the newest fetch, or the app has moved to
+  /// a different server / inference mode since the fetch started. Checked
+  /// after every await so a slow response for the PREVIOUS server can never
+  /// overwrite the catalog — or worse, persist a foreign model id as the
+  /// selection — for the CURRENT one.
+  bool _isStale(int epoch, ServerConfig server, AppMode mode) =>
+      !mounted ||
+      epoch != _fetchEpoch ||
+      ref.read(selectedServerProvider)?.baseUrl != server.baseUrl ||
+      ref.read(appModeProvider) != mode;
+
+  Future<void> fetchModels() {
+    final selectedServer = ref.read(selectedServerProvider);
+    if (selectedServer == null) return Future.value();
+    final mode = ref.read(appModeProvider);
+
+    // Coalesce concurrent callers (send guard + picker + the mode/server
+    // listeners often trigger several fetches in the same frame) into one
+    // request per server+mode.
+    final key = '${selectedServer.baseUrl}|${mode.name}';
+    final inFlight = _inFlight;
+    if (inFlight != null && _inFlightKey == key) return inFlight;
+
+    final epoch = ++_fetchEpoch;
+    late final Future<void> future;
+    future = _fetchModels(selectedServer, mode, epoch).whenComplete(() {
+      if (identical(_inFlight, future)) {
+        _inFlight = null;
+        _inFlightKey = null;
+      }
+    });
+    _inFlight = future;
+    _inFlightKey = key;
+    return future;
+  }
+
+  Future<void> _fetchModels(
+      ServerConfig selectedServer, AppMode mode, int epoch) async {
     // The NXS* lock applies only in Subscription mode AND only against the
     // managed gateway. Local AI / Mesh show every installed model.
     final isGateway = selectedServer.baseUrl.trim() == kNexusGatewayBaseUrl;
-    final isSubscription = ref.read(appModeProvider) == AppMode.subscription;
+    final isSubscription = mode == AppMode.subscription;
     final restrictToNxs = isSubscription && isGateway;
 
     // Right after switching into Subscription mode the previous (local)
@@ -170,6 +218,9 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // rather than the registry entry that carries `downloaded:true`, so merge
       // the largest known context per model id before filtering to installed.
       final allModels = await client.models.all();
+      // A server/mode switch (or a newer fetch) may have landed while the
+      // request was in flight — this response belongs to the old world.
+      if (_isStale(epoch, selectedServer, mode)) return;
       final maxCtxById = <String, int>{};
       for (final m in allModels) {
         if (m.maxContextWindow > (maxCtxById[m.id] ?? 0)) {
@@ -218,19 +269,36 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // whether to auto-pick. Otherwise the first call after app start
       // wins the race and overwrites the saved model.
       await selectedModelNotifier.loaded;
+      if (_isStale(epoch, selectedServer, mode)) return;
 
       // The set of models the user is allowed to be on for this server.
       final allowed = restrictToNxs
           ? modelInfos.where(isNxsCollection).toList()
           : modelInfos;
 
+      // A server switch clears only the IN-MEMORY selection (the persisted
+      // value is kept until a successful fetch — this one — can confirm or
+      // replace it). Read the persisted value back so a selection that is
+      // still valid on the new server survives the switch, and so a failed
+      // fetch never erases it.
+      var saved = selectedModelNotifier.state;
+      if (saved == null) {
+        saved = await selectedModelNotifier.persistedSelection();
+        if (_isStale(epoch, selectedServer, mode)) return;
+      }
+
       // If the saved model isn't in the allowed set (not installed, or not an
       // NXS* collection on the gateway), auto-pick a valid default.
-      final saved = selectedModelNotifier.state;
       final savedStillValid =
           saved != null && allowed.any((m) => m.id == saved);
 
-      if (!savedStillValid) {
+      if (savedStillValid) {
+        // Re-adopt the saved model — a no-op when nothing changed, a restore
+        // after the in-memory clear on server switch.
+        if (selectedModelNotifier.state != saved) {
+          await selectedModelNotifier.selectModel(saved);
+        }
+      } else {
         final ModelInfo pick;
         if (restrictToNxs) {
           // Subscription is locked to NXS* collections.
@@ -260,7 +328,8 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
                     : ModelInfo('', const []),
               );
         }
-        if (pick.id.isNotEmpty) {
+        if (pick.id.isNotEmpty &&
+            !_isStale(epoch, selectedServer, mode)) {
           await selectedModelNotifier.selectModel(pick.id);
         }
       }
@@ -268,7 +337,7 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // Keep the previous catalog on a failed refresh — blanking it bricked
       // chat ("model list never syncs") after one transient network error.
       debugPrint('fetchModels failed (${selectedServer.baseUrl}): $e');
-      if (state.isEmpty) state = [];
+      if (mounted && state.isEmpty) state = [];
     } finally {
       client.close();
     }
@@ -398,5 +467,24 @@ class SelectedModelNotifier extends StateNotifier<String?> {
     print('Clearing model selection');
     state = null;
     await _saveSelectedModel();
+  }
+
+  /// Clear only the in-memory selection, leaving the persisted value intact.
+  /// Used on server switch: the saved model is confirmed or replaced (and
+  /// only then re-persisted) once the new server's catalog fetch succeeds —
+  /// so a failed fetch (e.g. switching while offline) can't erase it.
+  void clearSelectionInMemory() {
+    state = null;
+  }
+
+  /// The persisted selection, independent of the (possibly cleared) in-memory
+  /// state.
+  Future<String?> persistedSelection() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_selectedModelKey);
+    } catch (_) {
+      return null;
+    }
   }
 }

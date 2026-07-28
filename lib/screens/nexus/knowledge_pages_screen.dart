@@ -5,6 +5,8 @@ import '../../api/nexus/nexus_agents_models.dart';
 import '../../providers/agents_providers.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../themes/nexus_tokens.dart';
+import '../../utils/friendly_error.dart';
+import '../../widgets/nexus/error_retry.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -28,8 +30,11 @@ class KnowledgePagesScreen extends ConsumerWidget {
       ],
       body: pages.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) =>
-            Center(child: Text('$e', style: TextStyle(color: t.danger))),
+        error: (e, _) => ErrorRetry(
+            error: e,
+            action: 'load your knowledge pages',
+            asPage: true,
+            onRetry: () => ref.invalidate(knowledgePagesProvider)),
         data: (list) => list.isEmpty
             ? Center(
                 child: Text('No knowledge pages yet — tap + to add one.',
@@ -127,7 +132,7 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
       _enabled = p.enabled;
       _agentIds = p.agentProfileIds.toSet();
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'load the page'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -149,7 +154,7 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
       ref.invalidate(knowledgePagesProvider);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _toast('Save failed: $e');
+      _toast(friendlyError(e, action: 'save the page'));
       if (mounted) setState(() => _saving = false);
     }
   }
@@ -181,7 +186,7 @@ class _KnowledgePageEditorState extends ConsumerState<KnowledgePageEditor> {
       ref.invalidate(knowledgePagesProvider);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      _toast('$e');
+      _toast(friendlyError(e, action: 'delete the page'));
     }
   }
 

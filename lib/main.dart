@@ -11,6 +11,7 @@ import 'package:lemonade_mobile/screens/transcription_screen.dart';
 import 'package:lemonade_mobile/screens/model_defaults_screen.dart';
 import 'package:lemonade_mobile/shell/nexus_shell.dart';
 import 'package:lemonade_mobile/storage/database.dart';
+import 'package:lemonade_mobile/storage/file_storage.dart';
 import 'package:lemonade_mobile/storage/legacy_migration.dart';
 import 'package:lemonade_mobile/utils/constants.dart';
 
@@ -20,8 +21,25 @@ Future<void> main() async {
   try {
     await LegacyMigration.runIfNeeded();
   } catch (e, st) {
-    debugPrint('Legacy migration skipped: $e\n$st');
+    // Loud on purpose: a swallowed failure here used to look like "all my
+    // chats are gone" with no trace. Migration is resumable (per-step flags)
+    // and will retry on the next launch.
+    debugPrint('LEGACY MIGRATION FAILED (will retry next launch): $e');
+    debugPrint('$st');
   }
+  // Fire-and-forget sweep of attachment files orphaned by deleted chats
+  // (row deletion never removed the files). Conservative: 24h age guard.
+  unawaited(() async {
+    try {
+      final result = await AttachmentStore.gcOrphans();
+      if (result.deleted > 0 || result.failed > 0) {
+        debugPrint('Attachment GC: deleted ${result.deleted} orphaned '
+            'file(s), ${result.failed} failed');
+      }
+    } catch (e) {
+      debugPrint('Attachment GC failed: $e');
+    }
+  }());
   // Pre-read the saved theme id so the very first frame uses it — otherwise
   // we'd boot on the default (dark) theme and swap to the saved one on the
   // next frame, which makes Flutter's button text-style animations explode

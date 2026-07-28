@@ -108,10 +108,11 @@ final selectedIsCollectionProvider = Provider<bool>((ref) {
 /// The model id that should actually be sent on the wire to
 /// /chat/completions. Collapses Collections to their chat-shaped component
 /// (since a Collection can't be loaded as a chat model — it's a meta-id).
-/// Use this whenever you're about to make a chat request, NOT
-/// `selectedModelProvider`.
+/// Uses [effectiveLlmModelProvider] so a per-chat LLM override wins over the
+/// global selection. Use this whenever you're about to make a chat request,
+/// NOT `selectedModelProvider` alone.
 final wireLlmModelProvider = Provider<String?>((ref) {
-  final selectedId = ref.watch(selectedModelProvider);
+  final selectedId = ref.watch(effectiveLlmModelProvider);
   if (selectedId == null) return null;
   final models = ref.watch(modelsProvider);
   ModelInfo? selected;

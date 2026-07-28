@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
@@ -12,9 +11,11 @@ import 'package:lemonade_mobile/models/transcription.dart';
 import 'package:lemonade_mobile/providers/models_provider.dart';
 import 'package:lemonade_mobile/providers/model_defaults_provider.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
+import 'package:lemonade_mobile/api/lemonade_client.dart';
 import 'package:lemonade_mobile/services/audio_transcription_service.dart';
 import 'package:lemonade_mobile/services/audio_recorder_service.dart';
 import 'package:lemonade_mobile/services/realtime_transcription_service.dart';
+import 'package:lemonade_mobile/services/voice_record_config.dart';
 import 'package:lemonade_mobile/storage/database.dart';
 import 'package:lemonade_mobile/storage/entities/transcription_entity.dart';
 
@@ -156,8 +157,12 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
     );
     if (transcription.audioFilePath != null) {
       try {
-        final file = File(transcription.audioFilePath!);
-        if (await file.exists()) await file.delete();
+        // Stored paths are absolute and go stale when iOS relocates the app
+        // container on update — resolve (re-root) before deleting so we hit
+        // the real file instead of leaking it.
+        final resolved = await AudioRecorderService.resolveAudioPath(
+            transcription.audioFilePath!);
+        if (resolved != null) await File(resolved).delete();
       } catch (_) {}
     }
     state = state.where((t) => t.id != id).toList();
@@ -172,8 +177,9 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
     for (final t in state) {
       if (t.audioFilePath != null) {
         try {
-          final file = File(t.audioFilePath!);
-          if (await file.exists()) await file.delete();
+          final resolved =
+              await AudioRecorderService.resolveAudioPath(t.audioFilePath!);
+          if (resolved != null) await File(resolved).delete();
         } catch (_) {}
       }
     }
@@ -185,8 +191,11 @@ class TranscriptionHistoryNotifier extends StateNotifier<List<Transcription>> {
 }
 
 // Main transcription controller provider
-final transcriptionControllerProvider =
-    Provider<TranscriptionController>((ref) => TranscriptionController(ref));
+final transcriptionControllerProvider = Provider<TranscriptionController>((ref) {
+  final controller = TranscriptionController(ref);
+  ref.onDispose(controller.dispose);
+  return controller;
+});
 
 class TranscriptionController {
   final Ref ref;
@@ -194,6 +203,11 @@ class TranscriptionController {
   StreamSubscription? _amplitudeSub;
   String? _currentRecordingPath;
   bool _isTransitioning = false;
+
+  /// Stop/cancel requested while a start/stop transition was still running
+  /// (realtime connect can take ~12s). Instead of silently ignoring the tap,
+  /// remember it and honor it as soon as the transition completes.
+  _PendingAction _pendingAction = _PendingAction.none;
   DateTime? _streamStartTime;
 
   // Live stream state (PCM16 mic → WebSocket)
@@ -229,26 +243,6 @@ class TranscriptionController {
     _amplitudeSub?.cancel();
     _amplitudeSub = null;
   }
-
-  /// Compute normalized amplitude (0.0 to 1.0) from raw PCM16 bytes.
-  /// Uses dBFS-like scaling so normal speech levels produce visible animation.
-  double _computeAmplitudeFromPcm16(Uint8List bytes) {
-    if (bytes.length < 2) return 0.0;
-    final data = ByteData.sublistView(bytes);
-    double maxAmp = 0.0;
-    for (int i = 0; i < bytes.length - 1; i += 2) {
-      final sample = data.getInt16(i, Endian.little).abs();
-      if (sample > maxAmp) maxAmp = sample.toDouble();
-    }
-    if (maxAmp < 1) return 0.0;
-    // Convert to dBFS (-60..0) then normalize to 0.0..1.0
-    // This makes normal speech (~-30 to -10 dBFS) appear as 0.5..0.83
-    final dBFS = 20.0 * _log10(maxAmp / 32768.0);
-    final normalized = (dBFS + 60.0) / 60.0; // -60→0.0, 0→1.0
-    return normalized.clamp(0.0, 1.0);
-  }
-
-  static double _log10(double x) => x > 0 ? log(x) / ln10 : -60.0;
 
   // ── HTTP Record Mode ──────────────────────────────────────────
 
@@ -306,8 +300,13 @@ class TranscriptionController {
       // Attempt transcription - save recording even if API call fails
       String text = '';
       try {
-        final service = AudioTranscriptionService(server);
-        text = await service.transcribeFile(persistedPath, model: model);
+        final client = LemonadeApiClient(server);
+        try {
+          final service = AudioTranscriptionService(client);
+          text = await service.transcribeFile(persistedPath, model: model);
+        } finally {
+          client.close();
+        }
       } catch (e) {
         ref.read(transcriptionErrorProvider.notifier).state = 'Transcription failed: $e';
       }
@@ -344,6 +343,7 @@ class TranscriptionController {
   Future<void> startRealtimeStream() async {
     if (_isTransitioning) return;
     _isTransitioning = true;
+    _pendingAction = _PendingAction.none;
 
     ref.read(transcriptionErrorProvider.notifier).state = null;
     ref.read(liveTranscriptionTextProvider.notifier).state = '';
@@ -354,7 +354,7 @@ class TranscriptionController {
     final server = ref.read(selectedServerProvider);
     if (server == null) {
       ref.read(transcriptionErrorProvider.notifier).state = 'No server selected';
-      _isTransitioning = false;
+      await _finishTransition();
       return;
     }
 
@@ -364,18 +364,24 @@ class TranscriptionController {
 
     // 1. Discover WebSocket port and connect
     try {
-      final transcriptionService = AudioTranscriptionService(server);
-      final wsPort = await transcriptionService.discoverWebSocketPort();
-
-      _realtimeService = RealtimeTranscriptionService(server);
-      await _realtimeService!.connect(model: model, port: wsPort);
+      final client = LemonadeApiClient(server);
+      try {
+        final transcriptionService = AudioTranscriptionService(client);
+        final wsPort = await transcriptionService.discoverWebSocketPort();
+        _realtimeService = RealtimeTranscriptionService(server);
+        await _realtimeService!.connect(model: model, port: wsPort);
+      } finally {
+        client.close();
+      }
     } catch (e) {
       ref.read(transcriptionErrorProvider.notifier).state =
           'WebSocket connection failed: $e';
       ref.read(recordingStateProvider.notifier).state = RecordingState.idle;
+      // The cached port (if any) just failed us — re-probe next time.
+      AudioTranscriptionService.invalidateWebSocketPortCache(server);
       _realtimeService?.dispose();
       _realtimeService = null;
-      _isTransitioning = false;
+      await _finishTransition();
       return;
     }
 
@@ -391,18 +397,7 @@ class TranscriptionController {
     // 2. Start PCM16 mic stream
     try {
       _streamRecorder = AudioRecorder();
-      final stream = await _streamRecorder!.startStream(
-        const RecordConfig(
-          encoder: AudioEncoder.pcm16bits,
-          sampleRate: 16000,
-          numChannels: 1,
-          // Hardware AEC + noise suppression so a noisy room doesn't
-          // wreck live transcriptions.
-          androidConfig: AndroidRecordConfig(
-            audioSource: AndroidAudioSource.voiceCommunication,
-          ),
-        ),
-      );
+      final stream = await _streamRecorder!.startStream(kVoicePcm16Config);
 
       _pcmStreamSub = stream.listen((Uint8List chunk) {
         if (!_liveSessionActive) return;
@@ -414,7 +409,8 @@ class TranscriptionController {
         _realtimeService?.sendAudioChunk(base64Encode(chunk));
 
         // Compute amplitude for visualization
-        final amplitude = _computeAmplitudeFromPcm16(chunk);
+        final amplitude =
+            AudioRecorderService.normalizedAmplitudeFromPcm16(chunk);
         final current = ref.read(recordingAmplitudesProvider);
         ref.read(recordingAmplitudesProvider.notifier).state = [...current, amplitude];
       });
@@ -425,21 +421,42 @@ class TranscriptionController {
       await _realtimeService?.disconnect();
       _realtimeService?.dispose();
       _realtimeService = null;
-      _isTransitioning = false;
+      await _finishTransition();
       return;
     }
 
     _streamStartTime = DateTime.now();
     _liveSessionActive = true;
     ref.read(recordingStateProvider.notifier).state = RecordingState.recording;
-    _isTransitioning = false;
+    await _finishTransition();
   }
 
   /// Stop live stream: stop mic, commit & disconnect WebSocket, save audio + history.
   Future<void> stopRealtimeStream() async {
-    if (_isTransitioning) return;
+    if (_isTransitioning) {
+      // A start/stop transition is still in flight — honor the stop once it
+      // completes instead of silently dropping the tap.
+      _pendingAction = _PendingAction.stop;
+      return;
+    }
     _isTransitioning = true;
 
+    try {
+      await _stopRealtimeStreamBody();
+    } finally {
+      // Even on an unexpected failure the transition must end (a stuck
+      // `_isTransitioning` bricks start/stop/cancel for good) and any
+      // deferred stop/cancel must run.
+      await _finishTransition();
+    }
+  }
+
+  Future<void> _stopRealtimeStreamBody() async {
+    // Nothing live: the session already stopped/cancelled or never started
+    // (failed start). A deferred or duplicate stop must not re-save the
+    // session (duplicate history entry) — every such path has already put
+    // recordingState back to idle.
+    if (!_liveSessionActive) return;
     _liveSessionActive = false;
     ref.read(recordingStateProvider.notifier).state = RecordingState.processing;
 
@@ -511,13 +528,27 @@ class TranscriptionController {
     _fullSessionChunks = [];
     _streamStartTime = null;
     ref.read(recordingStateProvider.notifier).state = RecordingState.idle;
-    _isTransitioning = false;
   }
 
   // ── Common ────────────────────────────────────────────────────
 
   /// Cancel any active recording without saving.
   Future<void> cancelRecording() async {
+    if (_isTransitioning) {
+      // Can't interleave with an in-flight start/stop (null-derefs, phantom
+      // "recording" state) — defer until the transition completes.
+      _pendingAction = _PendingAction.cancel;
+      return;
+    }
+    _isTransitioning = true;
+    try {
+      await _cancelRecordingBody();
+    } finally {
+      await _finishTransition();
+    }
+  }
+
+  Future<void> _cancelRecordingBody() async {
     _liveSessionActive = false;
     _stopAmplitudeSampling();
 
@@ -546,10 +577,25 @@ class TranscriptionController {
 
     _fullSessionChunks = [];
     _streamStartTime = null;
-    _isTransitioning = false;
 
     ref.read(recordingStateProvider.notifier).state = RecordingState.idle;
     ref.read(liveTranscriptionTextProvider.notifier).state = '';
+  }
+
+  /// End the current transition and run any stop/cancel that was requested
+  /// while it was in flight.
+  Future<void> _finishTransition() async {
+    _isTransitioning = false;
+    final pending = _pendingAction;
+    _pendingAction = _PendingAction.none;
+    switch (pending) {
+      case _PendingAction.stop:
+        await stopRealtimeStream();
+      case _PendingAction.cancel:
+        await cancelRecording();
+      case _PendingAction.none:
+        break;
+    }
   }
 
   void dispose() {
@@ -562,3 +608,6 @@ class TranscriptionController {
     _amplitudeSub?.cancel();
   }
 }
+
+/// Deferred user intent captured while a start/stop transition is running.
+enum _PendingAction { none, stop, cancel }

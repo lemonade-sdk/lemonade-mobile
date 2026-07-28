@@ -3,10 +3,11 @@
 /// voice takeover. camelCase in/out.
 library;
 
-DateTime? _date(dynamic v) =>
-    v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
-int? _int(dynamic v) => v == null ? null : int.tryParse('$v');
-String _str(dynamic v) => v?.toString() ?? '';
+import 'json_utils.dart';
+
+DateTime? _date(dynamic v) => jsonDate(v);
+int? _int(dynamic v) => jsonInt(v);
+String _str(dynamic v) => jsonStr(v);
 
 enum TaskState { pending, dialing, inProgress, completed, failed, canceled, unknown }
 

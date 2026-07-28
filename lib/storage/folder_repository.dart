@@ -21,12 +21,27 @@ class FolderRepository {
   }
 
   static Future<Folder> ensureInbox() async {
-    final all = await loadAll();
-    final existing = all
-        .where((f) => f.parentFolderId == null && f.name == inboxName)
-        .firstOrNull;
-    if (existing != null) return existing;
-    return create(name: inboxName);
+    final candidate = Folder(
+      id: _uuid.v4(),
+      name: inboxName,
+      parentFolderId: null,
+      sortOrder: 0,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    if (!AppDatabase.isOpen) return candidate;
+    // Check + create inside one writeTxn so concurrent callers can't both
+    // miss the lookup and create duplicate Inboxes.
+    return _db.isar.writeTxn(() async {
+      final existing = await _db.folders
+          .filter()
+          .parentFolderUuidIsNull()
+          .nameEqualTo(inboxName)
+          .findFirst();
+      if (existing != null) return _toModel(existing);
+      await _db.folders.put(_toEntity(candidate));
+      return candidate;
+    });
   }
 
   static Future<Folder> create({
@@ -42,6 +57,9 @@ class FolderRepository {
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
+    // Match the silent no-op convention of the other methods when the DB
+    // isn't open: return the in-memory model without persisting.
+    if (!AppDatabase.isOpen) return folder;
     await _db.isar.writeTxn(() async {
       await _db.folders.put(_toEntity(folder));
     });
@@ -50,12 +68,17 @@ class FolderRepository {
 
   static Future<void> rename(String folderId, String newName) async {
     if (!AppDatabase.isOpen) return;
-    final entity = await _db.folders.filter().uuidEqualTo(folderId).findFirst();
-    if (entity == null) return;
-    entity
-      ..name = newName
-      ..updatedAt = DateTime.now();
-    await _db.isar.writeTxn(() async => _db.folders.put(entity));
+    // Read inside the txn so a concurrent remove() can't have its delete
+    // undone by this put resurrecting the folder.
+    await _db.isar.writeTxn(() async {
+      final entity =
+          await _db.folders.filter().uuidEqualTo(folderId).findFirst();
+      if (entity == null) return;
+      entity
+        ..name = newName
+        ..updatedAt = DateTime.now();
+      await _db.folders.put(entity);
+    });
   }
 
   static Future<void> remove(String folderId) async {
@@ -85,22 +108,41 @@ class FolderRepository {
     String? newParentId,
   }) async {
     if (!AppDatabase.isOpen) return;
-    final entity = await _db.folders.filter().uuidEqualTo(folderId).findFirst();
-    if (entity == null) return;
-    entity
-      ..parentFolderUuid = newParentId
-      ..updatedAt = DateTime.now();
-    await _db.isar.writeTxn(() async => _db.folders.put(entity));
+    // Read inside the txn (see rename) so a concurrently removed folder
+    // can't be resurrected, and verify the target parent still exists.
+    await _db.isar.writeTxn(() async {
+      final entity =
+          await _db.folders.filter().uuidEqualTo(folderId).findFirst();
+      if (entity == null) return;
+      if (newParentId != null) {
+        final parent =
+            await _db.folders.filter().uuidEqualTo(newParentId).findFirst();
+        if (parent == null) return;
+      }
+      entity
+        ..parentFolderUuid = newParentId
+        ..updatedAt = DateTime.now();
+      await _db.folders.put(entity);
+    });
   }
 
   static Future<void> setChatFolder(String chatId, String? folderId) async {
     if (!AppDatabase.isOpen) return;
-    final chat = await _db.chats.filter().uuidEqualTo(chatId).findFirst();
-    if (chat == null) return;
-    chat
-      ..folderUuid = folderId
-      ..lastUpdated = DateTime.now();
-    await _db.isar.writeTxn(() async => _db.chats.put(chat));
+    // Read + verify inside the txn so the chat can't end up pointing at a
+    // folder that a concurrent remove() just deleted.
+    await _db.isar.writeTxn(() async {
+      final chat = await _db.chats.filter().uuidEqualTo(chatId).findFirst();
+      if (chat == null) return;
+      if (folderId != null) {
+        final target =
+            await _db.folders.filter().uuidEqualTo(folderId).findFirst();
+        if (target == null) return;
+      }
+      chat
+        ..folderUuid = folderId
+        ..lastUpdated = DateTime.now();
+      await _db.chats.put(chat);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -121,11 +163,4 @@ class FolderRepository {
     ..sortOrder = f.sortOrder
     ..createdAt = f.createdAt
     ..updatedAt = f.updatedAt;
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull {
-    final it = iterator;
-    return it.moveNext() ? it.current : null;
-  }
 }
