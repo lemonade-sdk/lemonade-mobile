@@ -250,11 +250,14 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     final models = ref.watch(modelsProvider);
     final selected = ref.watch(selectedModelProvider);
 
-    // The context-size ceiling is the selected model's supported window.
+    // The context-size ceiling is the selected model's supported window. The
+    // server only knows it once it has read the model's GGUF (downloaded /
+    // loaded models); registry-only models report no window, so `ctxKnown`
+    // is false and the ceiling below is the app's 128K default.
     final selectedModel = models.where((m) => m.id == selected).firstOrNull;
-    final maxCtx = (selectedModel?.maxContextWindow ?? 0) > 0
-        ? selectedModel!.maxContextWindow
-        : 131072;
+    final knownCtx = selectedModel?.maxContextWindow ?? 0;
+    final ctxKnown = knownCtx > 0;
+    final maxCtx = ctxKnown ? knownCtx : 131072;
 
     final collections = models.where((m) => m.isCollection).toList();
     final plainModels = models.where((m) => !m.isCollection).toList();
@@ -266,7 +269,7 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
         const SizedBox(height: 16),
         _loadedHero(context, selected, maxCtx),
         const SizedBox(height: 16),
-        _contextSlider(context, maxCtx),
+        _contextSlider(context, maxCtx, ctxKnown),
         const SizedBox(height: 16),
         if (models.isEmpty)
           _info(context,
@@ -376,12 +379,17 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     );
   }
 
-  Widget _contextSlider(BuildContext context, int maxCtx) {
+  Widget _contextSlider(BuildContext context, int maxCtx, bool ctxKnown) {
     final t = context.nexus;
-    // Context is always a multiple of 1024 (one division per 1024 tokens), and
-    // can't exceed the selected model's supported window.
+    // Context is always a multiple of 1024 — the snap happens in onChanged
+    // (displayed value + the ctx sent to the server stay on the grid). The
+    // slider itself is deliberately CONTINUOUS (no `divisions`): since
+    // Flutter 3.41 a discrete Material Slider animates the thumb 75ms
+    // (easeInOut) toward `widget.value` on every update, and our drag
+    // rebuilds the slider every pointer tick — so the thumb perpetually
+    // chased the finger ~75ms behind. Continuous makes each rebuild set the
+    // position instantly, so the thumb tracks the finger 1:1.
     final maxD = maxCtx.toDouble();
-    final divisions = ((maxCtx - 1024) ~/ 1024).clamp(1, 100000);
     return ValueListenableBuilder<int>(
       valueListenable: _ctx,
       builder: (_, ctxVal, __) {
@@ -415,7 +423,6 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
                 value: value,
                 min: 1024,
                 max: maxD,
-                divisions: divisions,
                 onChanged: (v) => _ctx.value = (v / 1024).round() * 1024,
               ),
             ),
@@ -423,7 +430,10 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('1K', style: nexusMono(fontSize: 10, color: t.faint)),
-                Text(_fmtCtx(maxD),
+                // '~' marks the 128K *default* cap applied when the server
+                // hasn't read the model's GGUF yet (no max_context_window);
+                // a known model window shows as its exact figure.
+                Text(ctxKnown ? _fmtCtx(maxD) : '~${_fmtCtx(maxD)}',
                     style: nexusMono(fontSize: 10, color: t.faint)),
               ],
             ),
