@@ -49,8 +49,14 @@ class SettingsTab extends ConsumerWidget {
     final name = auth.user?.displayName ?? 'Not signed in';
     final email = auth.user?.email ?? 'Subscription optional';
     final badge = auth.isSignedIn ? (auth.user?.role ?? 'MEMBER') : 'LOCAL';
+    // Signed out, the whole row is a shortcut to the account intro — the
+    // same gate the header person icon opens: "Use Local AI", sign in, or
+    // create an account.
     return NexusCard(
       radius: 16,
+      onTap: auth.isSignedIn
+          ? null
+          : () => SignInScreen.push(context),
       child: Row(children: [
         Container(
           width: 48,
@@ -81,6 +87,10 @@ class SettingsTab extends ConsumerWidget {
         ),
         NexusPill(badge.toUpperCase(),
             color: Colors.white, bg: t.accent),
+        if (!auth.isSignedIn) ...[
+          const SizedBox(width: 8),
+          Icon(Icons.chevron_right, size: 18, color: t.faint),
+        ],
       ]),
     );
   }
