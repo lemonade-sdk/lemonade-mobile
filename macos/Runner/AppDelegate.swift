@@ -8,6 +8,7 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-    return true
+    // In shot mode, never restore a saved window frame.
+    return ProcessInfo.processInfo.environment["SHOT_PT_W"] == nil
   }
 }

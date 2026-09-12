@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lemonade_mobile/dev/shot_mode.dart';
 import 'package:lemonade_mobile/providers/account_provider.dart';
 import 'package:lemonade_mobile/providers/beacon_provider.dart';
 import 'package:lemonade_mobile/providers/billing_providers.dart';
@@ -17,6 +18,12 @@ import 'package:lemonade_mobile/utils/constants.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Store-screenshot harness (see lib/dev/shot_mode.dart). Only present in
+  // builds compiled with --dart-define=STORE_SHOT=true; never ships.
+  if (const bool.fromEnvironment('STORE_SHOT')) {
+    await runStoreShotMode();
+    return;
+  }
   await AppDatabase.open();
   try {
     await LegacyMigration.runIfNeeded();
