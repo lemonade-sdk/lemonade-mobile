@@ -103,6 +103,7 @@ flutter:
 
   assets:
     - assets/lemonade_logo.png
+    - assets/lemonade_logo_512.png
 
 flutter_launcher_icons:
   android: "launcher_icon"

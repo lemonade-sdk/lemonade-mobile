@@ -9,9 +9,9 @@ import '../../shell/overlays/unlock_sheet.dart';
 import '../../themes/nexus_tokens.dart';
 import 'nexus_ui.dart';
 
-/// Full-screen sign-in route reusing the shell's [AuthGate]. Pops itself once
-/// the user signs in (or leaves Subscription mode via "Continue with Local
-/// AI"), so callers can just push it and forget.
+/// Full-screen sign-in route reusing the shell's [AuthGate]. Dismisses itself
+/// once the user signs in, leaves Subscription mode, or taps "Use Local AI" /
+/// Back — so callers can just push it and forget.
 class SignInScreen extends ConsumerWidget {
   const SignInScreen({super.key});
 
@@ -23,10 +23,17 @@ class SignInScreen extends ConsumerWidget {
     ref.listen(authProvider, (_, next) {
       if (next.isSignedIn) Navigator.of(context).maybePop();
     });
+    // Covers the "switch to Local AI from Subscription mode" path, where the
+    // mode actually changes. The "already local" path can't rely on this
+    // (StateNotifier doesn't re-notify on an unchanged value) — that's what
+    // the onUseLocal / onBack callbacks below are for.
     ref.listen(appModeProvider, (_, next) {
       if (next != AppMode.subscription) Navigator.of(context).maybePop();
     });
-    return const AuthGate();
+    return AuthGate(
+      onUseLocal: () => Navigator.of(context).maybePop(),
+      onBack: () => Navigator.of(context).maybePop(),
+    );
   }
 }
 

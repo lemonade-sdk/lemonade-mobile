@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/nexus/nexus_account_client.dart' show kNexusGatewayBaseUrl;
 import '../models/server_config.dart';
+import '../storage/secure_storage.dart';
 import 'nav_provider.dart';
 import 'servers_provider.dart';
 
@@ -39,7 +40,7 @@ bool _isGateway(String baseUrl) => baseUrl.trim() == kNexusGatewayBaseUrl;
 
 class _AppModeNotifier extends StateNotifier<AppMode> {
   final Ref ref;
-  _AppModeNotifier(this.ref) : super(AppMode.subscription) {
+  _AppModeNotifier(this.ref) : super(AppMode.local) {
     _hydrate();
     // Keep the selected server consistent with the mode no matter which side
     // finishes loading first. At cold start the saved mode, the server list
@@ -60,10 +61,22 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_prefsKey);
       if (saved != null) {
-        state = AppMode.values.firstWhere(
+        var mode = AppMode.values.firstWhere(
           (m) => m.name == saved,
-          orElse: () => AppMode.subscription,
+          orElse: () => AppMode.local,
         );
+        // One-shot migration to the local-first default: installs whose saved
+        // mode was 'subscription' (the old default) but that never signed in
+        // had no account to route through — sitting on the sign-in gate at
+        // every launch. Drop them to Local AI instead. Installs WITH an
+        // account keep their saved mode.
+        if (mode == AppMode.subscription) {
+          try {
+            final token = await SecureKeyStore.readAccountToken();
+            if (token == null || token.isEmpty) mode = AppMode.local;
+          } catch (_) {}
+        }
+        state = mode;
         _selectServerForMode(state);
       }
     } catch (_) {

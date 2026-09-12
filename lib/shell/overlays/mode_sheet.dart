@@ -12,18 +12,18 @@ class ModeSheet extends ConsumerWidget {
 
   static const _modes = <(AppMode, IconData, String, String, String)>[
     (
-      AppMode.subscription,
-      Icons.cloud_outlined,
-      'Subscription',
-      'Routed cloud inference + Calls, PBX & Docs.',
-      'Unlocks gateway features',
-    ),
-    (
       AppMode.local,
       Icons.dns_outlined,
       'Local AI',
       'Run a Lemonade server on your LAN or this device.',
       'Unlocks on-device Model Manager',
+    ),
+    (
+      AppMode.subscription,
+      Icons.cloud_outlined,
+      'Subscription',
+      'Routed cloud inference + Calls, PBX & Docs.',
+      'Unlocks gateway features',
     ),
     (
       AppMode.mesh,

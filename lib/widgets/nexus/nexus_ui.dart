@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../themes/nexus_tokens.dart';
 
@@ -312,26 +311,20 @@ class NexusEmptyState extends StatelessWidget {
   }
 }
 
-/// The Lemonade brand mark — the design's inline lemon SVG.
+/// The Lemonade brand mark — the real app icon (the one in the asset bundle),
+/// not the hand-drawn SVG placeholder.
 class LemonLogo extends StatelessWidget {
   final double size;
   const LemonLogo({super.key, this.size = 26});
 
-  static const _svg = '''
-<svg width="26" height="26" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <ellipse cx="22.5" cy="8.5" rx="3.6" ry="2.1" transform="rotate(38 22.5 8.5)" fill="#5cb85b"/>
-  <path d="M20 11c1.4-2.4 3.8-3.4 5.6-2.6" stroke="#3f9a4e" stroke-width="1" stroke-linecap="round"/>
-  <g transform="rotate(-32 16 17)">
-    <ellipse cx="16" cy="17" rx="11.4" ry="8.4" fill="#f6ce3b"/>
-    <ellipse cx="16" cy="17" rx="11.4" ry="8.4" fill="none" stroke="#dcae27" stroke-width="1"/>
-    <path d="M4.6 17H2.4M29.4 17h2.2" stroke="#dcae27" stroke-width="2.2" stroke-linecap="round"/>
-    <ellipse cx="11.5" cy="13" rx="4.6" ry="2.4" fill="#fce58a" opacity="0.85"/>
-  </g>
-</svg>''';
-
   @override
   Widget build(BuildContext context) {
-    return SvgPicture.string(_svg, width: size, height: size);
+    return Image.asset(
+      'assets/lemonade_logo_512.png',
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+    );
   }
 }
 
