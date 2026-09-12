@@ -1,7 +1,7 @@
 name: lemonade_mobile
 description: "A chat app for Lemonade AI servers with syntax highlighting and multi-server support"
 publish_to: 'none'
-version: 3.4.0+23
+version: 4.0.0+24
 
 environment:
   sdk: ^3.8.1
