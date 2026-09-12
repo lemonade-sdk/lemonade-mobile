@@ -213,18 +213,25 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
 
     final client = LemonadeApiClient(selectedServer);
     try {
-      // Fetch the full catalog (loaded + registry entries). The server may
-      // attach `max_context_window` to the *loaded* entry (read from the GGUF)
-      // rather than the registry entry that carries `downloaded:true`, so merge
-      // the largest known context per model id before filtering to installed.
+      // Fetch the full catalog (loaded + registry entries). The server reports
+      // two window sources: `max_context_window` (read from the GGUF — only for
+      // downloaded/loaded models, the authoritative per-file value) and
+      // `context_length` (a registry-level default the server attaches to
+      // every entry). Merge per model id, preferring GGUF-derived values:
+      // taking the raw max would inflate e.g. an embedding model's true 40K
+      // window to the 210K registry default.
       final allModels = await client.models.all();
       // A server/mode switch (or a newer fetch) may have landed while the
       // request was in flight — this response belongs to the old world.
       if (_isStale(epoch, selectedServer, mode)) return;
-      final maxCtxById = <String, int>{};
+      final ggufCtxById = <String, int>{};
+      final registryCtxById = <String, int>{};
       for (final m in allModels) {
-        if (m.maxContextWindow > (maxCtxById[m.id] ?? 0)) {
-          maxCtxById[m.id] = m.maxContextWindow;
+        if (m.maxContextWindow > (ggufCtxById[m.id] ?? 0)) {
+          ggufCtxById[m.id] = m.maxContextWindow;
+        }
+        if (m.contextLength > (registryCtxById[m.id] ?? 0)) {
+          registryCtxById[m.id] = m.contextLength;
         }
       }
       // "downloaded" filtering is a LOCAL-server concept (hide models the
@@ -244,7 +251,8 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
                 m.labels,
                 isCollection: m.isCollection,
                 compositeModels: m.compositeModels,
-                maxContextWindow: maxCtxById[m.id] ?? m.maxContextWindow,
+                maxContextWindow:
+                    ggufCtxById[m.id] ?? registryCtxById[m.id] ?? 0,
               ))
           .toList();
       // Keep the FULL catalog in state even on the gateway: the wire-model

@@ -9,8 +9,15 @@ class ApiModelInfo {
   final bool suggested;
 
   /// Static model-supported context window (`max_context_window`), when the
-  /// server knows it; 0 otherwise.
+  /// server knows it; 0 otherwise. Only set for downloaded/loaded models —
+  /// read from the GGUF itself, so the most authoritative source.
   final int maxContextWindow;
+
+  /// Registry-level window (`context_length`) the server reports for every
+  /// model, downloaded or not. A server-side default for most entries, so
+  /// strictly less authoritative than [maxContextWindow] — use it only when
+  /// no GGUF-derived value is known.
+  final int contextLength;
 
   ApiModelInfo({
     required this.id,
@@ -21,6 +28,7 @@ class ApiModelInfo {
     this.checkpoint,
     this.suggested = false,
     this.maxContextWindow = 0,
+    this.contextLength = 0,
   });
 
   /// True when this is a Lemonade Omni Model — a bundle whose `recipe` is
@@ -61,6 +69,7 @@ class ApiModelInfo {
       checkpoint: json['checkpoint'] as String?,
       suggested: json['suggested'] as bool? ?? false,
       maxContextWindow: (json['max_context_window'] as num?)?.toInt() ?? 0,
+      contextLength: (json['context_length'] as num?)?.toInt() ?? 0,
     );
   }
 }
