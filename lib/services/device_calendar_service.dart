@@ -8,6 +8,9 @@ class DeviceCalendarEvent {
   final DateTime start;
   final DateTime end;
   final bool allDay;
+
+  /// Calendar date supplied for all-day events whose timestamps use UTC.
+  final String? allDayDate;
   final String? location;
   final String? calendarName;
 
@@ -16,6 +19,7 @@ class DeviceCalendarEvent {
     required this.start,
     required this.end,
     required this.allDay,
+    this.allDayDate,
     this.location,
     this.calendarName,
   });
@@ -33,6 +37,7 @@ class DeviceCalendarEvent {
       start: DateTime.fromMillisecondsSinceEpoch(startMillis),
       end: DateTime.fromMillisecondsSinceEpoch(endMillis),
       allDay: map['allDay'] == true || map['allDay'] == 1,
+      allDayDate: optionalString(map['allDayDate']),
       location: optionalString(map['location']),
       calendarName: optionalString(map['calendarName']),
     );

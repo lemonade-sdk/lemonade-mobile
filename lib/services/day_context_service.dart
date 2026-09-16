@@ -22,7 +22,11 @@ class DayContextRange {
 
   factory DayContextRange.fromArgs(Map<String, dynamic> args, {DateTime? now}) {
     final localNow = now ?? DateTime.now();
-    final requestedDays = (args['days'] as num?)?.toInt() ?? 1;
+    final rawDays = args['days'];
+    if (rawDays != null && (rawDays is! int)) {
+      throw ArgumentError.value(rawDays, 'days', 'Use a whole number of days.');
+    }
+    final requestedDays = rawDays as int? ?? 1;
     if (requestedDays < 1 || requestedDays > maxDays) {
       throw ArgumentError.value(
         requestedDays,
@@ -32,17 +36,19 @@ class DayContextRange {
     }
 
     final rawDate = args['start_date']?.toString().trim();
-    final parsed = rawDate == null || rawDate.isEmpty
+    final datePattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+    final parsed = rawDate == null || !datePattern.hasMatch(rawDate)
         ? null
         : DateTime.tryParse(rawDate);
-    if (rawDate != null && rawDate.isNotEmpty && parsed == null) {
+    if (rawDate != null &&
+        (parsed == null || DayContextService._date(parsed) != rawDate)) {
       throw ArgumentError.value(rawDate, 'start_date', 'Use YYYY-MM-DD.');
     }
-    final source = parsed?.toLocal() ?? localNow;
+    final source = parsed ?? localNow;
     final start = DateTime(source.year, source.month, source.day);
     return DayContextRange(
       start: start,
-      end: start.add(Duration(days: requestedDays)),
+      end: DateTime(start.year, start.month, start.day + requestedDays),
       days: requestedDays,
     );
   }
@@ -64,7 +70,7 @@ class DayContextService {
     final out = <String>[
       'DAY CONTEXT',
       'Range: ${_date(range.start)} through '
-          '${_date(range.end.subtract(const Duration(days: 1)))} '
+          '${_date(DateTime(range.end.year, range.end.month, range.end.day - 1))} '
           '(${range.days} day${range.days == 1 ? '' : 's'}, local time)',
     ];
 
@@ -82,7 +88,7 @@ class DayContextService {
           const maxEvents = 250;
           for (final event in events.take(maxEvents)) {
             final when = event.allDay
-                ? '${_date(event.start)} · all day'
+                ? '${event.allDayDate ?? _date(event.start)} · all day'
                 : '${_dateTime(event.start)}–${_time(event.end)}';
             final details = <String>[
               if (event.location != null) event.location!,

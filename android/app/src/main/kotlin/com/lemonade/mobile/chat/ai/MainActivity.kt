@@ -9,6 +9,10 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 class MainActivity : FlutterActivity() {
     private val channelName = "ai.nexus-projects.lemonade/calendar"
@@ -102,13 +106,28 @@ class MainActivity : FlutterActivity() {
                 val calendarIndex = cursor.getColumnIndex(
                     CalendarContract.Instances.CALENDAR_DISPLAY_NAME,
                 )
+                val utcDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
+                val localDate = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val requestedStartDate = localDate.format(Date(startMillis))
+                val requestedEndDate = localDate.format(Date(endMillis))
                 while (cursor.moveToNext()) {
+                    val begin = cursor.getLong(beginIndex)
+                    val end = cursor.getLong(endIndex)
+                    val allDay = cursor.getInt(allDayIndex) == 1
+                    val allDayDate = if (allDay) utcDate.format(Date(begin)) else ""
+                    if (allDay && (utcDate.format(Date(end)) <= requestedStartDate ||
+                                allDayDate >= requestedEndDate)) {
+                        continue
+                    }
                     events.add(
                         mapOf(
                             "title" to (cursor.getString(titleIndex) ?: "(Untitled event)"),
-                            "startMillis" to cursor.getLong(beginIndex),
-                            "endMillis" to cursor.getLong(endIndex),
-                            "allDay" to (cursor.getInt(allDayIndex) == 1),
+                            "startMillis" to begin,
+                            "endMillis" to end,
+                            "allDay" to allDay,
+                            "allDayDate" to allDayDate,
                             "location" to (cursor.getString(locationIndex) ?: ""),
                             "calendarName" to (cursor.getString(calendarIndex) ?: ""),
                         ),

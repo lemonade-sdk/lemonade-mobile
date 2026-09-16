@@ -50,6 +50,25 @@ void main() {
 
   test('range rejects more than 31 days', () {
     expect(() => DayContextRange.fromArgs({'days': 32}), throwsArgumentError);
+    expect(() => DayContextRange.fromArgs({'days': 1.5}), throwsArgumentError);
+  });
+
+  test('range uses local calendar dates across a month boundary', () {
+    final range = DayContextRange.fromArgs({
+      'start_date': '2026-03-01',
+      'days': 31,
+    });
+
+    expect(range.end, DateTime(2026, 4, 1));
+    expect(range.end.hour, 0);
+    expect(
+      () => DayContextRange.fromArgs({'start_date': '2026-02-30'}),
+      throwsArgumentError,
+    );
+    expect(
+      () => DayContextRange.fromArgs({'start_date': '2026-03-01T09:00:00'}),
+      throwsArgumentError,
+    );
   });
 
   test('tool result contains calendar events without app activity', () async {
@@ -65,5 +84,17 @@ void main() {
     expect(result, contains('Project review'));
     expect(result, contains('Conference room'));
     expect(result, isNot(contains('LEMONADE ACTIVITY')));
+  });
+
+  test('all-day events retain the calendar date supplied by Android', () async {
+    final event = DeviceCalendarEvent.fromMap({
+      'title': 'Holiday',
+      'startMillis': DateTime.utc(2026, 9, 16).millisecondsSinceEpoch,
+      'endMillis': DateTime.utc(2026, 9, 17).millisecondsSinceEpoch,
+      'allDay': true,
+      'allDayDate': '2026-09-16',
+    });
+
+    expect(event.allDayDate, '2026-09-16');
   });
 }
