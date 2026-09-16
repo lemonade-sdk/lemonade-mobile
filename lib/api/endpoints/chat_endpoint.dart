@@ -59,7 +59,7 @@ class ChatEndpoint {
       repeatPenalty: request.repeatPenalty,
       maxCompletionTokens: request.maxCompletionTokens,
       stop: request.stop,
-      enableThinking: request.enableThinking,
+      thinkingLevel: request.thinkingLevel,
       extra: request.extra,
     );
 
@@ -104,6 +104,10 @@ class ChatEndpoint {
           if (content is String && content.isNotEmpty) {
             contentBuf.write(content);
             yield ChatContentDelta(content);
+          }
+          final reasoning = delta['reasoning'] ?? delta['reasoning_content'];
+          if (reasoning is String && reasoning.isNotEmpty) {
+            yield const ChatReasoningDelta();
           }
           if (delta['tool_calls'] is List) {
             final touched = assembler.observe(delta);

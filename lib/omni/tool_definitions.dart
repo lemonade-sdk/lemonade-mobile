@@ -28,6 +28,10 @@ class OmniToolCatalog {
       "landmark, or address. You can call both find_places AND web_search in the "
       "same turn if the user asks something like 'find a pizza place near me and "
       "tell me the best one' — they will run in parallel.\n"
+      "  - get_device_schedule: use when the user asks to summarize their day, schedule, "
+      "calendar, recent activity, or a date range. Use 1 day for a day summary and "
+      "never request more than 31 days. Calendar access is read-only and may require "
+      "the user to grant system permission.\n"
       "After using any tool, give a short friendly text reply describing what you did. "
       "When in doubt, just talk back — do not invoke any tool.";
 
@@ -88,7 +92,8 @@ class OmniToolCatalog {
         'properties': {
           'prompt': {
             'type': 'string',
-            'description': 'A description of the desired edit or modification to apply to the image',
+            'description':
+                'A description of the desired edit or modification to apply to the image',
           },
           'size': {
             'type': 'string',
@@ -143,13 +148,45 @@ class OmniToolCatalog {
         'properties': {
           'language': {
             'type': 'string',
-            'description': "Language of the audio (ISO 639-1 code, e.g. 'en', 'es', 'fr')",
+            'description':
+                "Language of the audio (ISO 639-1 code, e.g. 'en', 'es', 'fr')",
             'default': 'en',
           },
         },
         'required': <String>[],
       },
       requiresLabels: const ['audio', 'transcription'],
+    ),
+    ToolDefinition(
+      name: 'get_device_schedule',
+      description:
+          'Read the user-requested date range from their device calendar and '
+          'Lemonade activity so you can summarize their day or schedule. Use '
+          'only when the user asks about their own calendar, day, recent '
+          'activity, or schedule. Default to today and 1 day. A request may '
+          'cover at most 31 days. This tool is read-only.',
+      parameters: const {
+        'type': 'object',
+        'properties': <String, dynamic>{
+          'start_date': {
+            'type': 'string',
+            'description':
+                'First local calendar date in YYYY-MM-DD. Omit for today.',
+          },
+          'days': {
+            'type': 'integer',
+            'minimum': 1,
+            'maximum': 31,
+            'default': 1,
+            'description':
+                'Number of calendar days to read, from 1 through 31.',
+          },
+          'include_calendar': {'type': 'boolean', 'default': true},
+          'include_app_activity': {'type': 'boolean', 'default': true},
+        },
+        'required': <String>[],
+      },
+      isAppControl: true,
     ),
     ToolDefinition(
       name: 'web_search',
@@ -236,7 +273,8 @@ class OmniToolCatalog {
           },
           'question': {
             'type': 'string',
-            'description': "The question to answer about the image, or 'describe' for a general description",
+            'description':
+                "The question to answer about the image, or 'describe' for a general description",
           },
         },
         'required': ['image_url', 'question'],
@@ -251,7 +289,9 @@ class OmniToolCatalog {
 
   /// Build the system prompt with the actual tool list interpolated.
   static String buildSystemPrompt(Iterable<ToolDefinition> activeTools) {
-    final list = activeTools.map((t) => '- ${t.name}: ${t.description}').join('\n');
+    final list = activeTools
+        .map((t) => '- ${t.name}: ${t.description}')
+        .join('\n');
     return systemPromptTemplate.replaceFirst('{tool_list}', list);
   }
 }

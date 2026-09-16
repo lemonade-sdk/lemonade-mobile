@@ -16,6 +16,7 @@ import '../omni/cancel_token.dart';
 import '../omni/tool_executor.dart';
 import '../providers/chat_history_provider.dart';
 import '../providers/lemonade_client_provider.dart';
+import '../providers/model_thinking_provider.dart';
 import '../providers/models_provider.dart';
 import '../providers/omni_router_provider.dart';
 import '../providers/servers_provider.dart';
@@ -25,8 +26,9 @@ import '../utils/friendly_error.dart';
 
 /// Active chat messages. Mirrors whatever ChatHistory the chat-history provider
 /// has marked active, plus any in-flight assistant placeholder.
-final chatProvider =
-    StateNotifierProvider<ChatNotifier, List<ChatMessage>>((ref) => ChatNotifier(ref));
+final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>(
+  (ref) => ChatNotifier(ref),
+);
 
 /// True while a chat turn is in flight. The composer uses this to swap the
 /// send button for a stop button and to block double-sends.
@@ -110,7 +112,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     // blocked image sends on collections whose vision/image capability lives
     // in a DIFFERENT component.
     if (hasImages && !ref.read(selectedIsCollectionProvider)) {
-      final modelInfo = ref.read(modelsProvider).firstWhere(
+      final modelInfo = ref
+          .read(modelsProvider)
+          .firstWhere(
             (m) => m.id == selectedModel,
             orElse: () => ModelInfo(selectedModel, const []),
           );
@@ -134,8 +138,10 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     final models = ref.read(modelsProvider);
     final outOfSync = models.isEmpty || !models.any((m) => m.id == selectedId);
     if (outOfSync) {
-      debugPrint('Model list out of sync: selected="$selectedId", '
-          'catalog has ${models.length} entries — refreshing.');
+      debugPrint(
+        'Model list out of sync: selected="$selectedId", '
+        'catalog has ${models.length} entries — refreshing.',
+      );
       // Fire-and-forget: re-fetch validates the selection and re-picks a
       // valid default if the saved one is gone.
       ref.read(modelsProvider.notifier).fetchModels();
@@ -151,8 +157,11 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     if (_sending) return; // one turn at a time — no interleaved histories
     // The composer fires this unawaited — it must never throw into the void.
     try {
-      await _sendMessage(message,
-          imagePaths: imagePaths, scrollController: scrollController);
+      await _sendMessage(
+        message,
+        imagePaths: imagePaths,
+        scrollController: scrollController,
+      );
     } catch (e, st) {
       debugPrint('sendMessage failed: $e\n$st');
       _sending = false;
@@ -205,8 +214,10 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       return;
     }
 
-    debugPrint('Chat turn → wire model "$selectedModel" '
-        '(selected "${ref.read(selectedModelProvider)}")');
+    debugPrint(
+      'Chat turn → wire model "$selectedModel" '
+      '(selected "${ref.read(selectedModelProvider)}")',
+    );
 
     _sending = true;
     _stopRequested = false;
@@ -266,30 +277,44 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       // Build & persist the user message immediately.
       final userParts = <MessageContent>[];
       if (message.isNotEmpty) {
-        userParts.add(MessageContent(type: MessageContentType.text, value: message));
+        userParts.add(
+          MessageContent(type: MessageContentType.text, value: message),
+        );
       }
       if (hasImages) {
         for (final img in imagePaths) {
-          userParts.add(MessageContent(
-              type: MessageContentType.image, value: await _toImageDataUrl(img)));
+          userParts.add(
+            MessageContent(
+              type: MessageContentType.image,
+              value: await _toImageDataUrl(img),
+            ),
+          );
         }
       }
-      final userMessage = ChatMessage(role: MessageRole.user, content: userParts);
+      final userMessage = ChatMessage(
+        role: MessageRole.user,
+        content: userParts,
+      );
       final history = [...turnChat.messages, userMessage];
       if (!await historyNotifier.updateChat(chatId, history)) return null;
       _scroll(scrollController, animated: true, force: true);
 
       // Add the assistant placeholder.
-      final placeholder = ChatMessage.text(role: MessageRole.assistant, text: '');
+      final placeholder = ChatMessage.text(
+        role: MessageRole.assistant,
+        text: '',
+      );
       var working = [...history, placeholder];
       if (!await historyNotifier.updateChat(chatId, working)) return null;
 
       final client = ref.read(lemonadeClientProvider);
       if (client == null) {
-        working = _updateAssistant(working,
-            chatId: chatId,
-            epoch: epoch,
-            text: AppMessages.errorNotice(AppMessages.noServerSelected));
+        working = _updateAssistant(
+          working,
+          chatId: chatId,
+          epoch: epoch,
+          text: AppMessages.errorNotice(AppMessages.noServerSelected),
+        );
         await _flushPersist(chatId, epoch);
         return null;
       }
@@ -297,7 +322,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       // Force omni mode on for Collection selections — the whole point of a
       // Collection is "use this bundle of components", which is exactly what
       // the agent loop drives. The toggle still controls regular models.
-      final omniEnabled = ref.read(omniRouterEnabledProvider) ||
+      final omniEnabled =
+          ref.read(omniRouterEnabledProvider) ||
           ref.read(selectedIsCollectionProvider);
       final caps = ref.read(omniCapabilitiesProvider);
       final executor = ref.read(omniToolExecutorProvider);
@@ -308,7 +334,16 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       final artifactParts = <MessageContent>[];
 
       try {
-        final maxCtx = ref.read(modelsProvider).where((m) => m.id == selectedModel).map((m) => m.maxContextWindow).firstOrNull;
+        final model = ref
+            .read(modelsProvider)
+            .where((m) => m.id == selectedModel)
+            .firstOrNull;
+        final maxCtx = model?.maxContextWindow;
+        final thinkingLevel = model?.supportsThinking == true
+            ? ref
+                  .read(modelThinkingLevelsProvider.notifier)
+                  .levelFor(selectedModel)
+            : null;
         final stream = svc.run(
           llmModel: selectedModel,
           history: history,
@@ -317,6 +352,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
           executor: executor,
           maxContextTokens: maxCtx,
           cancelToken: cancelToken,
+          thinkingLevel: thinkingLevel,
         );
 
         // Bridge the turn stream so [stopStreaming] can cancel immediately
@@ -362,7 +398,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
                     // An edit replacing this turn's prior image — swap it out
                     // instead of appending, or generate-then-edit shows both.
                     final lastImgIdx = artifactParts.lastIndexWhere(
-                        (p) => p.type == MessageContentType.image);
+                      (p) => p.type == MessageContentType.image,
+                    );
                     if (lastImgIdx >= 0) {
                       artifactParts[lastImgIdx] = part;
                     } else {
@@ -426,9 +463,11 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
         // error-notice marker so it's stripped from later model payloads
         // instead of being replayed as assistant content forever.
         final notice = AppMessages.errorNotice(
-            '⚠ ${friendlyError(e, action: 'get a response')}');
-        final text =
-            assistantText.isEmpty ? notice : '$assistantText\n\n$notice';
+          '⚠ ${friendlyError(e, action: 'get a response')}',
+        );
+        final text = assistantText.isEmpty
+            ? notice
+            : '$assistantText\n\n$notice';
         working = _updateAssistant(
           working,
           chatId: chatId,
@@ -451,41 +490,59 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// existing first-message fallback title untouched. Runs detached from the
   /// turn (composer already unblocked), keyed to the turn's chat uuid.
   Future<void> _maybeAutoTitle(
-      LemonadeApiClient client, String model, String chatId) async {
+    LemonadeApiClient client,
+    String model,
+    String chatId,
+  ) async {
     try {
       final notifier = ref.read(chatHistoryProvider.notifier);
       final chat = notifier.getChatById(chatId);
       if (chat == null || chat.title.trim().isNotEmpty) return;
 
       final msgs = chat.messages;
-      final firstUser =
-          msgs.where((m) => m.role == MessageRole.user).firstOrNull;
-      final firstAssistant =
-          msgs.where((m) => m.role == MessageRole.assistant).firstOrNull;
+      final firstUser = msgs
+          .where((m) => m.role == MessageRole.user)
+          .firstOrNull;
+      final firstAssistant = msgs
+          .where((m) => m.role == MessageRole.assistant)
+          .firstOrNull;
       if (firstUser == null || firstAssistant == null) return;
 
-      String textOf(ChatMessage m) => AppMessages.stripErrorNotices(m.content
-          .where((c) => c.type == MessageContentType.text)
-          .map((c) => c.value)
-          .join(' ')
-          .trim());
+      String textOf(ChatMessage m) => AppMessages.stripErrorNotices(
+        m.content
+            .where((c) => c.type == MessageContentType.text)
+            .map((c) => c.value)
+            .join(' ')
+            .trim(),
+      );
       final userText = textOf(firstUser);
       final assistantText = textOf(firstAssistant);
       if (userText.isEmpty) return;
+      final modelInfo = ref
+          .read(modelsProvider)
+          .where((entry) => entry.id == model)
+          .firstOrNull;
+      final thinkingLevel = modelInfo?.supportsThinking == true
+          ? ref.read(modelThinkingLevelsProvider.notifier).levelFor(model)
+          : null;
 
       final res = await client.chat.create(
         ChatCompletionRequest(
           model: model,
           messages: [
             ApiChatMessage.system(
-                'You generate a concise chat title. Reply with ONLY a 3–6 word '
-                'title in Title Case — no quotes, no trailing punctuation, no '
-                'prefixes or explanation.'),
-            ApiChatMessage.user('First message: $userText\n'
-                '${assistantText.isEmpty ? '' : 'Assistant reply: $assistantText\n'}'
-                '\nTitle:'),
+              'You generate a concise chat title. Reply with ONLY a 3–6 word '
+              'title in Title Case — no quotes, no trailing punctuation, no '
+              'prefixes or explanation.',
+            ),
+            ApiChatMessage.user(
+              'First message: $userText\n'
+              '${assistantText.isEmpty ? '' : 'Assistant reply: $assistantText\n'}'
+              '\nTitle:',
+            ),
           ],
           stream: false,
+          thinkingLevel: thinkingLevel,
         ),
         timeout: const Duration(seconds: 20),
       );
@@ -615,11 +672,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// Decode via the platform codec and re-encode as PNG (handles HEIC on iOS).
   Future<List<int>?> _reencodeToPng(List<int> bytes) async {
     try {
-      final codec =
-          await ui.instantiateImageCodec(Uint8List.fromList(bytes));
+      final codec = await ui.instantiateImageCodec(Uint8List.fromList(bytes));
       final frame = await codec.getNextFrame();
-      final data =
-          await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
       frame.image.dispose();
       return data?.buffer.asUint8List();
     } catch (_) {
@@ -652,43 +707,57 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     // Marked as an error notice: rendered normally in the bubble, but
     // stripped when later turns build the model payload.
     final errMessage = ChatMessage.text(
-        role: MessageRole.assistant, text: AppMessages.errorNotice(text));
-    final chatId = _turnChatId ??
+      role: MessageRole.assistant,
+      text: AppMessages.errorNotice(text),
+    );
+    final chatId =
+        _turnChatId ??
         ref.read(chatHistoryProvider.notifier).getActiveChat()?.id;
     if (chatId != null) {
       final chat = ref.read(chatHistoryProvider.notifier).getChatById(chatId);
       final base = chat?.messages ?? state;
-      await ref
-          .read(chatHistoryProvider.notifier)
-          .updateChat(chatId, [...base, errMessage]);
+      await ref.read(chatHistoryProvider.notifier).updateChat(chatId, [
+        ...base,
+        errMessage,
+      ]);
     } else {
-      await ref
-          .read(chatHistoryProvider.notifier)
-          .updateActiveChat([...state, errMessage]);
+      await ref.read(chatHistoryProvider.notifier).updateActiveChat([
+        ...state,
+        errMessage,
+      ]);
     }
   }
 
-  void _scroll(ScrollController? controller,
-      {bool animated = false, bool force = false}) {
-    if (controller == null || !controller.hasClients) return;
-    // Don't yank the view to the bottom while the user is reading earlier
-    // messages — only follow the stream when already pinned near the bottom.
-    final pos = controller.position;
-    if (!force && pos.maxScrollExtent - pos.pixels > 160) return;
-    if (animated) {
-      controller.animateTo(
-        controller.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
-    } else {
-      controller.jumpTo(controller.position.maxScrollExtent);
-    }
+  void _scroll(
+    ScrollController? controller, {
+    bool animated = false,
+    bool force = false,
+  }) {
+    if (controller == null) return;
+    // State updates rebuild the list on the next frame. Reading
+    // maxScrollExtent synchronously here targets the OLD bottom and leaves
+    // the newest message/token below the viewport. Resolve the target after
+    // layout instead.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!controller.hasClients) return;
+      // Don't yank the view to the bottom while the user is reading earlier
+      // messages — only follow the stream when already pinned near the bottom.
+      final pos = controller.position;
+      if (!force && pos.maxScrollExtent - pos.pixels > 160) return;
+      if (animated) {
+        controller.animateTo(
+          pos.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      } else {
+        controller.jumpTo(pos.maxScrollExtent);
+      }
+    });
   }
 
   void clearChat() {
-    final activeId =
-        ref.read(chatHistoryProvider.notifier).getActiveChat()?.id;
+    final activeId = ref.read(chatHistoryProvider.notifier).getActiveChat()?.id;
     if (activeId != null && activeId == _turnChatId) {
       // Clearing the chat a turn is streaming into: abandon the turn's
       // remaining writes (epoch bump) and stop the stream — otherwise the

@@ -37,14 +37,15 @@ class OmniRouterSettings extends ConsumerWidget {
             Icon(Icons.hub, color: scheme.primary),
             const SizedBox(width: 8),
             Expanded(
-              child: Text('Lemonade Omni',
-                  style: Theme.of(context).textTheme.titleLarge),
+              child: Text(
+                'Lemonade Omni',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
             ),
             Switch(
               value: enabled,
-              onChanged: (v) => ref
-                  .read(omniRouterEnabledProvider.notifier)
-                  .setEnabled(v),
+              onChanged: (v) =>
+                  ref.read(omniRouterEnabledProvider.notifier).setEnabled(v),
             ),
           ],
         ),
@@ -88,8 +89,9 @@ class _WorkflowPicker extends ConsumerWidget {
     // their Omni Collections (e.g. "LMX-Omni-…"), so the static list was
     // useless for anything but the canonical server build.
     final installed = ref.watch(modelsProvider);
-    final collections =
-        installed.where((m) => m.isCollection).toList(growable: false);
+    final collections = installed
+        .where((m) => m.isCollection)
+        .toList(growable: false);
     final selectedId = ref.watch(selectedModelProvider);
     final theme = Theme.of(context);
 
@@ -98,8 +100,8 @@ class _WorkflowPicker extends ConsumerWidget {
       children: [
         // "Custom" — no Collection, free per-tool model picks via globalModelDefaults.
         _CustomWorkflowTile(
-          selected: selectedId == null ||
-              !collections.any((c) => c.id == selectedId),
+          selected:
+              selectedId == null || !collections.any((c) => c.id == selectedId),
           onTap: () {
             // Clearing the selection drops us out of any Collection-driven
             // workflow. The user can then pick any chat-shaped LLM from
@@ -126,9 +128,8 @@ class _WorkflowPicker extends ConsumerWidget {
               child: _CollectionWorkflowTile(
                 collection: c,
                 selected: selectedId == c.id,
-                onTap: () => ref
-                    .read(selectedModelProvider.notifier)
-                    .selectModel(c.id),
+                onTap: () =>
+                    ref.read(selectedModelProvider.notifier).selectModel(c.id),
               ),
             ),
       ],
@@ -244,10 +245,7 @@ class _WorkflowTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: theme.textTheme.bodySmall,
-                  ),
+                  Text(subtitle, style: theme.textTheme.bodySmall),
                 ],
               ),
             ),
@@ -268,7 +266,7 @@ class _WorkflowSlots extends ConsumerWidget {
     final installed = ref.watch(modelsProvider);
     final defaults = ref.watch(globalModelDefaultsProvider);
 
-    if (workflow.isTemplate) {
+    if (workflow.isCollectionBacked) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -357,9 +355,14 @@ class _TemplateSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final label = workflow.kind == OmniWorkflowKind.lite
-        ? 'Mirrors the server\'s "Lite Collection" — small, fast models.'
-        : 'Mirrors the server\'s "Ultra Collection" — top-tier capability, large download.';
+    final label = switch (workflow.kind) {
+      OmniWorkflowKind.lite =>
+        'Mirrors the server\'s "Lite Collection" — small, fast models.',
+      OmniWorkflowKind.ultra =>
+        'Mirrors the server\'s "Ultra Collection" — top-tier capability, large download.',
+      OmniWorkflowKind.custom =>
+        'Uses the component models configured by the selected server Collection.',
+    };
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -371,10 +374,7 @@ class _TemplateSummary extends StatelessWidget {
           Icon(Icons.info_outline, size: 16, color: scheme.onSurfaceVariant),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
           ),
         ],
       ),
@@ -444,20 +444,16 @@ class _TemplateSlot extends ConsumerWidget {
                     const SizedBox(height: 2),
                     Text(
                       id ?? '—',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontFamily: 'monospace',
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              _trailing(
-                context: context,
-                ref: ref,
-                downloading: downloading,
-              ),
+              _trailing(context: context, ref: ref, downloading: downloading),
             ],
           ),
           if (downloading)
@@ -504,9 +500,8 @@ class _TemplateSlot extends ConsumerWidget {
       return const _StatusPill(text: 'Installed', color: Colors.green);
     }
     return TextButton.icon(
-      onPressed: () => ref
-          .read(modelDownloadsProvider.notifier)
-          .start(modelId!),
+      onPressed: () =>
+          ref.read(modelDownloadsProvider.notifier).start(modelId!),
       icon: const Icon(Icons.download, size: 18),
       label: const Text('Download'),
     );
@@ -549,18 +544,17 @@ class _CustomLlmSlot extends ConsumerWidget {
 
     // Show models that look chat-shaped: not pure image / TTS / ASR.
     final candidates = allModels
-        .where((m) =>
-            !m.supportsTts &&
-            !m.supportsAudio &&
-            !m.supportsImageGeneration)
+        .where(
+          (m) =>
+              !m.supportsTts && !m.supportsAudio && !m.supportsImageGeneration,
+        )
         .toList(growable: false);
 
     final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Text generation',
-            style: Theme.of(context).textTheme.bodyMedium),
+        Text('Text generation', style: Theme.of(context).textTheme.bodyMedium),
         const SizedBox(height: 4),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -700,8 +694,7 @@ class _Note extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style:
-                  Theme.of(context).textTheme.bodySmall?.copyWith(color: fg),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: fg),
             ),
           ),
         ],

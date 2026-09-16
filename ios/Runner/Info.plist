@@ -41,6 +41,10 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>This app uses the camera to take photos for AI image analysis.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Read calendar events only when you ask Lemonade to summarize your schedule or day.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Read calendar events only when you ask Lemonade to summarize your schedule or day. Event details are sent to your active AI server.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app uses the local network to discover Lemonade AI servers on your network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

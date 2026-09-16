@@ -5,12 +5,11 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lemonade_mobile/api/lemonade_client.dart';
-import 'package:lemonade_mobile/api/nexus/nexus_account_client.dart'
-    show kNexusGatewayBaseUrl;
 import 'package:lemonade_mobile/models/server_config.dart';
 import 'package:lemonade_mobile/providers/app_mode_provider.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
 import 'package:lemonade_mobile/utils/model_utils.dart';
+import 'package:lemonade_mobile/utils/server_identity.dart';
 
 final modelsProvider = StateNotifierProvider<ModelsNotifier, List<ModelInfo>>(
   (ref) => ModelsNotifier(ref),
@@ -21,18 +20,21 @@ final modelsProvider = StateNotifierProvider<ModelsNotifier, List<ModelInfo>>(
 /// unrestricted.
 bool isNxsCollection(ModelInfo m) => m.id.toUpperCase().startsWith('NXS');
 
-final selectedModelProvider = StateNotifierProvider<SelectedModelNotifier, String?>(
-  (ref) => SelectedModelNotifier(),
-);
+final selectedModelProvider =
+    StateNotifierProvider<SelectedModelNotifier, String?>(
+      (ref) => SelectedModelNotifier(),
+    );
 
 class ModelInfo {
   final String id;
   final List<String> labels;
   final Set<ModelCapabilities> capabilities;
+
   /// True for server-side Lemonade Omni Models (recipe == 'collection.omni').
   /// These can't be sent as the `model` on /chat/completions — callers should
   /// substitute the planner LLM from [compositeModels] for the actual call.
   final bool isCollection;
+
   /// Component model ids when [isCollection] is true; empty otherwise.
   final List<String> compositeModels;
 
@@ -48,29 +50,30 @@ class ModelInfo {
   }) : capabilities = ModelUtils.detectCapabilities(id, labels);
 
   bool get supportsVision => ModelUtils.supportsVision(capabilities);
-  bool get supportsImageGeneration => ModelUtils.supportsImageGeneration(capabilities);
+  bool get supportsImageGeneration =>
+      ModelUtils.supportsImageGeneration(capabilities);
   bool get supportsThinking => ModelUtils.supportsThinking(capabilities);
   bool get supportsAudio => ModelUtils.supportsAudio(capabilities);
   bool get supportsTts => ModelUtils.supportsTts(capabilities);
   bool get isTextOnly => ModelUtils.isTextOnly(capabilities);
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'labels': labels,
-        if (isCollection) 'isCollection': true,
-        if (compositeModels.isNotEmpty) 'compositeModels': compositeModels,
-        if (maxContextWindow > 0) 'maxContextWindow': maxContextWindow,
-      };
+    'id': id,
+    'labels': labels,
+    if (isCollection) 'isCollection': true,
+    if (compositeModels.isNotEmpty) 'compositeModels': compositeModels,
+    if (maxContextWindow > 0) 'maxContextWindow': maxContextWindow,
+  };
 
   factory ModelInfo.fromJson(Map<String, dynamic> json) => ModelInfo(
-        json['id'] as String? ?? '',
-        [...?(json['labels'] as List?)?.whereType<String>()],
-        isCollection: json['isCollection'] as bool? ?? false,
-        compositeModels: [
-          ...?(json['compositeModels'] as List?)?.whereType<String>()
-        ],
-        maxContextWindow: (json['maxContextWindow'] as num?)?.toInt() ?? 0,
-      );
+    json['id'] as String? ?? '',
+    [...?(json['labels'] as List?)?.whereType<String>()],
+    isCollection: json['isCollection'] as bool? ?? false,
+    compositeModels: [
+      ...?(json['compositeModels'] as List?)?.whereType<String>(),
+    ],
+    maxContextWindow: (json['maxContextWindow'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
@@ -143,8 +146,10 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   Future<void> _saveCache(String baseUrl, List<ModelInfo> models) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_cacheKey(baseUrl),
-          jsonEncode([for (final m in models) m.toJson()]));
+      await prefs.setString(
+        _cacheKey(baseUrl),
+        jsonEncode([for (final m in models) m.toJson()]),
+      );
     } catch (_) {
       // Cache is best-effort — a failed write just means a slower next boot.
     }
@@ -196,12 +201,16 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   }
 
   Future<void> _fetchModels(
-      ServerConfig selectedServer, AppMode mode, int epoch) async {
+    ServerConfig selectedServer,
+    AppMode mode,
+    int epoch,
+  ) async {
     // The NXS* lock applies only in Subscription mode AND only against the
     // managed gateway. Local AI / Mesh show every installed model.
-    final isGateway = selectedServer.baseUrl.trim() == kNexusGatewayBaseUrl;
+    final isGateway = isNexusGatewayEndpoint(selectedServer);
+    final isManagedGateway = isManagedSubscriptionServer(selectedServer);
     final isSubscription = mode == AppMode.subscription;
-    final restrictToNxs = isSubscription && isGateway;
+    final restrictToNxs = isSubscription && isManagedGateway;
 
     // Right after switching into Subscription mode the previous (local)
     // server can still be selected for a beat while the gateway server is
@@ -209,7 +218,7 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     // chat model, which then visibly "flips" to an NXS collection once the
     // gateway list lands. Skip the transient fetch; the server-change
     // listener re-runs us as soon as the gateway is selected.
-    if (isSubscription && !isGateway) return;
+    if (isSubscription && !isManagedGateway) return;
 
     final client = LemonadeApiClient(selectedServer);
     try {
@@ -246,14 +255,15 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
           ? allModels
           : allModels.where((m) => m.downloaded == true).toList();
       final modelInfos = apiModels
-          .map((m) => ModelInfo(
-                m.id,
-                m.labels,
-                isCollection: m.isCollection,
-                compositeModels: m.compositeModels,
-                maxContextWindow:
-                    ggufCtxById[m.id] ?? registryCtxById[m.id] ?? 0,
-              ))
+          .map(
+            (m) => ModelInfo(
+              m.id,
+              m.labels,
+              isCollection: m.isCollection,
+              compositeModels: m.compositeModels,
+              maxContextWindow: ggufCtxById[m.id] ?? registryCtxById[m.id] ?? 0,
+            ),
+          )
           .toList();
       // Keep the FULL catalog in state even on the gateway: the wire-model
       // substitution (collection → chat component) and the omni capability
@@ -310,7 +320,8 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
         final ModelInfo pick;
         if (restrictToNxs) {
           // Subscription is locked to NXS* collections.
-          pick = _preferredNxs(allowed) ??
+          pick =
+              _preferredNxs(allowed) ??
               (allowed.isNotEmpty ? allowed.first : ModelInfo('', const []));
         } else {
           // Prefer the default Halo collection; otherwise fall back to a
@@ -324,7 +335,8 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
             return l.contains('embed') || l.contains('rerank');
           }
 
-          pick = preferredDefault(modelInfos) ??
+          pick =
+              preferredDefault(modelInfos) ??
               modelInfos.firstWhere(
                 (m) =>
                     !m.supportsTts &&
@@ -336,8 +348,7 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
                     : ModelInfo('', const []),
               );
         }
-        if (pick.id.isNotEmpty &&
-            !_isStale(epoch, selectedServer, mode)) {
+        if (pick.id.isNotEmpty && !_isStale(epoch, selectedServer, mode)) {
           await selectedModelNotifier.selectModel(pick.id);
         }
       }
@@ -395,8 +406,7 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
   Future<void> refreshAndSelectPreferred() async {
     await fetchModels();
     final server = ref.read(selectedServerProvider);
-    final isGateway =
-        server != null && server.baseUrl.trim() == kNexusGatewayBaseUrl;
+    final isGateway = server != null && isManagedSubscriptionServer(server);
     final isSubscription = ref.read(appModeProvider) == AppMode.subscription;
     if (isSubscription && isGateway) {
       // Subscription: force one of the curated NXS* collections.
@@ -447,7 +457,9 @@ class SelectedModelNotifier extends StateNotifier<String?> {
 
   // Helper method to check if a model is actually selected and available
   bool isModelSelectedAndAvailable(List<ModelInfo> availableModels) {
-    return state != null && state!.isNotEmpty && availableModels.any((model) => model.id == state);
+    return state != null &&
+        state!.isNotEmpty &&
+        availableModels.any((model) => model.id == state);
   }
 
   Future<void> _saveSelectedModel() async {

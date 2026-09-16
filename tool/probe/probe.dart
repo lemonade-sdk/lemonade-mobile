@@ -10,12 +10,12 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   debugPrint('PROBE start');
 
-  runApp(const MaterialApp(
+  runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(),
     home: Scaffold(
       body: Column(children: [
-        Center(
+        const Center(
           child: Text('Hello 你好 · Lemonade 4.0',
               style: TextStyle(fontSize: 56, fontWeight: FontWeight.w700)),
         ),
@@ -26,10 +26,13 @@ Future<void> main() async {
 
   // Set the view size after the first frame exists.
   try {
-    final view = WidgetsBinding.instance.platformDispatcher.implicitView!;
-    view.physicalSize = const Size(1320, 2868);
-    view.devicePixelRatio = 3.0;
-    debugPrint('PROBE sized via implicitView: ${view.physicalSize}');
+    final renderView = RendererBinding.instance.renderViews.first;
+    renderView.configuration = ViewConfiguration(
+      physicalConstraints: BoxConstraints.tight(Size(1320, 2868)),
+      logicalConstraints: BoxConstraints.tight(Size(440, 956)),
+      devicePixelRatio: 3,
+    );
+    debugPrint('PROBE sized render view to 1320x2868');
   } catch (e) {
     debugPrint('PROBE implicitView sizing failed: $e');
   }

@@ -38,6 +38,7 @@ class _ChatTabState extends ConsumerState<ChatTab> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScrolled);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
   }
 
   @override
@@ -89,9 +90,14 @@ class _ChatTabState extends ConsumerState<ChatTab> {
     // Restore each conversation's own model when switching chats.
     ref.listen(activeChatProvider, (_, next) {
       final ov = next?.modelOverrides?.llmModel;
-      if (ov != null && ov.isNotEmpty && ov != ref.read(selectedModelProvider)) {
+      if (ov != null &&
+          ov.isNotEmpty &&
+          ov != ref.read(selectedModelProvider)) {
         ref.read(selectedModelProvider.notifier).selectModel(ov);
       }
+      // Switching conversations replaces the whole list. Scroll only after
+      // the new transcript has been laid out so maxScrollExtent is current.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
     });
 
     return Container(
@@ -142,15 +148,17 @@ class _ChatTabState extends ConsumerState<ChatTab> {
                                 border: Border.all(color: t.line2),
                                 boxShadow: [
                                   BoxShadow(
-                                    color:
-                                        Colors.black.withValues(alpha: 0.25),
+                                    color: Colors.black.withValues(alpha: 0.25),
                                     blurRadius: 10,
                                     offset: const Offset(0, 3),
                                   ),
                                 ],
                               ),
-                              child: Icon(Icons.keyboard_arrow_down,
-                                  size: 24, color: t.accent),
+                              child: Icon(
+                                Icons.keyboard_arrow_down,
+                                size: 24,
+                                color: t.accent,
+                              ),
                             ),
                           ),
                         ),
@@ -183,16 +191,21 @@ class _ChatTabState extends ConsumerState<ChatTab> {
               behavior: HitTestBehavior.opaque,
               child: Column(
                 children: [
-                  Text('Chat',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: t.text)),
+                  Text(
+                    'Chat',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: t.text,
+                    ),
+                  ),
                   const SizedBox(height: 2),
                   // Tappable model/collection chip — opens the searchable picker.
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: t.surface,
                       borderRadius: BorderRadius.circular(8),
@@ -202,10 +215,12 @@ class _ChatTabState extends ConsumerState<ChatTab> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Flexible(
-                          child: Text(model,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: nexusMono(fontSize: 9.5, color: t.muted)),
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: nexusMono(fontSize: 9.5, color: t.muted),
+                          ),
                         ),
                         const SizedBox(width: 4),
                         Icon(Icons.expand_more, size: 13, color: t.faint),
@@ -220,8 +235,9 @@ class _ChatTabState extends ConsumerState<ChatTab> {
             icon: Icons.call_outlined,
             iconColor: t.accent,
             // Reuses the existing fully-wired duplex voice session screen.
-            onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const TalkScreen())),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const TalkScreen())),
           ),
           const SizedBox(width: 8),
           NexusIconButton(
@@ -233,10 +249,12 @@ class _ChatTabState extends ConsumerState<ChatTab> {
             onTap: () {
               if (ref.read(chatProvider).isEmpty) {
                 // Nothing would visibly change — tell the user why.
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('You\'re already in a new chat.'),
-                  duration: Duration(seconds: 1),
-                ));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('You\'re already in a new chat.'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
                 return;
               }
               ref.read(chatHistoryProvider.notifier).createNewChat();
@@ -260,15 +278,24 @@ class _ChatTabState extends ConsumerState<ChatTab> {
                 children: [
                   const LemonLogo(size: 44),
                   const SizedBox(height: 16),
-                  Text('Message Lemonade',
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: t.text)),
+                  Text(
+                    'Message Lemonade',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: t.text,
+                    ),
+                  ),
                   const SizedBox(height: 6),
-                  Text('Ask anything, generate images, or use / for commands.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 13, height: 1.45, color: t.muted)),
+                  Text(
+                    'Ask anything, generate images, or use / for commands.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.45,
+                      color: t.muted,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -288,15 +315,19 @@ class _ChatTabState extends ConsumerState<ChatTab> {
                         .read(chatProvider.notifier)
                         .sendMessage(s, scrollController: _scroll),
                     child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 13,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: t.surface,
                         borderRadius: BorderRadius.circular(11),
                         border: Border.all(color: t.line2),
                       ),
-                      child: Text(s,
-                          style: TextStyle(fontSize: 12.5, color: t.muted)),
+                      child: Text(
+                        s,
+                        style: TextStyle(fontSize: 12.5, color: t.muted),
+                      ),
                     ),
                   ),
                 ),

@@ -9,6 +9,7 @@ import '../api/types/chat_response.dart';
 import '../api/types/tool_call.dart';
 import '../api/types/tool_definition.dart';
 import '../constants/messages.dart';
+import '../models/thinking_level.dart';
 import 'cancel_token.dart';
 import 'capability_resolver.dart';
 import 'tool_definitions.dart';
@@ -86,6 +87,7 @@ class AgentLoop {
   final CapabilitySnapshot capabilities;
   final OmniToolExecutor executor;
   final CancelToken? cancelToken;
+  final ThinkingLevel? thinkingLevel;
 
   AgentLoop({
     required this.client,
@@ -93,6 +95,7 @@ class AgentLoop {
     required this.capabilities,
     required this.executor,
     this.cancelToken,
+    this.thinkingLevel,
   });
 
   bool get _cancelled => cancelToken?.isCancelled ?? false;
@@ -109,15 +112,16 @@ class AgentLoop {
 
     final activeTools = capabilities.tools.map((t) => t.definition).toList();
     final systemPrompt = OmniToolCatalog.buildSystemPrompt(activeTools);
-    final mergedSystem = (extraSystemPrompt == null || extraSystemPrompt.isEmpty)
+    final mergedSystem =
+        (extraSystemPrompt == null || extraSystemPrompt.isEmpty)
         ? systemPrompt
         : '$systemPrompt\n\n$extraSystemPrompt';
 
     final llmMessages = <ApiChatMessage>[];
     if (processed.firstOrNull?.role == 'system') {
-      llmMessages.add(ApiChatMessage.system(
-        '$mergedSystem\n\n${processed.first.text ?? ''}',
-      ));
+      llmMessages.add(
+        ApiChatMessage.system('$mergedSystem\n\n${processed.first.text ?? ''}'),
+      );
       llmMessages.addAll(processed.skip(1).map(_toApiMessage));
     } else {
       llmMessages.add(ApiChatMessage.system(mergedSystem));
@@ -153,6 +157,7 @@ class AgentLoop {
         messages: llmMessages,
         tools: activeTools,
         stream: true,
+        thinkingLevel: thinkingLevel,
       );
       var toolCalls = const <ToolCall>[];
       lastAssistantText = '';
@@ -164,6 +169,10 @@ class AgentLoop {
             case ChatContentDelta():
               streamedAny = true;
               yield AgentDelta(ev.text);
+            case ChatReasoningDelta():
+              // The loop already emitted its user-facing Thinking… status;
+              // keep the model's private reasoning tokens hidden.
+              break;
             case ChatToolCallDelta():
               // Partial tool-call fragments — nothing user-visible until the
               // assembled result arrives with the finish event.
@@ -189,12 +198,15 @@ class AgentLoop {
         // render doubled.
         if (!isRetryableTransportError(e)) rethrow;
         if (streamedAny) yield const AgentStatus('Thinking…');
-        final response = await client.chat.create(ChatCompletionRequest(
-          model: llmModelId,
-          messages: llmMessages,
-          tools: activeTools,
-          stream: false,
-        ));
+        final response = await client.chat.create(
+          ChatCompletionRequest(
+            model: llmModelId,
+            messages: llmMessages,
+            tools: activeTools,
+            stream: false,
+            thinkingLevel: thinkingLevel,
+          ),
+        );
         lastAssistantText = response.message.content ?? '';
         toolCalls = response.message.toolCalls ?? const <ToolCall>[];
         interrupted = false;
@@ -202,12 +214,15 @@ class AgentLoop {
       if (interrupted && toolCalls.isEmpty) {
         if (lastAssistantText.isEmpty) {
           // Truncated before any content arrived — silent non-streaming retry.
-          final response = await client.chat.create(ChatCompletionRequest(
-            model: llmModelId,
-            messages: llmMessages,
-            tools: activeTools,
-            stream: false,
-          ));
+          final response = await client.chat.create(
+            ChatCompletionRequest(
+              model: llmModelId,
+              messages: llmMessages,
+              tools: activeTools,
+              stream: false,
+              thinkingLevel: thinkingLevel,
+            ),
+          );
           lastAssistantText = response.message.content ?? '';
           toolCalls = response.message.toolCalls ?? const <ToolCall>[];
         } else {
@@ -224,10 +239,12 @@ class AgentLoop {
         return;
       }
 
-      llmMessages.add(ApiChatMessage.assistantToolCalls(
-        toolCalls,
-        content: lastAssistantText.isEmpty ? null : lastAssistantText,
-      ));
+      llmMessages.add(
+        ApiChatMessage.assistantToolCalls(
+          toolCalls,
+          content: lastAssistantText.isEmpty ? null : lastAssistantText,
+        ),
+      );
 
       // Execute the round's tool calls SEQUENTIALLY, in order. Tool calls in
       // one round are NOT independent: models chain context-dependent tools
@@ -253,13 +270,19 @@ class AgentLoop {
           );
           return;
         }
-        final result = await executor.execute(tc, ctx, isCancelled: () => _cancelled);
+        final result = await executor.execute(
+          tc,
+          ctx,
+          isCancelled: () => _cancelled,
+        );
         if (_cancelled) {
           // Keep any artifact the tool already produced; stop further tools.
           final applied = _applyResult(result, ctx);
           if (applied.artifact != null) {
-            yield AgentArtifact(applied.artifact!,
-                replacesPrevious: applied.replacedPrevious);
+            yield AgentArtifact(
+              applied.artifact!,
+              replacesPrevious: applied.replacedPrevious,
+            );
           }
           yield AgentDone(
             text: _humanizeReactJson(lastAssistantText),
@@ -270,13 +293,17 @@ class AgentLoop {
         final applied = _applyResult(result, ctx);
         final artifact = applied.artifact;
         if (artifact != null) {
-          yield AgentArtifact(artifact,
-              replacesPrevious: applied.replacedPrevious);
+          yield AgentArtifact(
+            artifact,
+            replacesPrevious: applied.replacedPrevious,
+          );
         }
         if (result is EndCallResult) {
           yield const AgentEndCall();
         }
-        llmMessages.add(ApiChatMessage.tool(applied.summary, toolCallId: tc.id));
+        llmMessages.add(
+          ApiChatMessage.tool(applied.summary, toolCallId: tc.id),
+        );
       }
     }
 
@@ -291,19 +318,22 @@ class AgentLoop {
     yield const AgentStatus('Wrapping up…');
     String wrapUpText = lastAssistantText;
     try {
-      final wrapUp = await client.chat.create(ChatCompletionRequest(
-        model: llmModelId,
-        messages: [
-          ...llmMessages,
-          ApiChatMessage.system(
-            'You have completed your research. Without calling any more '
-            'tools, give the user a short, helpful final reply based on '
-            'what you found above. If you ran into errors, apologize '
-            'briefly and tell them what was missing.',
-          ),
-        ],
-        stream: false,
-      ));
+      final wrapUp = await client.chat.create(
+        ChatCompletionRequest(
+          model: llmModelId,
+          messages: [
+            ...llmMessages,
+            ApiChatMessage.system(
+              'You have completed your research. Without calling any more '
+              'tools, give the user a short, helpful final reply based on '
+              'what you found above. If you ran into errors, apologize '
+              'briefly and tell them what was missing.',
+            ),
+          ],
+          stream: false,
+          thinkingLevel: thinkingLevel,
+        ),
+      );
       final text = wrapUp.message.content?.trim() ?? '';
       if (text.isNotEmpty) wrapUpText = text;
     } catch (_) {
@@ -332,7 +362,8 @@ class AgentLoop {
     final Map<String, dynamic>? parsed = _tryDecodeJsonObject(trimmed);
     if (parsed == null) return text;
 
-    final hasReactKeys = parsed.containsKey('action') ||
+    final hasReactKeys =
+        parsed.containsKey('action') ||
         parsed.containsKey('action_input') ||
         parsed.containsKey('thought');
     if (!hasReactKeys) return text;
@@ -363,7 +394,8 @@ class AgentLoop {
     if (actionInput is Map) {
       asMap = actionInput.cast<String, dynamic>();
     } else if (actionInput is String) {
-      asMap = _tryDecodeJsonObject(actionInput) ??
+      asMap =
+          _tryDecodeJsonObject(actionInput) ??
           _tryDecodeJsonObject(actionInput.replaceAll("'", '"'));
       if (asMap == null) {
         final s = actionInput.trim();
@@ -396,7 +428,9 @@ class AgentLoop {
   /// whether it replaced a prior turn artifact — so the caller emits the
   /// ACTUAL artifact rather than guessing from `turnArtifacts.last`.
   ({String summary, Artifact? artifact, bool replacedPrevious}) _applyResult(
-      ToolExecutionResult result, ToolExecutionContext ctx) {
+    ToolExecutionResult result,
+    ToolExecutionContext ctx,
+  ) {
     switch (result) {
       case TextResult():
         return (
@@ -529,20 +563,15 @@ class AgentLoop {
             final mime = url.substring(5, url.indexOf(';'));
             final commaIdx = url.indexOf(',');
             final b64 = commaIdx > 0 ? url.substring(commaIdx + 1) : '';
-            priorArtifacts.add(Artifact(
-              kind: ArtifactKind.image,
-              mime: mime,
-              base64Data: b64,
-            ));
+            priorArtifacts.add(
+              Artifact(kind: ArtifactKind.image, mime: mime, base64Data: b64),
+            );
           }
         } else if (p.type == 'input_audio' &&
             p.audioBase64 != null &&
             p.audioFormat != null &&
             isUser) {
-          audio.add((
-            data: p.audioBase64!,
-            mime: 'audio/${p.audioFormat}',
-          ));
+          audio.add((data: p.audioBase64!, mime: 'audio/${p.audioFormat}'));
         }
       }
     }
@@ -573,7 +602,9 @@ class AgentLoop {
         if (p.type == 'image_url') {
           if (msg.role == 'user') {
             imageCount++;
-            newParts.add(ApiContentPart.text('[User provided image #$imageCount]'));
+            newParts.add(
+              ApiContentPart.text('[User provided image #$imageCount]'),
+            );
           } else {
             newParts.add(const ApiContentPart.text('[Generated image]'));
           }
@@ -581,19 +612,22 @@ class AgentLoop {
           if (msg.role == 'user') {
             audioCount++;
             newParts.add(
-                ApiContentPart.text('[User provided audio file #$audioCount]'));
+              ApiContentPart.text('[User provided audio file #$audioCount]'),
+            );
           }
           // assistant audio is dropped silently
         } else {
           newParts.add(p);
         }
       }
-      out.add(AgentMessage(
-        role: msg.role,
-        text: null,
-        parts: newParts,
-        toolCallId: msg.toolCallId,
-      ));
+      out.add(
+        AgentMessage(
+          role: msg.role,
+          text: null,
+          parts: newParts,
+          toolCallId: msg.toolCallId,
+        ),
+      );
     }
     return out;
   }
@@ -619,7 +653,7 @@ class AgentMessage {
   AgentMessage.assistant(String text) : this(role: 'assistant', text: text);
   AgentMessage.system(String text) : this(role: 'system', text: text);
   AgentMessage.userParts(List<ApiContentPart> parts)
-      : this(role: 'user', parts: parts);
+    : this(role: 'user', parts: parts);
 }
 
 class _ExtractedBinaries {

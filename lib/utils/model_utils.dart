@@ -31,8 +31,12 @@ class ModelUtils {
   }
 
   /// Detect model capabilities from model ID and labels
-  static Set<ModelCapabilities> detectCapabilities(String modelId, List<String> labels) {
+  static Set<ModelCapabilities> detectCapabilities(
+    String modelId,
+    List<String> labels,
+  ) {
     final capabilities = <ModelCapabilities>{};
+    final lowerId = modelId.toLowerCase();
 
     // Check labels first
     if (labels.contains('vision')) {
@@ -44,6 +48,9 @@ class ModelUtils {
     if (labels.contains('thinking')) {
       capabilities.add(ModelCapabilities.thinking);
     }
+    if (labels.contains('reasoning')) {
+      capabilities.add(ModelCapabilities.thinking);
+    }
     if (labels.contains('audio') || labels.contains('transcription')) {
       capabilities.add(ModelCapabilities.audio);
     }
@@ -53,21 +60,16 @@ class ModelUtils {
 
     // If no capabilities detected from labels, check model name
     if (capabilities.isEmpty) {
-      final lowerId = modelId.toLowerCase();
-
       // Check for vision capability in model name
       if (lowerId.contains('vision')) {
         capabilities.add(ModelCapabilities.vision);
       }
 
       // Check for image generation capability in model name
-      if (lowerId.contains('dall') || lowerId.contains('stable-diffusion') || lowerId.contains('sdxl')) {
+      if (lowerId.contains('dall') ||
+          lowerId.contains('stable-diffusion') ||
+          lowerId.contains('sdxl')) {
         capabilities.add(ModelCapabilities.imageGeneration);
-      }
-
-      // Check for thinking capability in model name
-      if (lowerId.contains('thinking') || lowerId.contains('o1')) {
-        capabilities.add(ModelCapabilities.thinking);
       }
 
       // Check for audio capability in model name
@@ -81,6 +83,20 @@ class ModelUtils {
       }
     }
 
+    // Reasoning capability is independent of vision/audio labels, so apply
+    // model-id fallbacks even when another label already populated the set.
+    // The Nexus Qwen3.8 catalog currently reports only `labels: [text]`.
+    final isNonChatUtility =
+        lowerId.contains('embed') || lowerId.contains('rerank');
+    if (!isNonChatUtility &&
+        (lowerId.contains('qwen3') ||
+            lowerId.contains('qwq') ||
+            lowerId.contains('deepseek-r1') ||
+            lowerId.contains('thinking') ||
+            RegExp(r'(^|[/_-])o[134]([/_-]|$)').hasMatch(lowerId))) {
+      capabilities.add(ModelCapabilities.thinking);
+    }
+
     // If still no capabilities detected, default to text-only
     if (capabilities.isEmpty) {
       capabilities.add(ModelCapabilities.textOnly);
@@ -91,7 +107,8 @@ class ModelUtils {
 
   /// Check if capabilities represent a text-only model
   static bool isTextOnly(Set<ModelCapabilities> capabilities) {
-    return capabilities.contains(ModelCapabilities.textOnly) && capabilities.length == 1;
+    return capabilities.contains(ModelCapabilities.textOnly) &&
+        capabilities.length == 1;
   }
 
   /// Check if capabilities include vision support
@@ -127,13 +144,29 @@ class ModelUtils {
     } else if (capabilities.contains(ModelCapabilities.tts)) {
       return Icon(Icons.volume_up, size: 16, color: AppColors.capabilityAudio);
     } else if (capabilities.contains(ModelCapabilities.vision)) {
-      return Icon(Icons.visibility, size: 16, color: AppColors.capabilityVision);
+      return Icon(
+        Icons.visibility,
+        size: 16,
+        color: AppColors.capabilityVision,
+      );
     } else if (capabilities.contains(ModelCapabilities.imageGeneration)) {
-      return Icon(Icons.image, size: 16, color: AppColors.capabilityImageGeneration);
+      return Icon(
+        Icons.image,
+        size: 16,
+        color: AppColors.capabilityImageGeneration,
+      );
     } else if (capabilities.contains(ModelCapabilities.thinking)) {
-      return Icon(Icons.psychology, size: 16, color: AppColors.capabilityTextOnly);
+      return Icon(
+        Icons.psychology,
+        size: 16,
+        color: AppColors.capabilityTextOnly,
+      );
     } else {
-      return Icon(Icons.text_fields, size: 16, color: AppColors.capabilityTextOnly);
+      return Icon(
+        Icons.text_fields,
+        size: 16,
+        color: AppColors.capabilityTextOnly,
+      );
     }
   }
 
@@ -156,11 +189,14 @@ class ModelUtils {
     if (capabilities.contains(ModelCapabilities.tts)) {
       capabilityNames.add('TTS');
     }
-    if (capabilities.contains(ModelCapabilities.textOnly) && capabilities.length == 1) {
+    if (capabilities.contains(ModelCapabilities.textOnly) &&
+        capabilities.length == 1) {
       capabilityNames.add('Text Only');
     }
 
-    final text = capabilityNames.isEmpty ? 'Text Only' : capabilityNames.join(' + ');
+    final text = capabilityNames.isEmpty
+        ? 'Text Only'
+        : capabilityNames.join(' + ');
     return Text(text, style: const TextStyle(fontSize: 12));
   }
 
@@ -173,25 +209,29 @@ class ModelUtils {
     return Wrap(
       spacing: 4,
       runSpacing: 2,
-      children: labels.map((label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.blue.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: Colors.blue.withValues(alpha: 0.3),
-            width: 1,
-          ),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
-            color: Colors.blue,
-          ),
-        ),
-      )).toList(),
+      children: labels
+          .map(
+            (label) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.blue.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.blue,
+                ),
+              ),
+            ),
+          )
+          .toList(),
     );
   }
 }

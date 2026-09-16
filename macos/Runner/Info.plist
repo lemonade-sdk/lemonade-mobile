@@ -30,6 +30,10 @@
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Lemonade Mobile uses the microphone to send your voice to the AI for conversation and transcription.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Read calendar events only when you ask Lemonade to summarize your schedule or day.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Read calendar events only when you ask Lemonade to summarize your schedule or day. Event details are sent to your active AI server.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Save AI-generated images from this conversation to your Photos library.</string>
 </dict>

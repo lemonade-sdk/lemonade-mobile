@@ -19,7 +19,9 @@ class ChatCompletion {
 
   factory ChatCompletion.fromJson(Map<String, dynamic> json) {
     final choices = json['choices'] as List? ?? const [];
-    final first = choices.isNotEmpty ? choices.first as Map<String, dynamic> : <String, dynamic>{};
+    final first = choices.isNotEmpty
+        ? choices.first as Map<String, dynamic>
+        : <String, dynamic>{};
     final msgJson = first['message'] as Map<String, dynamic>? ?? const {};
     return ChatCompletion(
       id: json['id'] as String? ?? '',
@@ -45,10 +47,10 @@ class ChatUsage {
   });
 
   factory ChatUsage.fromJson(Map<String, dynamic> json) => ChatUsage(
-        promptTokens: (json['prompt_tokens'] as num?)?.toInt() ?? 0,
-        completionTokens: (json['completion_tokens'] as num?)?.toInt() ?? 0,
-        totalTokens: (json['total_tokens'] as num?)?.toInt() ?? 0,
-      );
+    promptTokens: (json['prompt_tokens'] as num?)?.toInt() ?? 0,
+    completionTokens: (json['completion_tokens'] as num?)?.toInt() ?? 0,
+    totalTokens: (json['total_tokens'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// Streaming chunk events emitted by [ChatEndpoint.stream].
@@ -60,6 +62,12 @@ sealed class ChatStreamEvent {
 class ChatContentDelta extends ChatStreamEvent {
   final String text;
   const ChatContentDelta(this.text);
+}
+
+/// A hidden reasoning token from models such as Qwen3.8. The UI uses this as
+/// an activity signal but does not expose chain-of-thought text.
+class ChatReasoningDelta extends ChatStreamEvent {
+  const ChatReasoningDelta();
 }
 
 /// One or more tool_call deltas — already assembled per-slot. The [calls] list contains

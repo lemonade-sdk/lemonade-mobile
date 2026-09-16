@@ -39,8 +39,8 @@ class OmniRouterEnabledNotifier extends StateNotifier<bool> {
 
 final omniRouterEnabledProvider =
     StateNotifierProvider<OmniRouterEnabledNotifier, bool>(
-  (ref) => OmniRouterEnabledNotifier(),
-);
+      (ref) => OmniRouterEnabledNotifier(),
+    );
 
 /// Active OmniRouter workflow kind. Persisted in SharedPreferences (a single
 /// scalar; the custom workflow's three model slots ride on the existing
@@ -74,22 +74,22 @@ class OmniWorkflowKindNotifier extends StateNotifier<OmniWorkflowKind> {
   }
 
   static String _encode(OmniWorkflowKind k) => switch (k) {
-        OmniWorkflowKind.custom => 'custom',
-        OmniWorkflowKind.lite => 'lite',
-        OmniWorkflowKind.ultra => 'ultra',
-      };
+    OmniWorkflowKind.custom => 'custom',
+    OmniWorkflowKind.lite => 'lite',
+    OmniWorkflowKind.ultra => 'ultra',
+  };
 
   static OmniWorkflowKind _decode(String? s) => switch (s) {
-        'lite' => OmniWorkflowKind.lite,
-        'ultra' => OmniWorkflowKind.ultra,
-        _ => OmniWorkflowKind.custom,
-      };
+    'lite' => OmniWorkflowKind.lite,
+    'ultra' => OmniWorkflowKind.ultra,
+    _ => OmniWorkflowKind.custom,
+  };
 }
 
 final omniWorkflowKindProvider =
     StateNotifierProvider<OmniWorkflowKindNotifier, OmniWorkflowKind>(
-  (ref) => OmniWorkflowKindNotifier(),
-);
+      (ref) => OmniWorkflowKindNotifier(),
+    );
 
 /// True when the user's selected "model" in the chat header is actually a
 /// Collection (e.g. "Ultra Collection") rather than a runnable chat model.
@@ -105,16 +105,22 @@ final selectedIsCollectionProvider = Provider<bool>((ref) {
   return false;
 });
 
-/// The model id that should actually be sent on the wire to
-/// /chat/completions. Collapses Collections to their chat-shaped component
-/// (since a Collection can't be loaded as a chat model — it's a meta-id).
-/// Uses [effectiveLlmModelProvider] so a per-chat LLM override wins over the
-/// global selection. Use this whenever you're about to make a chat request,
-/// NOT `selectedModelProvider` alone.
-final wireLlmModelProvider = Provider<String?>((ref) {
-  final selectedId = ref.watch(effectiveLlmModelProvider);
+/// Returns whether [model] can safely be considered for a chat-completions
+/// request. Nexus currently labels embedding and reranker models as `text`,
+/// so those ids need an explicit veto.
+bool isRunnableChatModel(ModelInfo model) {
+  if (model.isCollection) return false;
+  final id = model.id.toLowerCase();
+  if (id.contains('embed') || id.contains('rerank')) return false;
+  return !model.supportsTts &&
+      !model.supportsAudio &&
+      !model.supportsImageGeneration;
+}
+
+/// Collapses a Collection meta-id to the component that can actually be sent
+/// to `/chat/completions`.
+String? resolveWireLlmModel(String? selectedId, List<ModelInfo> models) {
   if (selectedId == null) return null;
-  final models = ref.watch(modelsProvider);
   ModelInfo? selected;
   for (final m in models) {
     if (m.id == selectedId) {
@@ -133,14 +139,12 @@ final wireLlmModelProvider = Provider<String?>((ref) {
   // every non-audio/image modality as plain `text`, so by labels alone
   // "Qwen3-Embedding-0.6B" looked chat-shaped and got sent to
   // /chat/completions (real bug, real 400).
-  bool nonChatById(String id) {
-    final l = id.toLowerCase();
-    return l.contains('embed') || l.contains('rerank');
-  }
-
   String? unknownCandidate;
   for (final componentId in selected.compositeModels) {
-    if (nonChatById(componentId)) continue;
+    final normalizedId = componentId.toLowerCase();
+    if (normalizedId.contains('embed') || normalizedId.contains('rerank')) {
+      continue;
+    }
     ModelInfo? entry;
     for (final m in models) {
       if (m.id == componentId) {
@@ -152,12 +156,27 @@ final wireLlmModelProvider = Provider<String?>((ref) {
       unknownCandidate ??= componentId;
       continue;
     }
-    if (entry.supportsTts || entry.supportsAudio || entry.supportsImageGeneration) {
-      continue;
-    }
-    return componentId;
+    if (isRunnableChatModel(entry)) return componentId;
   }
-  return unknownCandidate ?? selectedId;
+  // Never send the Collection id itself. It is a bundle description, not a
+  // runnable checkpoint. An unknown component is safer than a known media
+  // component and supports catalogs that omit unloaded entries.
+  return unknownCandidate;
+}
+
+/// The model id that should actually be sent on the wire to
+/// /chat/completions. A selected server Collection is authoritative: its
+/// configured planner component wins over stale per-chat/global defaults.
+/// For a normal selection, the usual per-chat > global > selected precedence
+/// still applies.
+final wireLlmModelProvider = Provider<String?>((ref) {
+  final models = ref.watch(modelsProvider);
+  final rawSelectedId = ref.watch(selectedModelProvider);
+  final rawSelected = models.where((m) => m.id == rawSelectedId).firstOrNull;
+  final requestedId = rawSelected?.isCollection == true
+      ? rawSelectedId
+      : ref.watch(effectiveLlmModelProvider);
+  return resolveWireLlmModel(requestedId, models);
 });
 
 /// Resolved view of the active workflow. When the user has a Collection
@@ -177,7 +196,7 @@ final activeOmniWorkflowProvider = Provider<OmniWorkflow>((ref) {
     }
   }
   if (selectedCollection != null) {
-    return _workflowForCollection(selectedCollection, models, ref);
+    return _workflowForCollection(selectedCollection, models);
   }
 
   final kind = ref.watch(omniWorkflowKindProvider);
@@ -210,7 +229,6 @@ final activeOmniWorkflowProvider = Provider<OmniWorkflow>((ref) {
 OmniWorkflow _workflowForCollection(
   ModelInfo collection,
   List<ModelInfo> allModels,
-  Ref ref,
 ) {
   final components = collection.compositeModels;
   final liteSet = OmniWorkflow.lite.collectionComponents.toSet();
@@ -222,6 +240,7 @@ OmniWorkflow _workflowForCollection(
   String? imageGen;
   String? tts;
   String? asr;
+  String? unknownLlm;
   for (final id in components) {
     ModelInfo? m;
     for (final candidate in allModels) {
@@ -230,20 +249,26 @@ OmniWorkflow _workflowForCollection(
         break;
       }
     }
-    if (m == null) continue;
+    if (m == null) {
+      final normalizedId = id.toLowerCase();
+      if (!normalizedId.contains('embed') && !normalizedId.contains('rerank')) {
+        unknownLlm ??= id;
+      }
+      continue;
+    }
     if (m.supportsImageGeneration) {
       imageGen ??= id;
     } else if (m.supportsTts) {
       tts ??= id;
     } else if (m.supportsAudio) {
       asr ??= id;
-    } else {
+    } else if (isRunnableChatModel(m)) {
       llm ??= id;
     }
   }
   return OmniWorkflow(
     kind: OmniWorkflowKind.custom,
-    llmModel: llm,
+    llmModel: llm ?? unknownLlm,
     imageGenModel: imageGen,
     ttsModel: tts,
     asrModel: asr,
@@ -281,10 +306,7 @@ final omniCapabilitiesProvider = Provider<CapabilitySnapshot?>((ref) {
   // Model — even if the server's component listing omits that label, the
   // recipe implies it.
   final apiModels = modelsRaw
-      .map((m) => ApiModelInfo(
-            id: m.id,
-            labels: m.labels,
-          ))
+      .map((m) => ApiModelInfo(id: m.id, labels: m.labels))
       .toList(growable: false);
 
   // Only treat the LLM as "known" if it's actually in the loaded models list.
@@ -306,8 +328,7 @@ final omniCapabilitiesProvider = Provider<CapabilitySnapshot?>((ref) {
     // The Omni recipe is the contract for tool-calling support; if the
     // planner component's label list happens to be missing it, the recipe
     // still wins.
-    if (selectedIsOmniRecipe &&
-        !activeLlm.labels.contains('tool-calling')) {
+    if (selectedIsOmniRecipe && !activeLlm.labels.contains('tool-calling')) {
       activeLlm = ApiModelInfo(
         id: activeLlm.id,
         labels: [...activeLlm.labels, 'tool-calling'],
@@ -333,8 +354,9 @@ final omniCapabilitiesProvider = Provider<CapabilitySnapshot?>((ref) {
   return OmniCapabilityResolver(
     allModels: apiModels,
     activeLlm: activeLlm,
-    collectionComponents:
-        workflow.collectionComponents.isEmpty ? null : workflow.collectionComponents,
+    collectionComponents: workflow.collectionComponents.isEmpty
+        ? null
+        : workflow.collectionComponents,
     userPins: pins,
   ).resolve();
 });

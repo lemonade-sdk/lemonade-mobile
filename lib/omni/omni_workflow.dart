@@ -34,22 +34,27 @@ class OmniWorkflow {
   });
 
   String get displayName => switch (kind) {
-        OmniWorkflowKind.custom => 'Custom',
-        OmniWorkflowKind.lite => 'Lite',
-        OmniWorkflowKind.ultra => 'Ultra',
-      };
+    OmniWorkflowKind.custom => 'Custom',
+    OmniWorkflowKind.lite => 'Lite',
+    OmniWorkflowKind.ultra => 'Ultra',
+  };
 
   bool get isTemplate => kind != OmniWorkflowKind.custom;
+
+  /// True when these slots came from a server-provided Collection. Dynamic
+  /// collections are custom-shaped for capability resolution, but their
+  /// component choices are still server-owned and must not become editable.
+  bool get isCollectionBacked => collectionComponents.isNotEmpty;
 
   /// All model IDs this workflow expects to be installed (LLM + image + TTS
   /// + ASR). `null` slots are skipped — they fall back to whatever
   /// capability_resolver finds by label.
   List<String> get expectedModels => [
-        if (llmModel != null) llmModel!,
-        if (imageGenModel != null) imageGenModel!,
-        if (ttsModel != null) ttsModel!,
-        if (asrModel != null) asrModel!,
-      ];
+    if (llmModel != null) llmModel!,
+    if (imageGenModel != null) imageGenModel!,
+    if (ttsModel != null) ttsModel!,
+    if (asrModel != null) asrModel!,
+  ];
 
   /// Server-side "Lite Collection" template. Model IDs match
   /// `src/cpp/resources/server_models.json` in the lemonade-sdk repo.

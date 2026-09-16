@@ -12,6 +12,7 @@ import '../api/realtime/realtime_audio_socket.dart';
 import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../models/chat_message.dart' as ui;
+import '../models/thinking_level.dart';
 import '../omni/agent_loop.dart';
 import '../omni/capability_resolver.dart';
 import '../omni/message_mapper.dart';
@@ -38,6 +39,7 @@ class DuplexVoiceSession {
   final String? ttsModel;
   final String asrModel;
   final List<ui.ChatMessage> history;
+  final ThinkingLevel? thinkingLevel;
 
   /// Optional. When provided alongside [executor] and the LLM advertises
   /// tool-calling, each turn runs through [AgentLoop] so the model can
@@ -112,14 +114,13 @@ class DuplexVoiceSession {
     required this.asrModel,
     required this.ttsModel,
     required this.history,
+    this.thinkingLevel,
     this.capabilities,
     this.executor,
   }) : _ws = RealtimeAudioSocket.forClient(client);
 
   bool get _toolCallingEnabled =>
-      capabilities != null &&
-      capabilities!.isUsable &&
-      executor != null;
+      capabilities != null && capabilities!.isUsable && executor != null;
 
   Stream<DuplexState> get state => _state.stream;
   Stream<DuplexEvent> get events => _events.stream;
@@ -254,9 +255,12 @@ class DuplexVoiceSession {
 
     // Fan PCM to WS/buffer AND Silero VAD (single mic owner).
     final broadcast = stream.asBroadcastStream();
-    _pcmSub = broadcast.listen(_handlePcmChunk, onError: (Object e) {
-      if (_running) _emitEvent(DuplexEvent.error('Mic stream error: $e'));
-    });
+    _pcmSub = broadcast.listen(
+      _handlePcmChunk,
+      onError: (Object e) {
+        if (_running) _emitEvent(DuplexEvent.error('Mic stream error: $e'));
+      },
+    );
 
     await _startVad(broadcast);
   }
@@ -300,8 +304,9 @@ class DuplexVoiceSession {
     } catch (e) {
       // VAD failed to load — still stream to WS (server VAD) or error in HTTP mode.
       if (_httpFallback && _running) {
-        _emitEvent(DuplexEvent.error(
-            'Voice activity detection failed to start: $e'));
+        _emitEvent(
+          DuplexEvent.error('Voice activity detection failed to start: $e'),
+        );
       }
     }
   }
@@ -325,24 +330,26 @@ class DuplexVoiceSession {
     if (_audioSessionConfigured) return;
     try {
       final session = await AudioSession.instance;
-      await session.configure(AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions:
-            AVAudioSessionCategoryOptions.defaultToSpeaker |
-                AVAudioSessionCategoryOptions.allowBluetooth |
-                AVAudioSessionCategoryOptions.allowBluetoothA2dp,
-        avAudioSessionMode: AVAudioSessionMode.voiceChat,
-        avAudioSessionRouteSharingPolicy:
-            AVAudioSessionRouteSharingPolicy.defaultPolicy,
-        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-        androidAudioAttributes: const AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.speech,
-          flags: AndroidAudioFlags.none,
-          usage: AndroidAudioUsage.voiceCommunication,
+      await session.configure(
+        AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.defaultToSpeaker |
+              AVAudioSessionCategoryOptions.allowBluetooth |
+              AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+          avAudioSessionMode: AVAudioSessionMode.voiceChat,
+          avAudioSessionRouteSharingPolicy:
+              AVAudioSessionRouteSharingPolicy.defaultPolicy,
+          avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+          androidAudioAttributes: const AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            flags: AndroidAudioFlags.none,
+            usage: AndroidAudioUsage.voiceCommunication,
+          ),
+          androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+          androidWillPauseWhenDucked: false,
         ),
-        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-        androidWillPauseWhenDucked: false,
-      ));
+      );
       await session.setActive(true);
       _audioSessionConfigured = true;
     } catch (_) {
@@ -449,11 +456,13 @@ class DuplexVoiceSession {
       return;
     }
 
-    _emitEvent(DuplexUserSpoke(
-      text,
-      audioBase64: wav == null ? null : base64Encode(wav),
-      audioMime: wav == null ? null : 'audio/wav',
-    ));
+    _emitEvent(
+      DuplexUserSpoke(
+        text,
+        audioBase64: wav == null ? null : base64Encode(wav),
+        audioMime: wav == null ? null : 'audio/wav',
+      ),
+    );
     await _runTurn(text);
   }
 
@@ -468,8 +477,9 @@ class DuplexVoiceSession {
         _liveTranscript = '$_liveTranscript${ev.text}';
         _emitEvent(DuplexEvent.transcriptUpdate(_liveTranscript));
       case RealtimeCompleted():
-        final finalText =
-            ev.transcript.isNotEmpty ? ev.transcript : _liveTranscript;
+        final finalText = ev.transcript.isNotEmpty
+            ? ev.transcript
+            : _liveTranscript;
         // Prefer completing a pending commit (client VAD path). If the server
         // also auto-finalizes without our commit, only start a turn when we
         // aren't already committing (avoids double-turns).
@@ -485,15 +495,16 @@ class DuplexVoiceSession {
         String? audioBase64;
         if (pcm.isNotEmpty) {
           try {
-            audioBase64 =
-                base64Encode(AudioRecorderService.buildWavBytes(pcm));
+            audioBase64 = base64Encode(AudioRecorderService.buildWavBytes(pcm));
           } catch (_) {}
         }
-        _emitEvent(DuplexUserSpoke(
-          finalText,
-          audioBase64: audioBase64,
-          audioMime: audioBase64 == null ? null : 'audio/wav',
-        ));
+        _emitEvent(
+          DuplexUserSpoke(
+            finalText,
+            audioBase64: audioBase64,
+            audioMime: audioBase64 == null ? null : 'audio/wav',
+          ),
+        );
         await _runTurn(finalText);
       case RealtimeError():
         if (!_httpFallback) _emitEvent(DuplexEvent.error(ev.message));
@@ -543,17 +554,15 @@ class DuplexVoiceSession {
     // chat thread when the user hangs up.
     final assistantParts = <ui.MessageContent>[];
     if (reply.isNotEmpty) {
-      assistantParts.add(ui.MessageContent(
-        type: ui.MessageContentType.text,
-        value: reply,
-      ));
+      assistantParts.add(
+        ui.MessageContent(type: ui.MessageContentType.text, value: reply),
+      );
     }
     for (final art in imageArtifacts) {
       final url = 'data:${art.mime};base64,${art.base64Data}';
-      assistantParts.add(ui.MessageContent(
-        type: ui.MessageContentType.image,
-        value: url,
-      ));
+      assistantParts.add(
+        ui.MessageContent(type: ui.MessageContentType.image, value: url),
+      );
       _emitEvent(DuplexEvent.artifact(art));
     }
     // Resolve the audio we'll speak: prefer audio the agent already synthesized
@@ -585,25 +594,25 @@ class DuplexVoiceSession {
 
     for (final art in spokenAudio) {
       final url = 'data:${art.mime};base64,${art.base64Data}';
-      assistantParts.add(ui.MessageContent(
-        type: ui.MessageContentType.audio,
-        value: url,
-      ));
+      assistantParts.add(
+        ui.MessageContent(type: ui.MessageContentType.audio, value: url),
+      );
       _emitEvent(DuplexEvent.artifact(art));
     }
     if (assistantParts.isEmpty) {
       await _beginListening();
       return;
     }
-    history.add(ui.ChatMessage(
-      role: ui.MessageRole.assistant,
-      content: assistantParts,
-    ));
-    _emitEvent(DuplexAssistantSpoke(
-      reply,
-      audioArtifacts: spokenAudio,
-      imageArtifacts: imageArtifacts,
-    ));
+    history.add(
+      ui.ChatMessage(role: ui.MessageRole.assistant, content: assistantParts),
+    );
+    _emitEvent(
+      DuplexAssistantSpoke(
+        reply,
+        audioArtifacts: spokenAudio,
+        imageArtifacts: imageArtifacts,
+      ),
+    );
 
     // Speak the resolved audio.
     _emitState(DuplexState.speaking);
@@ -625,6 +634,7 @@ class DuplexVoiceSession {
       llmModelId: llmModel,
       capabilities: capabilities!,
       executor: executor!,
+      thinkingLevel: thinkingLevel,
     );
     final agentHistory = history.map(_toAgentMessage).toList(growable: false);
     final artifacts = <Artifact>[];
@@ -667,15 +677,20 @@ class DuplexVoiceSession {
         content:
             'You are a helpful conversational assistant. Keep responses brief and natural for spoken delivery.',
       ),
-      ...history.map((m) => m.isUser
-          ? ApiChatMessage.user(m.textContent)
-          : ApiChatMessage.assistant(m.textContent)),
+      ...history.map(
+        (m) => m.isUser
+            ? ApiChatMessage.user(m.textContent)
+            : ApiChatMessage.assistant(m.textContent),
+      ),
     ];
-    final resp = await client.chat.create(ChatCompletionRequest(
-      model: llmModel,
-      messages: messages,
-      stream: false,
-    ));
+    final resp = await client.chat.create(
+      ChatCompletionRequest(
+        model: llmModel,
+        messages: messages,
+        stream: false,
+        thinkingLevel: thinkingLevel,
+      ),
+    );
     return _TurnResult(
       text: resp.message.content?.trim() ?? '',
       artifacts: const [],
@@ -738,16 +753,13 @@ class DuplexTranscriptUpdate extends DuplexEvent {
 
 class DuplexUserSpoke extends DuplexEvent {
   final String text;
+
   /// Base64-encoded WAV of the spoken utterance, if the mic stream produced
   /// any PCM. May be null when the recognizer fires without captured audio
   /// (e.g. a server-side replay of a prior utterance).
   final String? audioBase64;
   final String? audioMime;
-  const DuplexUserSpoke(
-    this.text, {
-    this.audioBase64,
-    this.audioMime,
-  });
+  const DuplexUserSpoke(this.text, {this.audioBase64, this.audioMime});
 }
 
 class DuplexAssistantSpoke extends DuplexEvent {
@@ -772,5 +784,3 @@ class DuplexHearing extends DuplexEvent {
   final bool active;
   const DuplexHearing(this.active);
 }
-
-

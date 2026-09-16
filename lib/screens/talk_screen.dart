@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_message.dart';
 import '../providers/chat_history_provider.dart';
 import '../providers/lemonade_client_provider.dart';
+import '../providers/model_thinking_provider.dart';
 import '../providers/model_defaults_provider.dart';
 import '../providers/models_provider.dart';
 import '../providers/omni_router_provider.dart';
@@ -73,14 +74,19 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
       return;
     }
     final defaults = ref.read(globalModelDefaultsProvider);
-    final asr = defaults.audioToTextModel ?? _firstByCapability((m) => m.supportsAudio);
-    final tts = defaults.textToAudioModel ?? _firstByCapability((m) => m.supportsTts);
+    final asr =
+        defaults.audioToTextModel ?? _firstByCapability((m) => m.supportsAudio);
+    final tts =
+        defaults.textToAudioModel ?? _firstByCapability((m) => m.supportsTts);
     if (asr == null) {
-      setState(() => _error = 'No audio-to-text model is loaded on the server.');
+      setState(
+        () => _error = 'No audio-to-text model is loaded on the server.',
+      );
       return;
     }
 
-    final history = ref.read(chatHistoryProvider.notifier).getActiveChat()?.messages ??
+    final history =
+        ref.read(chatHistoryProvider.notifier).getActiveChat()?.messages ??
         const <ChatMessage>[];
     _chatMessages = List.of(history);
 
@@ -93,6 +99,9 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
       asrModel: asr,
       ttsModel: tts,
       history: List.of(history),
+      thinkingLevel: ref
+          .read(modelThinkingLevelsProvider.notifier)
+          .levelFor(llm),
       capabilities: caps,
       executor: exec,
     );
@@ -175,10 +184,12 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
     final parts = <MessageContent>[];
     final b64 = ev.audioBase64;
     if (b64 != null && b64.isNotEmpty) {
-      parts.add(MessageContent(
-        type: MessageContentType.audio,
-        value: 'data:${ev.audioMime ?? 'audio/wav'};base64,$b64',
-      ));
+      parts.add(
+        MessageContent(
+          type: MessageContentType.audio,
+          value: 'data:${ev.audioMime ?? 'audio/wav'};base64,$b64',
+        ),
+      );
     }
     if (ev.text.trim().isNotEmpty) {
       parts.add(MessageContent(type: MessageContentType.text, value: ev.text));
@@ -194,16 +205,20 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
       parts.add(MessageContent(type: MessageContentType.text, value: ev.text));
     }
     for (final art in ev.imageArtifacts) {
-      parts.add(MessageContent(
-        type: MessageContentType.image,
-        value: 'data:${art.mime};base64,${art.base64Data}',
-      ));
+      parts.add(
+        MessageContent(
+          type: MessageContentType.image,
+          value: 'data:${art.mime};base64,${art.base64Data}',
+        ),
+      );
     }
     for (final art in ev.audioArtifacts) {
-      parts.add(MessageContent(
-        type: MessageContentType.audio,
-        value: 'data:${art.mime};base64,${art.base64Data}',
-      ));
+      parts.add(
+        MessageContent(
+          type: MessageContentType.audio,
+          value: 'data:${art.mime};base64,${art.base64Data}',
+        ),
+      );
     }
     if (parts.isEmpty) return;
     _chatMessages.add(ChatMessage(role: MessageRole.assistant, content: parts));
@@ -259,14 +274,18 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
               ),
               const SizedBox(height: 8),
               _StatusIndicator(
-                  state: _state, hearing: _hearing, pulse: _pulse, scheme: scheme),
+                state: _state,
+                hearing: _hearing,
+                pulse: _pulse,
+                scheme: scheme,
+              ),
               const SizedBox(height: 14),
               Text(
                 _statusLabel(),
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: _hearing ? scheme.primary : null,
-                      fontWeight: _hearing ? FontWeight.w700 : null,
-                    ),
+                  color: _hearing ? scheme.primary : null,
+                  fontWeight: _hearing ? FontWeight.w700 : null,
+                ),
               ),
               const SizedBox(height: 16),
               Expanded(
@@ -316,8 +335,10 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.redAccent,
                   foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 32,
+                    vertical: 16,
+                  ),
                 ),
               ),
             ],
@@ -431,8 +452,9 @@ class _Bubble extends StatelessWidget {
       alignment: alignRight ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.8,
+        ),
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(16),

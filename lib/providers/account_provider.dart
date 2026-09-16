@@ -9,13 +9,10 @@ import '../api/nexus/nexus_account_client.dart';
 import '../api/nexus/nexus_account_models.dart';
 import '../models/server_config.dart';
 import '../storage/secure_storage.dart';
+import '../utils/server_identity.dart';
 import 'app_mode_provider.dart';
 import 'models_provider.dart';
 import 'servers_provider.dart';
-
-/// Display name of the auto-provisioned subscription inference server. It lives
-/// in the normal server list so the user can freely switch to a local server.
-const String kSubscriptionServerName = 'Nexus Projects Subscription';
 
 /// Immutable auth state for the Nexus subscription account.
 ///
@@ -194,8 +191,10 @@ class _AuthNotifier extends StateNotifier<AuthState> {
   /// server (done on a fresh sign-in). Best-effort and idempotent — a failure
   /// never blocks sign-in, and it tolerates the row already existing in the DB
   /// even before the in-memory server list has finished loading.
-  Future<void> _provisionSubscriptionServer(String token,
-      {required bool select}) async {
+  Future<void> _provisionSubscriptionServer(
+    String token, {
+    required bool select,
+  }) async {
     final serversNotifier = ref.read(serversProvider.notifier);
     final cfg = ServerConfig(
       name: kSubscriptionServerName,
@@ -293,8 +292,9 @@ final nexusAccountClientProvider = Provider<NexusAccountClient>((ref) {
 });
 
 /// GET /account — account + subscription summary (auth required).
-final accountSummaryProvider =
-    FutureProvider.autoDispose<AccountSummary>((ref) async {
+final accountSummaryProvider = FutureProvider.autoDispose<AccountSummary>((
+  ref,
+) async {
   ref.cacheFor(const Duration(minutes: 5));
   final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
   if (!signedIn) {
@@ -306,8 +306,9 @@ final accountSummaryProvider =
 /// GET /usage/agents — per-agent cost + token history for the current period.
 /// This is also the source of "tokens used" — summed across agents — since the
 /// router has no standalone /usage endpoint; capacity/limits come from /account.
-final agentUsageProvider =
-    FutureProvider.autoDispose<AgentUsageReport>((ref) async {
+final agentUsageProvider = FutureProvider.autoDispose<AgentUsageReport>((
+  ref,
+) async {
   ref.cacheFor(const Duration(minutes: 2));
   final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
   if (!signedIn) {
@@ -328,8 +329,8 @@ final plansProvider = FutureProvider.autoDispose<PlanCatalog>((ref) async {
 /// Invalidate after any plan/add-on/cancel change.
 final subscriptionDetailProvider =
     FutureProvider.autoDispose<SubscriptionDetail?>((ref) async {
-  ref.cacheFor(const Duration(minutes: 5));
-  final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
-  if (!signedIn) return null;
-  return ref.watch(nexusAccountClientProvider).fetchSubscription();
-});
+      ref.cacheFor(const Duration(minutes: 5));
+      final signedIn = ref.watch(authProvider.select((a) => a.isSignedIn));
+      if (!signedIn) return null;
+      return ref.watch(nexusAccountClientProvider).fetchSubscription();
+    });

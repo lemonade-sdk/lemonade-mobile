@@ -1,4 +1,5 @@
 import 'chat_message.dart';
+import '../../models/thinking_level.dart';
 import 'tool_definition.dart';
 
 class ChatCompletionRequest {
@@ -15,8 +16,8 @@ class ChatCompletionRequest {
   final int? maxCompletionTokens;
   final List<String>? stop;
 
-  // Lemonade extension.
-  final bool? enableThinking;
+  // Lemonade / vLLM chat-template extension.
+  final ThinkingLevel? thinkingLevel;
 
   /// Free-form additional fields (e.g. provider-specific extensions). Merged into the body last,
   /// so they override anything we set above. Use sparingly.
@@ -33,7 +34,7 @@ class ChatCompletionRequest {
     this.repeatPenalty,
     this.maxCompletionTokens,
     this.stop,
-    this.enableThinking,
+    this.thinkingLevel,
     this.extra,
   });
 
@@ -50,9 +51,19 @@ class ChatCompletionRequest {
     if (topP != null) body['top_p'] = topP;
     if (topK != null) body['top_k'] = topK;
     if (repeatPenalty != null) body['repeat_penalty'] = repeatPenalty;
-    if (maxCompletionTokens != null) body['max_completion_tokens'] = maxCompletionTokens;
+    if (maxCompletionTokens != null) {
+      body['max_completion_tokens'] = maxCompletionTokens;
+    }
     if (stop != null && stop!.isNotEmpty) body['stop'] = stop;
-    if (enableThinking != null) body['enable_thinking'] = enableThinking;
+    if (thinkingLevel != null) {
+      final templateArgs = <String, dynamic>{
+        'enable_thinking': thinkingLevel != ThinkingLevel.off,
+      };
+      if (thinkingLevel != ThinkingLevel.off) {
+        templateArgs['reasoning_effort'] = thinkingLevel!.wire;
+      }
+      body['chat_template_kwargs'] = templateArgs;
+    }
     if (extra != null) body.addAll(extra!);
     return body;
   }

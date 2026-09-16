@@ -41,8 +41,6 @@ class NexusHeader extends ConsumerWidget {
       child: Row(
         children: [
           const LemonLogo(size: 24),
-          const SizedBox(width: 8),
-          const LemonadeWordmark(fontSize: 15.5),
           const SizedBox(width: 10),
           // Connection + mode chip — the former status strip. Tap opens the
           // Mode sheet (which also switches Subscription / Local AI / Mesh).
@@ -51,8 +49,10 @@ class NexusHeader extends ConsumerWidget {
               onTap: () => ref.read(overlayProvider.notifier).openModeSheet(),
               behavior: HitTestBehavior.opaque,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
                 decoration: BoxDecoration(
                   color: t.surface,
                   borderRadius: BorderRadius.circular(11),
@@ -67,17 +67,20 @@ class NexusHeader extends ConsumerWidget {
                         status.label,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: t.text),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: t.text,
+                        ),
                       ),
                     ),
                     if (status.meta.isNotEmpty) ...[
                       const SizedBox(width: 6),
                       Flexible(
-                        child: Text(status.meta,
-                            overflow: TextOverflow.ellipsis,
-                            style: nexusMono(fontSize: 10, color: t.muted)),
+                        child: Text(
+                          status.meta,
+                          overflow: TextOverflow.ellipsis,
+                          style: nexusMono(fontSize: 10, color: t.muted),
+                        ),
                       ),
                     ],
                     const SizedBox(width: 4),
@@ -92,7 +95,9 @@ class NexusHeader extends ConsumerWidget {
             icon: isLight
                 ? Icons.dark_mode_outlined
                 : Icons.light_mode_outlined,
-            onTap: () => ref.read(themeProvider.notifier).setThemeId(
+            onTap: () => ref
+                .read(themeProvider.notifier)
+                .setThemeId(
                   isLight
                       ? ThemeRegistry.nexusDarkId
                       : ThemeRegistry.nexusLightId,
@@ -120,11 +125,14 @@ class NexusHeader extends ConsumerWidget {
                 border: Border.all(color: t.line),
               ),
               child: signedIn
-                  ? Text(_initials(auth.user?.displayName),
+                  ? Text(
+                      _initials(auth.user?.displayName),
                       style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: t.muted))
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: t.muted,
+                      ),
+                    )
                   : Icon(Icons.person_outline, size: 17, color: t.muted),
             ),
           ),
@@ -159,8 +167,7 @@ class NexusHeader extends ConsumerWidget {
         // after switching modes the previous (gateway) selection can linger
         // for a beat. Treat "no local server yet" as a search-in-progress
         // state instead of showing the subscription/gateway name.
-        final onLocalServer =
-            server != null && !server.baseUrl.contains('nexus-projects.ai');
+        final onLocalServer = server != null;
         if (!onLocalServer) {
           final found = ref.watch(discoveredServersProvider).length;
           if (found > 0) {
@@ -175,9 +182,10 @@ class NexusHeader extends ConsumerWidget {
         if (gpu is num) parts.add('GPU ${gpu.round()}%');
         if (cpu is num) parts.add('CPU ${cpu.round()}%');
         return _Status(
-            stats == null ? t.warn : t.good,
-            'Local AI · ${server.name}',
-            parts.isEmpty ? 'local' : parts.join(' · '));
+          stats == null ? t.warn : t.good,
+          'Local AI · ${server.name}',
+          parts.isEmpty ? 'local' : parts.join(' · '),
+        );
       case AppMode.mesh:
         return _Status(t.accent2, 'Mesh', 'coming soon');
     }

@@ -27,7 +27,8 @@ class ChatRepository {
       Expando<_StoredAttachment>('ChatRepository.persistedParts');
 
   static void _logClosed(String op) => debugPrint(
-      'ChatRepository.$op skipped — database is not open; data was NOT persisted.');
+    'ChatRepository.$op skipped — database is not open; data was NOT persisted.',
+  );
 
   // ---------------------------------------------------------------------------
   // Reads
@@ -35,7 +36,9 @@ class ChatRepository {
 
   static Future<List<ChatHistory>> loadAll() async {
     if (!AppDatabase.isOpen) {
-      debugPrint('ChatRepository.loadAll: database is not open — returning no chats.');
+      debugPrint(
+        'ChatRepository.loadAll: database is not open — returning no chats.',
+      );
       return const [];
     }
     final chatRows = await _db.chats.where().sortByLastUpdatedDesc().findAll();
@@ -46,18 +49,22 @@ class ChatRepository {
       // disk untouched.
       try {
         final messages = await _loadMessages(chat.uuid);
-        result.add(ChatHistory(
-          id: chat.uuid,
-          title: chat.title ?? '',
-          messages: messages,
-          createdAt: chat.createdAt,
-          lastUpdated: chat.lastUpdated,
-          isActive: chat.isActive,
-          modelOverrides: _decodeOverrides(chat.modelOverridesJson),
-          folderId: chat.folderUuid,
-        ));
+        result.add(
+          ChatHistory(
+            id: chat.uuid,
+            title: chat.title ?? '',
+            messages: messages,
+            createdAt: chat.createdAt,
+            lastUpdated: chat.lastUpdated,
+            isActive: chat.isActive,
+            modelOverrides: _decodeOverrides(chat.modelOverridesJson),
+            folderId: chat.folderUuid,
+          ),
+        );
       } catch (e) {
-        debugPrint('ChatRepository.loadAll: failed to load chat ${chat.uuid} — skipping: $e');
+        debugPrint(
+          'ChatRepository.loadAll: failed to load chat ${chat.uuid} — skipping: $e',
+        );
       }
     }
     return result;
@@ -89,7 +96,9 @@ class ChatRepository {
     for (final m in rows) {
       final contents = <MessageContent>[];
       if (m.content != null && m.content!.isNotEmpty) {
-        contents.add(MessageContent(type: MessageContentType.text, value: m.content!));
+        contents.add(
+          MessageContent(type: MessageContentType.text, value: m.content!),
+        );
       }
       final atts = attachmentsByMsg[m.uuid] ?? const <AttachmentEntity>[];
       for (final a in atts) {
@@ -99,8 +108,10 @@ class ChatRepository {
         try {
           content = await _attachmentToFileRef(a);
         } catch (e) {
-          debugPrint('ChatRepository: skipping unreadable attachment ${a.uuid} '
-              '(${a.filePath}): $e');
+          debugPrint(
+            'ChatRepository: skipping unreadable attachment ${a.uuid} '
+            '(${a.filePath}): $e',
+          );
         }
         if (content == null) continue;
         _persistedParts[content] = _StoredAttachment(
@@ -111,18 +122,22 @@ class ChatRepository {
         );
         contents.add(content);
       }
-      out.add(ChatMessage(
-        id: m.uuid,
-        role: m.role == 'user' ? MessageRole.user : MessageRole.assistant,
-        content: contents,
-        timestamp: m.createdAt,
-      ));
+      out.add(
+        ChatMessage(
+          id: m.uuid,
+          role: m.role == 'user' ? MessageRole.user : MessageRole.assistant,
+          content: contents,
+          timestamp: m.createdAt,
+        ),
+      );
     }
     return out;
   }
 
   /// Resolve attachment to a [MessageContent.fileRef] without reading bytes.
-  static Future<MessageContent?> _attachmentToFileRef(AttachmentEntity a) async {
+  static Future<MessageContent?> _attachmentToFileRef(
+    AttachmentEntity a,
+  ) async {
     final kind = switch (a.kind) {
       AttachmentKind.image => 'image',
       AttachmentKind.audio => 'audio',
@@ -150,7 +165,10 @@ class ChatRepository {
   /// Write a chat row. With [updateOnly] the write is dropped when the row no
   /// longer exists — the streaming autosave path uses this so a save queued
   /// behind the write lock can't resurrect a chat deleted moments earlier.
-  static Future<void> upsertChat(ChatHistory chat, {bool updateOnly = false}) async {
+  static Future<void> upsertChat(
+    ChatHistory chat, {
+    bool updateOnly = false,
+  }) async {
     if (!AppDatabase.isOpen) {
       _logClosed('upsertChat');
       return;
@@ -158,8 +176,10 @@ class ChatRepository {
     await _db.isar.writeTxn(() async {
       var existing = await _db.chats.filter().uuidEqualTo(chat.id).findFirst();
       if (existing == null && updateOnly) {
-        debugPrint('ChatRepository.upsertChat: chat ${chat.id} no longer exists '
-            '— dropping update-only write.');
+        debugPrint(
+          'ChatRepository.upsertChat: chat ${chat.id} no longer exists '
+          '— dropping update-only write.',
+        );
         return;
       }
       existing ??= ChatHistoryEntity()
@@ -209,7 +229,10 @@ class ChatRepository {
       return;
     }
     await _db.isar.writeTxn(() async {
-      final messages = await _db.messages.filter().chatUuidEqualTo(chatUuid).findAll();
+      final messages = await _db.messages
+          .filter()
+          .chatUuidEqualTo(chatUuid)
+          .findAll();
       final messageUuids = messages.map((m) => m.uuid).toSet();
       if (messageUuids.isNotEmpty) {
         await _db.attachments
@@ -240,8 +263,10 @@ class ChatRepository {
     }
 
     // Snapshot existing rows + fingerprints so we can skip no-ops.
-    final existingRows =
-        await _db.messages.filter().chatUuidEqualTo(chatUuid).findAll();
+    final existingRows = await _db.messages
+        .filter()
+        .chatUuidEqualTo(chatUuid)
+        .findAll();
     final existingById = {for (final m in existingRows) m.uuid: m};
     final existingFp = <String, String>{};
     for (final m in existingRows) {
@@ -257,12 +282,18 @@ class ChatRepository {
       final attachments = <AttachmentEntity>[];
       for (final part in m.content) {
         if (part.type == MessageContentType.image) {
-          final att =
-              await _persistMediaPart(part, messageUuid, AttachmentKind.image);
+          final att = await _persistMediaPart(
+            part,
+            messageUuid,
+            AttachmentKind.image,
+          );
           if (att != null) attachments.add(att);
         } else if (part.type == MessageContentType.audio) {
-          final att =
-              await _persistMediaPart(part, messageUuid, AttachmentKind.audio);
+          final att = await _persistMediaPart(
+            part,
+            messageUuid,
+            AttachmentKind.audio,
+          );
           if (att != null) attachments.add(att);
         }
       }
@@ -271,28 +302,36 @@ class ChatRepository {
           '${m.isUser ? 'user' : 'assistant'}|${m.textContent}|${attIds.join(",")}|$i';
       final prior = existingById[messageUuid];
       final unchanged = prior != null && existingFp[messageUuid] == fp;
-      pending.add(_PendingMessage(
-        uuid: messageUuid,
-        message: m,
-        sortIndex: i,
-        attachments: attachments,
-        skipWrite: unchanged,
-      ));
+      pending.add(
+        _PendingMessage(
+          uuid: messageUuid,
+          message: m,
+          sortIndex: i,
+          attachments: attachments,
+          skipWrite: unchanged,
+        ),
+      );
     }
 
     final keepIds = {for (final p in pending) p.uuid};
 
     await _db.isar.writeTxn(() async {
-      final chatRow =
-          await _db.chats.filter().uuidEqualTo(chatUuid).findFirst();
+      final chatRow = await _db.chats
+          .filter()
+          .uuidEqualTo(chatUuid)
+          .findFirst();
       if (chatRow == null) {
-        debugPrint('ChatRepository.replaceMessages: chat $chatUuid no longer '
-            'exists — dropping write.');
+        debugPrint(
+          'ChatRepository.replaceMessages: chat $chatUuid no longer '
+          'exists — dropping write.',
+        );
         return;
       }
 
       // Delete messages (and their attachments) that are no longer present.
-      final stale = existingRows.where((m) => !keepIds.contains(m.uuid)).toList();
+      final stale = existingRows
+          .where((m) => !keepIds.contains(m.uuid))
+          .toList();
       if (stale.isNotEmpty) {
         final staleUuids = stale.map((m) => m.uuid).toSet();
         await _db.attachments
@@ -309,22 +348,26 @@ class ChatRepository {
         if (p.skipWrite) continue;
 
         // Replace this message's attachments only (not the whole chat).
-        await _db.attachments
-            .filter()
-            .messageUuidEqualTo(p.uuid)
-            .deleteAll();
+        await _db.attachments.filter().messageUuidEqualTo(p.uuid).deleteAll();
         if (p.attachments.isNotEmpty) {
           await _db.attachments.putAll(p.attachments);
         }
-        await _db.messages.put(MessageEntity()
+        // Reuse the Isar primary key when this UUID already exists. Creating
+        // a fresh auto-increment row for every streamed token collides with
+        // the unique `uuid` index, so the reply appears in memory but never
+        // persists (and can look blank again after navigation/restart).
+        final row = MessageEntity()
+          ..id = existingById[p.uuid]?.id ?? Isar.autoIncrement
           ..uuid = p.uuid
           ..chatUuid = chatUuid
           ..role = p.message.isUser ? 'user' : 'assistant'
-          ..content =
-              p.message.textContent.isEmpty ? null : p.message.textContent
+          ..content = p.message.textContent.isEmpty
+              ? null
+              : p.message.textContent
           ..attachmentUuids = p.attachments.map((a) => a.uuid).toList()
           ..createdAt = p.message.timestamp
-          ..sortIndex = p.sortIndex);
+          ..sortIndex = p.sortIndex;
+        await _db.messages.put(row);
       }
     });
   }
@@ -398,8 +441,7 @@ class ChatRepository {
     AttachmentKind kind,
   ) {
     // Stable attachment uuid from content hash — re-saves don't churn rows.
-    final attUuid =
-        '${messageUuid}_att_${stored.sha256.substring(0, 16)}';
+    final attUuid = '${messageUuid}_att_${stored.sha256.substring(0, 16)}';
     return AttachmentEntity()
       ..uuid = attUuid
       ..messageUuid = messageUuid

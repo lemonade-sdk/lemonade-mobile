@@ -10,6 +10,7 @@ import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../api/types/image_request.dart';
 import '../api/types/tool_call.dart';
+import '../services/day_context_service.dart';
 import 'web_tools.dart';
 
 /// In-conversation context for tool execution. The agent loop populates this
@@ -49,7 +50,11 @@ class Artifact {
   /// agent loop persists artifacts to disk after this turn.
   final String base64Data;
 
-  const Artifact({required this.kind, required this.mime, required this.base64Data});
+  const Artifact({
+    required this.kind,
+    required this.mime,
+    required this.base64Data,
+  });
 }
 
 enum ArtifactKind { image, audio }
@@ -68,6 +73,7 @@ class TextResult extends ToolExecutionResult {
 class ImageResult extends ToolExecutionResult {
   final String base64Data;
   final String mime;
+
   /// 'generate' | 'edit' — used by the agent loop to decide whether this
   /// replaces the prior turn artifact or appends a new one.
   final String mode;
@@ -113,12 +119,14 @@ class OmniToolExecutor {
   /// actual width × height. Default of 1024 matches the historical
   /// behaviour; set higher via Settings → "Image generation resolution".
   final int imageBaseResolutionPx;
+  final DayContextService dayContextService;
 
   OmniToolExecutor({
     required this.client,
     required this.toolModels,
     this.imageBaseResolutionPx = 1024,
-  });
+    DayContextService? dayContextService,
+  }) : dayContextService = dayContextService ?? DayContextService();
 
   Future<ToolExecutionResult> execute(
     ToolCall call,
@@ -158,8 +166,20 @@ class OmniToolExecutor {
         return _webSearch(args);
       case 'find_places':
         return _findPlaces(args);
+      case 'get_device_schedule':
+        return _dayContext(args);
       default:
         return ErrorResult("Unknown tool '${call.name}'");
+    }
+  }
+
+  Future<ToolExecutionResult> _dayContext(Map<String, dynamic> args) async {
+    try {
+      return TextResult(await dayContextService.load(args));
+    } on ArgumentError catch (error) {
+      return ErrorResult(error.message?.toString() ?? error.toString());
+    } catch (error) {
+      return ErrorResult('Day context unavailable: $error');
     }
   }
 
@@ -173,12 +193,15 @@ class OmniToolExecutor {
       return const ErrorResult('Cancelled.');
     }
 
-    final basePrompt = (args['image_prompt'] ?? args['prompt']) as String? ?? '';
+    final basePrompt =
+        (args['image_prompt'] ?? args['prompt']) as String? ?? '';
     final style = args['style'] as String?;
     final prompt = _prependStyle(basePrompt, style);
 
     // aspect_ratio is the new schema; legacy `size` still works.
-    final size = (args['size'] as String?) ?? _sizeForAspect(args['aspect_ratio'] as String?);
+    final size =
+        (args['size'] as String?) ??
+        _sizeForAspect(args['aspect_ratio'] as String?);
 
     // Without a seed the diffusion backend (sd-server) uses a fixed default,
     // which means every call with the same prompt returns identical bytes.
@@ -267,9 +290,10 @@ class OmniToolExecutor {
     // Source priority: an image generated this turn, then a prior assistant
     // image, then a USER-UPLOADED photo. The last fallback is what lets people
     // upload a picture into the chat and ask to edit it.
-    final artifactSource = [...ctx.turnArtifacts, ...ctx.sourceArtifacts]
-        .where((a) => a.kind == ArtifactKind.image)
-        .lastOrNull;
+    final artifactSource = [
+      ...ctx.turnArtifacts,
+      ...ctx.sourceArtifacts,
+    ].where((a) => a.kind == ArtifactKind.image).lastOrNull;
 
     final Uint8List bytes;
     final String sourceMime;
@@ -317,7 +341,8 @@ class OmniToolExecutor {
     if (model == null) return const ErrorResult('No TTS model is loaded.');
 
     final input = (args['text_to_speak'] ?? args['input']) as String? ?? '';
-    final voice = (args['voice'] as String?) ??
+    final voice =
+        (args['voice'] as String?) ??
         _voiceForProfile(args['voice_profile'] as String?);
 
     final req = TextToSpeechRequest(
@@ -354,9 +379,13 @@ class OmniToolExecutor {
   }
 
   Future<ToolExecutionResult> _transcribe(
-      Map<String, dynamic> args, ToolExecutionContext ctx) async {
+    Map<String, dynamic> args,
+    ToolExecutionContext ctx,
+  ) async {
     final model = toolModels['transcribe_audio'];
-    if (model == null) return const ErrorResult('No transcription model is loaded.');
+    if (model == null) {
+      return const ErrorResult('No transcription model is loaded.');
+    }
     if (ctx.extractedAudio.isEmpty) {
       return const TextResult('No audio data was provided to transcribe.');
     }
@@ -380,7 +409,9 @@ class OmniToolExecutor {
   }
 
   Future<ToolExecutionResult> _analyze(
-      Map<String, dynamic> args, ToolExecutionContext ctx) async {
+    Map<String, dynamic> args,
+    ToolExecutionContext ctx,
+  ) async {
     final model = toolModels['analyze_image'];
     if (model == null) {
       return const ErrorResult('No vision-capable model is loaded.');
@@ -485,7 +516,8 @@ class OmniToolExecutor {
         if (p.type != null) buf.writeln('   type: ${p.type}');
         if (p.latitude != null && p.longitude != null) {
           buf.writeln(
-              '   coords: ${p.latitude!.toStringAsFixed(5)}, ${p.longitude!.toStringAsFixed(5)}');
+            '   coords: ${p.latitude!.toStringAsFixed(5)}, ${p.longitude!.toStringAsFixed(5)}',
+          );
         }
       }
       return TextResult(buf.toString().trimRight());

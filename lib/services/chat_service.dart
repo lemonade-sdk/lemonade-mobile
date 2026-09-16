@@ -6,6 +6,7 @@ import '../api/types/chat_request.dart';
 import '../api/types/chat_response.dart';
 import '../constants/messages.dart';
 import '../models/chat_message.dart' as ui;
+import '../models/thinking_level.dart';
 import '../omni/agent_loop.dart';
 import '../omni/cancel_token.dart';
 import '../omni/capability_resolver.dart';
@@ -43,13 +44,15 @@ class ChatService {
     String? extraSystemPrompt,
     int? maxContextTokens,
     CancelToken? cancelToken,
+    ThinkingLevel? thinkingLevel,
   }) async* {
     final budget = _charBudgetFor(maxContextTokens);
     // Expand file-backed attachment refs to data URLs for the wire only
     // (cold-start history keeps paths in RAM until here).
     final resolved = await _resolveMediaForWire(history);
     final trimmed = _trimHistory(_sanitizeHistory(resolved), budget);
-    final useOmni = omniRouterEnabled &&
+    final useOmni =
+        omniRouterEnabled &&
         capabilities != null &&
         capabilities.isUsable &&
         executor != null;
@@ -62,15 +65,21 @@ class ChatService {
         executor: executor,
         extraSystemPrompt: extraSystemPrompt,
         cancelToken: cancelToken,
+        thinkingLevel: thinkingLevel,
       );
     } else {
-      yield* _runPlainStream(llmModel: llmModel, history: trimmed);
+      yield* _runPlainStream(
+        llmModel: llmModel,
+        history: trimmed,
+        thinkingLevel: thinkingLevel,
+      );
     }
   }
 
   /// Load disk-backed attachments into data URLs for the model API.
   Future<List<ui.ChatMessage>> _resolveMediaForWire(
-      List<ui.ChatMessage> history) async {
+    List<ui.ChatMessage> history,
+  ) async {
     final out = <ui.ChatMessage>[];
     for (final m in history) {
       final parts = <ui.MessageContent>[];
@@ -79,8 +88,9 @@ class ChatService {
                 c.type == ui.MessageContentType.audio) &&
             c.isFileRef) {
           try {
-            parts.add(ui.MessageContent(
-                type: c.type, value: await c.resolveDataUrl()));
+            parts.add(
+              ui.MessageContent(type: c.type, value: await c.resolveDataUrl()),
+            );
           } catch (_) {
             // Drop unreadable attachment for the wire; UI still has the ref.
           }
@@ -88,12 +98,14 @@ class ChatService {
           parts.add(c);
         }
       }
-      out.add(ui.ChatMessage(
-        id: m.id,
-        role: m.role,
-        content: parts,
-        timestamp: m.timestamp,
-      ));
+      out.add(
+        ui.ChatMessage(
+          id: m.id,
+          role: m.role,
+          content: parts,
+          timestamp: m.timestamp,
+        ),
+      );
     }
     return out;
   }
@@ -116,9 +128,11 @@ class ChatService {
   List<ui.ChatMessage> _sanitizeHistory(List<ui.ChatMessage> history) {
     final out = <ui.ChatMessage>[];
     for (final m in history) {
-      final hasMarker = m.content.any((c) =>
-          c.type == ui.MessageContentType.text &&
-          c.value.contains(AppMessages.errorNoticeMarker));
+      final hasMarker = m.content.any(
+        (c) =>
+            c.type == ui.MessageContentType.text &&
+            c.value.contains(AppMessages.errorNoticeMarker),
+      );
       if (!hasMarker) {
         out.add(m);
         continue;
@@ -131,17 +145,23 @@ class ChatService {
         }
         final stripped = AppMessages.stripErrorNotices(c.value);
         if (stripped.isNotEmpty) {
-          parts.add(ui.MessageContent(
-              type: ui.MessageContentType.text, value: stripped));
+          parts.add(
+            ui.MessageContent(
+              type: ui.MessageContentType.text,
+              value: stripped,
+            ),
+          );
         }
       }
       if (parts.isEmpty) continue;
-      out.add(ui.ChatMessage(
-        id: m.id,
-        role: m.role,
-        content: parts,
-        timestamp: m.timestamp,
-      ));
+      out.add(
+        ui.ChatMessage(
+          id: m.id,
+          role: m.role,
+          content: parts,
+          timestamp: m.timestamp,
+        ),
+      );
     }
     return out;
   }
@@ -173,6 +193,7 @@ class ChatService {
     required OmniToolExecutor executor,
     String? extraSystemPrompt,
     CancelToken? cancelToken,
+    ThinkingLevel? thinkingLevel,
   }) async* {
     final loop = AgentLoop(
       client: client,
@@ -180,6 +201,7 @@ class ChatService {
       capabilities: capabilities,
       executor: executor,
       cancelToken: cancelToken,
+      thinkingLevel: thinkingLevel,
     );
 
     final agentMessages = history.map(_toAgentMessage).toList(growable: false);
@@ -195,14 +217,18 @@ class ChatService {
           case AgentStatus():
             yield ChatTurnEvent.status(event.message);
           case AgentArtifact():
-            yield ChatTurnEvent.artifact(event.artifact,
-                replacesPrevious: event.replacesPrevious);
+            yield ChatTurnEvent.artifact(
+              event.artifact,
+              replacesPrevious: event.replacesPrevious,
+            );
           case AgentEndCall():
             // end_call is a voice-mode control signal; plain chat ignores it.
             break;
           case AgentDone():
             yield ChatTurnEvent.done(
-                text: event.text, artifacts: event.artifacts);
+              text: event.text,
+              artifacts: event.artifacts,
+            );
         }
       }
     } on TurnCancelledException {
@@ -214,24 +240,34 @@ class ChatService {
   Stream<ChatTurnEvent> _runPlainStream({
     required String llmModel,
     required List<ui.ChatMessage> history,
+    ThinkingLevel? thinkingLevel,
   }) async* {
     final apiMessages = _buildApiHistory(history);
 
     final buf = StringBuffer();
     var streamedAny = false;
+    var announcedThinking = false;
     var interrupted = false;
     try {
-      final stream = client.chat.stream(ChatCompletionRequest(
-        model: llmModel,
-        messages: apiMessages,
-        stream: true,
-      ));
+      final stream = client.chat.stream(
+        ChatCompletionRequest(
+          model: llmModel,
+          messages: apiMessages,
+          stream: true,
+          thinkingLevel: thinkingLevel,
+        ),
+      );
       await for (final ev in stream) {
         switch (ev) {
           case ChatContentDelta():
             buf.write(ev.text);
             streamedAny = true;
             yield ChatTurnEvent.tokens(ev.text);
+          case ChatReasoningDelta():
+            if (!announcedThinking) {
+              announcedThinking = true;
+              yield ChatTurnEvent.status('Thinking…');
+            }
           case ChatToolCallDelta():
             // Plain mode: ignore tool deltas (we didn't request tools).
             break;
@@ -241,7 +277,10 @@ class ChatService {
             // fabricating a clean 'stop'.
             interrupted = ev.finishReason == 'interrupted';
             if (!interrupted) {
-              yield ChatTurnEvent.done(text: buf.toString(), artifacts: const []);
+              yield ChatTurnEvent.done(
+                text: buf.toString(),
+                artifacts: const [],
+              );
             }
         }
       }
@@ -258,13 +297,18 @@ class ChatService {
         );
         return;
       }
-      final response = await client.chat.create(ChatCompletionRequest(
-        model: llmModel,
-        messages: apiMessages,
-        stream: false,
-      ));
+      final response = await client.chat.create(
+        ChatCompletionRequest(
+          model: llmModel,
+          messages: apiMessages,
+          stream: false,
+          thinkingLevel: thinkingLevel,
+        ),
+      );
       yield ChatTurnEvent.done(
-          text: response.message.content ?? '', artifacts: const []);
+        text: response.message.content ?? '',
+        artifacts: const [],
+      );
       return;
     }
     if (interrupted) {
@@ -277,13 +321,18 @@ class ChatService {
         );
       } else {
         // Truncated before any content — silent non-streaming retry.
-        final response = await client.chat.create(ChatCompletionRequest(
-          model: llmModel,
-          messages: apiMessages,
-          stream: false,
-        ));
+        final response = await client.chat.create(
+          ChatCompletionRequest(
+            model: llmModel,
+            messages: apiMessages,
+            stream: false,
+            thinkingLevel: thinkingLevel,
+          ),
+        );
         yield ChatTurnEvent.done(
-            text: response.message.content ?? '', artifacts: const []);
+          text: response.message.content ?? '',
+          artifacts: const [],
+        );
       }
     }
   }
@@ -307,13 +356,16 @@ class ChatService {
 
   ApiChatMessage _toApiMessage(ui.ChatMessage m, {bool keepImages = true}) {
     if (!m.hasImages) {
-      return m.isUser ? ApiChatMessage.user(m.textContent) : ApiChatMessage.assistant(m.textContent);
+      return m.isUser
+          ? ApiChatMessage.user(m.textContent)
+          : ApiChatMessage.assistant(m.textContent);
     }
     if (!keepImages) {
       // Drop the base64 image(s) from older turns; leave a marker so the
       // conversation still reads coherently.
-      final placeholder =
-          m.textContent.isEmpty ? '[image]' : '${m.textContent} [image]';
+      final placeholder = m.textContent.isEmpty
+          ? '[image]'
+          : '${m.textContent} [image]';
       return m.isUser
           ? ApiChatMessage.user(placeholder)
           : ApiChatMessage.assistant(placeholder);
@@ -321,7 +373,8 @@ class ChatService {
     final parts = <ApiContentPart>[];
     if (m.textContent.isNotEmpty) parts.add(ApiContentPart.text(m.textContent));
     for (final c in m.content) {
-      if (c.type == ui.MessageContentType.image && c.value.startsWith('data:')) {
+      if (c.type == ui.MessageContentType.image &&
+          c.value.startsWith('data:')) {
         parts.add(ApiContentPart.imageUrl(c.value));
       }
     }
@@ -339,7 +392,10 @@ sealed class ChatTurnEvent {
   factory ChatTurnEvent.status(String message) = ChatStatus;
   factory ChatTurnEvent.artifact(Artifact artifact, {bool replacesPrevious}) =
       ChatArtifact;
-  factory ChatTurnEvent.done({required String text, required List<Artifact> artifacts}) = ChatDone;
+  factory ChatTurnEvent.done({
+    required String text,
+    required List<Artifact> artifacts,
+  }) = ChatDone;
 }
 
 class ChatTokens extends ChatTurnEvent {

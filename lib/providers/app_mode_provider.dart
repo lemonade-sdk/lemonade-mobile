@@ -1,9 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../api/nexus/nexus_account_client.dart' show kNexusGatewayBaseUrl;
 import '../models/server_config.dart';
 import '../storage/secure_storage.dart';
+import '../utils/server_identity.dart';
 import 'nav_provider.dart';
 import 'servers_provider.dart';
 
@@ -19,10 +19,10 @@ enum AppMode { subscription, local, mesh }
 
 extension AppModeX on AppMode {
   String get label => switch (this) {
-        AppMode.subscription => 'Subscription',
-        AppMode.local => 'Local AI',
-        AppMode.mesh => 'Mesh',
-      };
+    AppMode.subscription => 'Subscription',
+    AppMode.local => 'Local AI',
+    AppMode.mesh => 'Mesh',
+  };
 
   String get wire => name;
 
@@ -35,8 +35,6 @@ extension AppModeX on AppMode {
 }
 
 const _prefsKey = 'nexus.app_mode';
-
-bool _isGateway(String baseUrl) => baseUrl.trim() == kNexusGatewayBaseUrl;
 
 class _AppModeNotifier extends StateNotifier<AppMode> {
   final Ref ref;
@@ -51,9 +49,13 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
     // every change converges to the right server without loops:
     // _selectServerForMode is a no-op once the selection already matches.
     ref.listen<List<ServerConfig>>(
-        serversProvider, (_, __) => _selectServerForMode(state));
+      serversProvider,
+      (_, __) => _selectServerForMode(state),
+    );
     ref.listen<ServerConfig?>(
-        selectedServerProvider, (_, __) => _selectServerForMode(state));
+      selectedServerProvider,
+      (_, __) => _selectServerForMode(state),
+    );
   }
 
   Future<void> _hydrate() async {
@@ -111,14 +113,18 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
     final current = ref.read(selectedServerProvider);
 
     if (mode == AppMode.subscription) {
-      final gw = servers.where((s) => _isGateway(s.baseUrl)).firstOrNull;
+      final gw = servers.where(isManagedSubscriptionServer).firstOrNull;
       if (gw != null && current?.name != gw.name) {
         selectedNotifier.selectServer(gw);
       }
     } else {
       // Local / Mesh → a server the user controls.
-      if (current != null && !_isGateway(current.baseUrl)) return; // already local
-      final local = servers.where((s) => !_isGateway(s.baseUrl)).firstOrNull;
+      if (current != null && !isManagedSubscriptionServer(current)) {
+        return; // already on a user-configured server
+      }
+      final local = servers
+          .where((s) => !isManagedSubscriptionServer(s))
+          .firstOrNull;
       // If they only have the gateway, clear selection so the device/model
       // panels prompt to add a local server rather than show the gateway.
       selectedNotifier.selectServer(local);
@@ -127,5 +133,6 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
 }
 
 /// Current inference mode, persisted across launches.
-final appModeProvider =
-    StateNotifierProvider<_AppModeNotifier, AppMode>((ref) => _AppModeNotifier(ref));
+final appModeProvider = StateNotifierProvider<_AppModeNotifier, AppMode>(
+  (ref) => _AppModeNotifier(ref),
+);
