@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "com.lemonade.mobile.chat.ai"
-    compileSdk = flutter.compileSdkVersion
+    // Pin compileSdk 36 (Android 16) — Google Play now requires apps to
+    // target API level 36 or higher, and compileSdk must be >= targetSdk.
+    compileSdk = 36
     // Pin NDK 27 — it's the first NDK that defaults to 16KB-aligned LOAD
     // segments on arm64-v8a / x86_64 .so output. Required for Google
     // Play's 16KB page size check (mandatory for Android 15+ devices,
@@ -48,7 +50,7 @@ android {
     defaultConfig {
         applicationId = "com.lemonade.mobile.chat.ai"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
