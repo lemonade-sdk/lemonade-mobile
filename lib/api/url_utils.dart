@@ -10,11 +10,12 @@ library;
 ///   `http://host:8000/api`     → `…/api/v1`
 ///   `http://host:8000/api/v1/` → `…/api/v1`
 ///
-/// Optionally prepends `https://` when no scheme is present (gateway host
-/// strings) when [assumeHttps] is true.
+/// A missing scheme is filled in — `https://` when [assumeHttps] is true
+/// (gateway host strings), `http://` otherwise (a bare `192.168.1.5:13305`
+/// typed for a LAN server). Without one, `Uri.parse` either throws or reads
+/// the host as the scheme, and every request fails.
 String normalizeApiV1Base(String raw, {bool assumeHttps = false}) {
-  var url = raw.trim();
-  if (assumeHttps && !url.contains('://')) url = 'https://$url';
+  var url = withDefaultScheme(raw, assumeHttps: assumeHttps);
   while (url.endsWith('/')) {
     url = url.substring(0, url.length - 1);
   }
@@ -22,6 +23,14 @@ String normalizeApiV1Base(String raw, {bool assumeHttps = false}) {
   if (url.endsWith('/v1')) return url;
   if (url.endsWith('/api')) return '$url/v1';
   return '$url/api/v1';
+}
+
+/// [raw] trimmed, with `http://` (or `https://` when [assumeHttps]) prepended
+/// when it has no scheme.
+String withDefaultScheme(String raw, {bool assumeHttps = false}) {
+  final url = raw.trim();
+  if (url.isEmpty || url.contains('://')) return url;
+  return '${assumeHttps ? 'https' : 'http'}://$url';
 }
 
 /// Build a gateway WebSocket URI: `https→wss`, strip trailing slash, append

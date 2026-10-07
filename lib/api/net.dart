@@ -61,6 +61,23 @@ bool isRetryableTransportError(Object e) {
   return false;
 }
 
+/// True for "the server is slow / went quiet" failures (connect/first-byte
+/// timeout, SSE idle stall) as opposed to a dropped connection. A silent
+/// retry is wrong for these: `Future.timeout` doesn't cancel the original
+/// request, so the server is usually still generating it and a resend runs
+/// the same generation twice (on a single-slot server, queued behind the
+/// abandoned one).
+bool isTimeoutError(Object e) {
+  if (e is TimeoutException) return true;
+  if (e is LemonadeApiException) {
+    final cause = e.cause;
+    if (cause is TimeoutException) return true;
+    final m = e.message.toLowerCase();
+    return m.contains('timed out') || m.contains('stream stalled');
+  }
+  return false;
+}
+
 /// Run [attempt], retrying up to [maxExtraAttempts] more times on transient
 /// transport errors (see [isTransientTransportError]) with short exponential
 /// backoff (300ms, 900ms by default).

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:vad/vad.dart';
@@ -245,7 +246,23 @@ class DuplexVoiceSession {
     _emitEvent(const DuplexHearing(false));
     _emitState(DuplexState.listening);
 
-    final stream = await _recorder.startStream(kVoicePcm16Config);
+    final Stream<Uint8List> stream;
+    try {
+      stream = await _recorder.startStream(kVoicePcm16Config);
+    } catch (e) {
+      // Re-opening the mic between turns is reached from fire-and-forget
+      // callbacks (VAD, WebSocket, turn end), so a throw here (audio session
+      // lost to a phone call / Siri) was an unhandled async error that left
+      // the UI on "Listening" with the mic off. Surface it and go idle.
+      debugPrint('[Duplex] mic restart failed: $e');
+      if (_running) {
+        _emitEvent(DuplexEvent.error(
+            'The microphone stopped (another app may be using it). '
+            'End the call and start again.'));
+        _emitState(DuplexState.idle);
+      }
+      return;
+    }
     if (!_running || _recorderDisposed) {
       try {
         await _recorder.stop();

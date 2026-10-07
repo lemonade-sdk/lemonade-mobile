@@ -72,6 +72,10 @@ class ChatEndpoint {
     final sse = _client.streamSseFromJsonPost(
       _client.apiUriFor('/chat/completions'),
       req.toWireJson(),
+      // Headers arrive only after the server has loaded the model, and a
+      // cold load of a large model routinely exceeds the 30 s SSE default —
+      // same headroom as the non-streaming create() below.
+      connectTimeout: const Duration(minutes: 4),
     );
 
     try {

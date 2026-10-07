@@ -53,10 +53,32 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     _hydrate();
   }
 
+  /// Bumped by every sign-in and sign-out. Launch-time hydration captures it
+  /// and gives up if it changed: a sign-out (or a fresh sign-in) that landed
+  /// while the keychain read was in flight must not be overwritten by the
+  /// token that read returned.
+  int _sessionGen = 0;
+
+  /// Serializes every change the auth flow makes to the server list. Without
+  /// it, a launch-time provision still waiting on the server list could
+  /// finish AFTER a sign-out removed the gateway server — putting it back
+  /// with the revoked token.
+  Future<void> _serverOps = Future.value();
+
+  Future<void> _serialServerOp(Future<void> Function() op) {
+    final next = _serverOps.then((_) => op()).catchError((Object e) {
+      debugPrint('[Account] server op failed: $e');
+    });
+    _serverOps = next;
+    return next;
+  }
+
   Future<void> _hydrate() async {
+    final gen = _sessionGen;
     try {
       final token = await SecureKeyStore.readAccountToken();
       final identity = await SecureKeyStore.readAccountIdentity();
+      if (gen != _sessionGen) return; // signed in/out meanwhile — theirs wins
       if (token != null && token.isNotEmpty) {
         state = AuthState(
           token: token,
@@ -67,11 +89,16 @@ class _AuthNotifier extends StateNotifier<AuthState> {
         // Make sure the subscription server is present in the list on every
         // cold start (it may not have been added, or may have been removed).
         await _provisionSubscriptionServer(token, select: false);
+        // The stored token may have been revoked (password change, sign-out
+        // elsewhere) — check it instead of showing "online" while every
+        // gateway call fails.
+        unawaited(revalidate());
         return;
       }
     } catch (_) {
       // Keychain unavailable — fall through to signed-out.
     }
+    if (gen != _sessionGen) return;
     state = const AuthState(busy: false);
   }
 
@@ -152,6 +179,7 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     }
     await SecureKeyStore.writeAccountToken(result.token);
     await SecureKeyStore.writeAccountIdentity(result.user, result.client);
+    _sessionGen++;
     state = AuthState(
       token: result.token,
       user: result.user,
@@ -164,17 +192,15 @@ class _AuthNotifier extends StateNotifier<AuthState> {
   /// Clear the credential and remove the routed server. State is cleared FIRST
   /// so the UI flips to signed-out immediately even if cleanup hiccups.
   Future<void> logout() async {
+    _sessionGen++;
     state = const AuthState(busy: false);
     try {
       await SecureKeyStore.clearAccount();
     } catch (e) {
       debugPrint('[Account] clearAccount failed: $e');
     }
-    try {
-      await _deprovisionSubscriptionServer();
-    } catch (e) {
-      debugPrint('[Account] deprovision failed: $e');
-    }
+    // Queued behind any provision still in flight, so it always runs last.
+    await _serialServerOp(_deprovisionSubscriptionServer);
   }
 
   /// Called by the UI when an authenticated call returns 401 — the token was
@@ -185,6 +211,50 @@ class _AuthNotifier extends StateNotifier<AuthState> {
     await logout();
   }
 
+  DateTime? _lastValidated;
+  Future<void>? _validating;
+
+  /// Confirm the stored token is still accepted (GET /account) and sign out
+  /// if the server says it isn't. Called at launch, on app resume, and when a
+  /// gateway call comes back 401 — [handleUnauthorized] was only wired to a
+  /// screen nothing navigates to, so a revoked token was never noticed.
+  ///
+  /// Only a plain 401 counts: network errors, 5xx and plan-capability 401s
+  /// (`capability_required`) leave the session alone. [minInterval] throttles
+  /// repeat checks (resume can fire often).
+  Future<void> revalidate({Duration minInterval = Duration.zero}) {
+    if (!state.isSignedIn) return Future.value();
+    final last = _lastValidated;
+    if (last != null && DateTime.now().difference(last) < minInterval) {
+      return Future.value();
+    }
+    return _validating ??= _revalidate().whenComplete(() => _validating = null);
+  }
+
+  Future<void> _revalidate() async {
+    final token = state.token;
+    if (token == null || token.isEmpty) return;
+    final api = NexusAccountClient(token: token);
+    try {
+      await api.fetchAccount();
+      _lastValidated = DateTime.now();
+    } on UnauthorizedException catch (e) {
+      final revoked = e.statusCode == 401 &&
+          !e.message.contains('capability_required') &&
+          // A sign-in that happened while this check was in flight owns the
+          // session now; only drop the token we actually tested.
+          state.token == token;
+      if (revoked) {
+        debugPrint('[Account] stored token rejected — signing out');
+        await logout();
+      }
+    } catch (e) {
+      debugPrint('[Account] token check skipped: $e');
+    } finally {
+      api.close();
+    }
+  }
+
   // ── Routed server provisioning ──────────────────────────────────────
 
   /// Upsert the subscription server into the list. [select] makes it the active
@@ -192,6 +262,17 @@ class _AuthNotifier extends StateNotifier<AuthState> {
   /// never blocks sign-in, and it tolerates the row already existing in the DB
   /// even before the in-memory server list has finished loading.
   Future<void> _provisionSubscriptionServer(
+    String token, {
+    required bool select,
+  }) =>
+      _serialServerOp(() async {
+        // Signed out (or into another account) while this waited its turn —
+        // provisioning now would resurrect the server with a dead token.
+        if (state.token != token) return;
+        await _provisionSubscriptionServerNow(token, select: select);
+      });
+
+  Future<void> _provisionSubscriptionServerNow(
     String token, {
     required bool select,
   }) async {
@@ -239,6 +320,9 @@ class _AuthNotifier extends StateNotifier<AuthState> {
   /// local server remains (or none).
   Future<void> _deprovisionSubscriptionServer() async {
     final serversNotifier = ref.read(serversProvider.notifier);
+    // At cold start the list may still be loading — scanning it empty left
+    // the gateway row in the database to reappear on the next launch.
+    await serversNotifier.loaded;
     final selected = ref.read(selectedServerProvider);
     final wasSelected = selected?.name == kSubscriptionServerName;
 

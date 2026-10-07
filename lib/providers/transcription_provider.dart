@@ -246,8 +246,22 @@ class TranscriptionController {
 
   // ── HTTP Record Mode ──────────────────────────────────────────
 
+  /// In-flight [startHttpRecording]. The UI flips to "recording" before the
+  /// recorder has actually started, so a quick stop used to find nothing,
+  /// reset the UI to idle — and then the start completed and the mic kept
+  /// recording with no way to stop it. Stop waits for this first.
+  Future<void>? _starting;
+
   /// Start recording for HTTP transcription mode (WAV for server compatibility).
-  Future<void> startHttpRecording() async {
+  Future<void> startHttpRecording() {
+    final start = _startHttpRecording();
+    _starting = start;
+    return start.whenComplete(() {
+      if (identical(_starting, start)) _starting = null;
+    });
+  }
+
+  Future<void> _startHttpRecording() async {
     ref.read(transcriptionErrorProvider.notifier).state = null;
     ref.read(recordingStateProvider.notifier).state = RecordingState.recording;
     ref.read(lastRecordingInfoProvider.notifier).state = null;
@@ -263,6 +277,8 @@ class TranscriptionController {
 
   /// Stop HTTP recording and send for transcription.
   Future<void> stopHttpRecordingAndTranscribe() async {
+    final starting = _starting;
+    if (starting != null) await starting;
     _stopAmplitudeSampling();
     ref.read(recordingStateProvider.notifier).state = RecordingState.processing;
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../api/lemonade_client.dart';
+import '../api/net.dart' show isTimeoutError;
 import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../api/types/chat_response.dart';
@@ -163,6 +164,30 @@ class ChatService {
         ),
       );
     }
+    return _mergeConsecutiveUserTurns(out);
+  }
+
+  /// Dropping a failed turn's error bubble leaves `user, user` back to back.
+  /// Strict chat templates (Gemma, Mistral) reject that with "roles must
+  /// alternate" — a 500 that adds another error bubble, so one failure broke
+  /// every later message in the chat. Fold adjacent user turns into one.
+  List<ui.ChatMessage> _mergeConsecutiveUserTurns(List<ui.ChatMessage> history) {
+    final out = <ui.ChatMessage>[];
+    for (final m in history) {
+      if (out.isNotEmpty && m.isUser && out.last.isUser) {
+        final prev = out.removeLast();
+        out.add(
+          ui.ChatMessage(
+            id: m.id,
+            role: m.role,
+            content: [...prev.content, ...m.content],
+            timestamp: m.timestamp,
+          ),
+        );
+        continue;
+      }
+      out.add(m);
+    }
     return out;
   }
 
@@ -297,6 +322,9 @@ class ChatService {
         );
         return;
       }
+      // A timeout means the server is likely still working on this request;
+      // resending would generate twice. Report it instead.
+      if (isTimeoutError(e)) rethrow;
       final response = await client.chat.create(
         ChatCompletionRequest(
           model: llmModel,

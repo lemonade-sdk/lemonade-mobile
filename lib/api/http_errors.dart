@@ -88,7 +88,7 @@ void ensureHttpOk(
       throw ServerException(message, statusCode: status, endpoint: endpoint);
     case 401:
     case 403:
-      throw UnauthorizedException(message, endpoint: endpoint);
+      throw UnauthorizedException(message, endpoint: endpoint, statusCode: status);
     case 404:
       throw NotFoundException(message, endpoint: endpoint);
     default:

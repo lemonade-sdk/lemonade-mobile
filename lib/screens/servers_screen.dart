@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,9 +7,13 @@ import '../api/lemonade_client.dart';
 import '../constants/colors.dart';
 import '../models/discovered_server.dart';
 import '../models/server_config.dart';
+import '../api/url_utils.dart';
+import '../providers/app_mode_provider.dart';
 import '../providers/beacon_provider.dart';
+import '../providers/models_provider.dart';
 import '../providers/servers_provider.dart';
 import '../utils/friendly_error.dart';
+import '../utils/server_identity.dart';
 
 /// Server management — adding, beacon discovery, and the configured-servers list.
 /// Extracted out of the old monolithic Settings screen.
@@ -38,21 +44,38 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
   Future<void> _addServer() async {
     if (_addingServer) return; // double-tap guard — no duplicate rows
     final name = _nameController.text.trim();
-    final url = _urlController.text.trim();
+    // A bare `192.168.1.5:13305` has no scheme — Dart can't request it and
+    // every call failed silently. Store it with `http://` so what's saved is
+    // what's used.
+    final url = withDefaultScheme(_urlController.text);
     final apiKey = _apiKeyController.text.trim();
     if (name.isEmpty || url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(name.isEmpty
-            ? 'Enter a server name first.'
-            : 'Enter the server\'s base URL first.'),
-      ));
+      _snack(name.isEmpty
+          ? 'Enter a server name first.'
+          : 'Enter the server\'s base URL first.');
       return;
     }
-    // Skip exact duplicates — same URL is the same server.
-    if (ref.read(serversProvider).any((s) => s.baseUrl == url)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('That server is already in the list.'),
-      ));
+    final parsed = Uri.tryParse(url);
+    if (parsed == null ||
+        !(parsed.scheme == 'http' || parsed.scheme == 'https') ||
+        parsed.host.isEmpty) {
+      _snack('That doesn\'t look like a server address. '
+          'Use something like http://192.168.1.5:13305');
+      return;
+    }
+    final servers = ref.read(serversProvider);
+    // Skip duplicates — the same API root is the same server.
+    final apiRoot = normalizeApiV1Base(url);
+    if (servers.any((s) => normalizeApiV1Base(s.baseUrl) == apiRoot)) {
+      _snack('That server is already in the list.');
+      return;
+    }
+    // The name is the server's identity (keychain key, saved selection,
+    // delete) — two servers with one name shared an API key and the
+    // selection could snap to the wrong one.
+    if (name == kSubscriptionServerName ||
+        servers.any((s) => s.name.toLowerCase() == name.toLowerCase())) {
+      _snack('A server named "$name" already exists. Pick another name.');
       return;
     }
 
@@ -64,11 +87,18 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
         apiKey: apiKey.isNotEmpty ? apiKey : null,
       );
       await ref.read(serversProvider.notifier).addServer(server);
-      // Auto-select the first server so the app is usable right away — testers
-      // didn't realize a separate "select" step existed.
-      if (ref.read(selectedServerProvider) == null) {
-        ref.read(selectedServerProvider.notifier).selectServer(server);
+      // Auto-select when nothing usable is selected so the app works right
+      // away — testers didn't realize a separate "select" step existed. In
+      // Subscription mode the gateway stays selected (the user is signed in
+      // and may just be adding a spare); tapping the row switches over.
+      if (ref.read(selectedServerProvider) == null &&
+          ref.read(appModeProvider) != AppMode.subscription) {
+        await ref.read(selectedServerProvider.notifier).selectServer(server);
       }
+      // Re-read rather than trusting the branch above: in Local AI mode the
+      // mode reconciler may already have picked this server when the list
+      // changed.
+      final switched = ref.read(selectedServerProvider)?.name == server.name;
       if (!mounted) return;
       _nameController.clear();
       _urlController.clear();
@@ -77,11 +107,51 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
       // Servers") isn't hidden behind it — testers thought the form just
       // cleared itself and nothing happened.
       FocusManager.instance.primaryFocus?.unfocus();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Server "$name" added.')),
-      );
+      _snack(switched
+          ? 'Server "$name" added — loading its models…'
+          : 'Server "$name" added. Tap it to use it.');
+      if (switched) unawaited(_reportModelLoad(server));
     } finally {
       if (mounted) setState(() => _addingServer = false);
+    }
+  }
+
+  void _snack(String text, {Color? color}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), backgroundColor: color),
+    );
+  }
+
+  /// Make [server] the active one. A user-added server can't be used in
+  /// Subscription mode (the mode pins the gateway and immediately re-selected
+  /// it, so the tap silently did nothing) — switch to Local AI first.
+  Future<void> _useServer(ServerConfig server) async {
+    final switchMode = ref.read(appModeProvider) == AppMode.subscription &&
+        !isManagedSubscriptionServer(server);
+    if (switchMode) {
+      await ref.read(appModeProvider.notifier).setMode(AppMode.local);
+    }
+    await ref.read(selectedServerProvider.notifier).selectServer(server);
+    _snack(switchMode
+        ? 'Switched to Local AI — now using "${server.name}".'
+        : 'Now using "${server.name}".');
+    unawaited(_reportModelLoad(server));
+  }
+
+  /// After a server becomes active, tell the user whether its models loaded —
+  /// a failure used to leave the picker empty with no explanation.
+  Future<void> _reportModelLoad(ServerConfig server) async {
+    await ref.read(modelsProvider.notifier).fetchModels();
+    if (!mounted || ref.read(selectedServerProvider)?.name != server.name) {
+      return;
+    }
+    final error = ref.read(modelsFetchErrorProvider);
+    final count = ref.read(modelsProvider).length;
+    if (error != null) {
+      _snack(error, color: AppColors.serverDead);
+    } else if (count == 0) {
+      _snack('Connected to "${server.name}", but it has no models available.');
     }
   }
 
@@ -105,21 +175,23 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
       try {
         alive = await client.admin.live().timeout(probeTimeout);
       } catch (_) {
-        try {
-          final models =
-              await client.models.installed().timeout(probeTimeout);
-          alive = models.isNotEmpty;
-        } catch (_) {
-          alive = false;
-        }
+        alive = false;
+      }
+      int? modelCount;
+      if (!alive) {
+        // `/live` is Lemonade-only. Any OpenAI-compatible server answers
+        // `/models` — a successful answer (even an empty one) means the
+        // address and key work. Errors propagate to the friendly message
+        // below instead of a generic "did not respond".
+        modelCount =
+            (await client.models.installed().timeout(probeTimeout)).length;
+        alive = true;
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-          alive
-              ? 'Server "${server.name}" is working!'
-              : 'Server "${server.name}" did not respond.',
-        ),
+        content: Text(modelCount == 0
+            ? 'Server "${server.name}" responded, but lists no models.'
+            : 'Server "${server.name}" is working!'),
         backgroundColor:
             alive ? AppColors.serverAlive : AppColors.serverDead,
       ));
@@ -373,13 +445,7 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
                     // couldn't find how to select one — the row itself is now
                     // the affordance, with an explicit Active/"Tap to use"
                     // label.
-                    onTap: () {
-                      ref
-                          .read(selectedServerProvider.notifier)
-                          .selectServer(server);
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('Now using "${server.name}".')));
-                    },
+                    onTap: () => _useServer(server),
                     selected: selected?.baseUrl == server.baseUrl,
                     leading: Icon(
                       selected?.baseUrl == server.baseUrl

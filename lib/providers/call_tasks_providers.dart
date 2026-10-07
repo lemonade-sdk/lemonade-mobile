@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/exceptions.dart';
 import '../api/nexus/nexus_call_tasks_models.dart';
 import 'nexus_gateway_provider.dart';
 
@@ -46,19 +47,35 @@ final activeCallTaskProvider =
   return null;
 });
 
+/// Errors a retry can't fix: the task is gone (404) or the session is no
+/// longer accepted (401/403).
+bool _isPermanent(Object e) =>
+    e is LemonadeApiException &&
+    (e.statusCode == 401 || e.statusCode == 403 || e.statusCode == 404);
+
 /// One task, re-fetched live (used by the Live Call overlay header).
+///
+/// The polling loops below error-`continue` without yielding, and an
+/// `async*` body only notices cancellation at a `yield` — so they also check
+/// a disposal flag, or a closed overlay kept them running forever.
 final callTaskProvider =
     StreamProvider.autoDispose.family<NexusCallTask, int>((ref, id) async* {
   final client = ref.watch(nexusCallTasksClientProvider);
   if (client == null) return;
-  while (true) {
+  var disposed = false;
+  ref.onDispose(() => disposed = true);
+  while (!disposed) {
     NexusCallTask task;
     try {
       task = await client.getTask(id);
-    } catch (_) {
+    } catch (e) {
+      // A deleted task or a dead session will never recover — stop instead
+      // of polling every 3 s for the rest of the process.
+      if (_isPermanent(e)) rethrow;
       await Future.delayed(const Duration(seconds: 3));
       continue;
     }
+    if (disposed) return;
     yield task;
     if (task.isFinished) return;
     await Future.delayed(const Duration(seconds: 3));
@@ -70,14 +87,18 @@ final taskTranscriptProvider =
     StreamProvider.autoDispose.family<NexusTranscript, int>((ref, id) async* {
   final client = ref.watch(nexusCallTasksClientProvider);
   if (client == null) return;
-  while (true) {
+  var disposed = false;
+  ref.onDispose(() => disposed = true);
+  while (!disposed) {
     NexusTranscript transcript;
     try {
       transcript = await client.getTranscript(id);
-    } catch (_) {
+    } catch (e) {
+      if (_isPermanent(e)) rethrow;
       await Future.delayed(const Duration(seconds: 3));
       continue;
     }
+    if (disposed) return;
     yield transcript;
     if (transcript.state == TaskState.completed ||
         transcript.state == TaskState.failed ||

@@ -15,6 +15,7 @@ import 'http_errors.dart';
 import 'net.dart';
 import 'sse/sse_parser.dart';
 import '../models/server_config.dart';
+import '../utils/server_identity.dart';
 
 /// HTTP + SSE client for a single Lemonade server.
 ///
@@ -293,12 +294,20 @@ class LemonadeApiClient {
   // Internals
   // ---------------------------------------------------------------------------
 
-  void _ensureOk(int status, String body, String endpoint) => ensureHttpOk(
-        status,
-        body,
-        endpoint,
-        map400ToModelMismatch: true,
+  void _ensureOk(int status, String body, String endpoint) {
+    try {
+      ensureHttpOk(status, body, endpoint, map400ToModelMismatch: true);
+    } on UnauthorizedException catch (e) {
+      // On a server the user added themselves a 401/403 means the API key is
+      // wrong or missing — "sign in again" would point at the wrong fix.
+      if (isManagedSubscriptionServer(server)) rethrow;
+      throw ApiKeyRejectedException(
+        e.message,
+        endpoint: e.endpoint,
+        statusCode: e.statusCode ?? status,
       );
+    }
+  }
 
   Map<String, dynamic> _decodeJsonObject(String body) => decodeJsonObject(body);
 

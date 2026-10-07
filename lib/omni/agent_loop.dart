@@ -197,6 +197,9 @@ class AgentLoop {
         // partially-streamed text via a status so the retried result doesn't
         // render doubled.
         if (!isRetryableTransportError(e)) rethrow;
+        // Timeouts aren't drops: the server is probably still generating the
+        // original request, so a resend would run it twice.
+        if (isTimeoutError(e)) rethrow;
         if (streamedAny) yield const AgentStatus('Thinking…');
         final response = await client.chat.create(
           ChatCompletionRequest(

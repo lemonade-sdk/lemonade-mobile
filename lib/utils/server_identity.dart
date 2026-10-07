@@ -14,6 +14,15 @@ bool isManagedSubscriptionServer(ServerConfig server) =>
 
 /// Whether this server points at the Nexus router, independent of who added it.
 /// Used only for endpoint semantics such as `downloaded` meaning routable.
-bool isNexusGatewayEndpoint(ServerConfig server) =>
-    normalizeApiV1Base(server.baseUrl, assumeHttps: true) ==
-    normalizeApiV1Base(kNexusGatewayBaseUrl, assumeHttps: true);
+///
+/// Compared by host: users paste the router as `…/v1`, `…/api/v1` or the bare
+/// host, and an exact-URL match sent the `…/v1` form down the local-server
+/// path, where the `downloaded` filter hid every model not loaded right now.
+bool isNexusGatewayEndpoint(ServerConfig server) {
+  final host = Uri.tryParse(withDefaultScheme(server.baseUrl, assumeHttps: true))
+      ?.host
+      .toLowerCase();
+  return host != null &&
+      host.isNotEmpty &&
+      host == Uri.parse(kNexusGatewayBaseUrl).host.toLowerCase();
+}

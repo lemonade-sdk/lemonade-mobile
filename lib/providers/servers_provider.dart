@@ -29,6 +29,11 @@ class ServersNotifier extends StateNotifier<List<ServerConfig>> {
     _loaded = _load();
   }
 
+  /// Completes once the saved servers are in [state]. Callers that scan the
+  /// list (rather than mutate it) await this so a cold-start read doesn't see
+  /// an empty list that's merely still loading.
+  Future<void> get loaded => _loaded;
+
   Future<void> _load() async {
     if (!AppDatabase.isOpen) return;
     try {
@@ -170,6 +175,10 @@ class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
               (server) => server?.name == _savedServerName,
               orElse: () => null,
             );
+      } else if (state != null && !next.any((s) => s.name == state!.name)) {
+        // Deleting the last server left the deleted one selected, so models
+        // kept loading from it and a newly added server wasn't auto-selected.
+        state = null;
       }
     });
   }

@@ -74,18 +74,38 @@ class CallTakeoverAudio {
     // the listener checks the flag).
   }
 
+  /// True while a burst is loading or playing. The 400 ms timer must not
+  /// start a second `setAudioSource` while the first is still loading
+  /// (`playing` is false during the load).
+  bool _flushing = false;
+
   Future<void> _flushPlayback() async {
-    if (_stopped || _inboundBuf.isEmpty) return;
-    if (_player.playing) return; // still draining the previous burst
+    if (_stopped || _flushing || _inboundBuf.isEmpty) return;
+    // Still draining the previous burst. `playing` alone isn't enough: in
+    // just_audio it stays true after a clip COMPLETES (until pause/stop), so
+    // checking only it returned here forever after the first burst and the
+    // operator heard ~400 ms of the caller, then silence.
+    if (_player.playing &&
+        _player.processingState != ProcessingState.completed) {
+      return;
+    }
     final pcm = Uint8List.fromList(_inboundBuf);
     _inboundBuf.clear();
+    _flushing = true;
     try {
       final wav = AudioRecorderService.buildWavBytes([pcm], sampleRate: 16000);
       final dataUrl = 'data:audio/wav;base64,${base64Encode(wav)}';
+      // Reset `playing` so play() below actually starts the new clip (it's a
+      // no-op while `playing` is still true from the finished one).
+      if (_player.playing) await _player.pause();
       await _player.setAudioSource(DataUrlAudioSource(dataUrl));
+      // Completes when the clip finishes (or is paused/stopped), so the next
+      // burst queues behind this one instead of cutting it off.
       await _player.play();
     } catch (e) {
       debugPrint('[Takeover] playback failed: $e');
+    } finally {
+      _flushing = false;
     }
   }
 

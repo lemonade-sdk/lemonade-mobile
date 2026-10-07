@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:record/record.dart';
 
 import '../models/chat_message.dart';
 import '../providers/chat_history_provider.dart';
@@ -82,6 +83,25 @@ class _TalkScreenState extends ConsumerState<TalkScreen>
       setState(
         () => _error = 'No audio-to-text model is loaded on the server.',
       );
+      return;
+    }
+
+    // iOS hands a denied app silence rather than an error, so without this
+    // check the call sat on "Listening" forever with nothing to explain it.
+    // hasPermission() also triggers the first-run prompt.
+    final probe = AudioRecorder();
+    bool micOk;
+    try {
+      micOk = await probe.hasPermission();
+    } catch (_) {
+      micOk = false;
+    } finally {
+      unawaited(probe.dispose());
+    }
+    if (!mounted) return;
+    if (!micOk) {
+      setState(() => _error = 'Microphone access is off. Enable it for '
+          'Lemonade Mobile in Settings to talk.');
       return;
     }
 

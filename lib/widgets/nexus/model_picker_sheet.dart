@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/app_mode_provider.dart';
 import '../../providers/models_provider.dart';
+import '../../providers/servers_provider.dart';
 import '../../themes/nexus_tokens.dart';
 import 'nexus_ui.dart';
 
@@ -28,14 +29,23 @@ class ModelPickerSheet extends ConsumerStatefulWidget {
 class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
   final _query = TextEditingController();
   String _q = '';
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     // Re-fetch from the server every time the picker opens — models
     // added/removed server-side otherwise only appeared after an app restart.
-    Future.microtask(
-        () => ref.read(modelsProvider.notifier).fetchModels());
+    Future.microtask(_refresh);
+  }
+
+  Future<void> _refresh() async {
+    if (mounted) setState(() => _loading = true);
+    try {
+      await ref.read(modelsProvider.notifier).fetchModels();
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -102,14 +112,13 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
                 ),
               ),
               const SizedBox(height: 12),
-              if (filtered.isEmpty)
+              if (models.isEmpty)
+                _emptyState(context)
+              else if (filtered.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                      child: Text(
-                          models.isEmpty
-                              ? 'No models on this server.'
-                              : 'No models match “$_q”.',
+                      child: Text('No models match “$_q”.',
                           style: TextStyle(color: t.muted))),
                 )
               else
@@ -136,6 +145,54 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Empty catalog: say WHY (no server, still loading, or the fetch error)
+  /// and offer a retry, instead of a bare "No models on this server."
+  Widget _emptyState(BuildContext context) {
+    final t = context.nexus;
+    final server = ref.watch(selectedServerProvider);
+    final error = ref.watch(modelsFetchErrorProvider);
+    final String message;
+    if (server == null) {
+      message = 'No server selected. Add or pick one under '
+          'Settings → Manage servers.';
+    } else if (_loading) {
+      message = 'Loading models from “${server.name}”…';
+    } else if (error != null) {
+      message = error;
+    } else {
+      message = 'No models on “${server.name}”.';
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (server != null && _loading)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: error != null && !_loading
+                  ? t.danger
+                  : t.muted)),
+          if (server != null && !_loading) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Retry'),
+            ),
+          ],
+        ],
       ),
     );
   }

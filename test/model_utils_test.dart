@@ -15,6 +15,23 @@ void main() {
     expect(capabilities, contains(ModelCapabilities.thinking));
   });
 
+  test('unlabeled vision-family models are recognized as vision', () {
+    for (final id in ['llava-1.6-7b', 'qwen2.5-vl-7b-instruct', 'moondream2']) {
+      expect(
+        ModelUtils.detectCapabilities(id, const []),
+        contains(ModelCapabilities.vision),
+        reason: id,
+      );
+    }
+  });
+
+  test('a server that labels a model text-only is trusted over its name', () {
+    expect(
+      ModelUtils.detectCapabilities('qwen2.5-vl-7b-instruct', const ['text']),
+      isNot(contains(ModelCapabilities.vision)),
+    );
+  });
+
   test('Qwen embedding models are not offered reasoning controls', () {
     final capabilities = ModelUtils.detectCapabilities(
       'Qwen3-Embedding-0.6B-GGUF',

@@ -87,6 +87,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ref.invalidate(walletBalanceProvider);
       ref.invalidate(accountSummaryProvider);
       ref.invalidate(subscriptionDetailProvider);
+      // Catch a token revoked while backgrounded (password change, sign-out
+      // on another device) instead of showing "online" with every call failing.
+      ref
+          .read(authProvider.notifier)
+          .revalidate(minInterval: const Duration(minutes: 5));
     }
   }
 

@@ -43,17 +43,19 @@ class _DocsTabState extends ConsumerState<DocsTab> {
     final selectedId = ref.read(selectedCollectionIdProvider);
     final collection = collections.firstWhere((c) => c.id == selectedId,
         orElse: () => collections.first);
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'txt', 'md'],
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final file = result.files.first;
-    final bytes = file.bytes;
-    if (bytes == null) return;
+    // Claim the slot BEFORE opening the picker: a double tap otherwise
+    // opened a second picker, which throws `already_active` unhandled.
     setState(() => _uploading = true);
     try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'txt', 'md'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      final bytes = file.bytes;
+      if (bytes == null) return;
       await client.uploadDocument(
         collectionId: collection.id,
         filename: file.name,

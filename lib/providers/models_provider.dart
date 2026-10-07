@@ -4,16 +4,25 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:lemonade_mobile/api/exceptions.dart';
 import 'package:lemonade_mobile/api/lemonade_client.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
+import 'package:lemonade_mobile/providers/account_provider.dart';
 import 'package:lemonade_mobile/providers/app_mode_provider.dart';
 import 'package:lemonade_mobile/providers/servers_provider.dart';
+import 'package:lemonade_mobile/utils/friendly_error.dart';
 import 'package:lemonade_mobile/utils/model_utils.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
 
 final modelsProvider = StateNotifierProvider<ModelsNotifier, List<ModelInfo>>(
   (ref) => ModelsNotifier(ref),
 );
+
+/// Why the last model-list fetch for the selected server failed, as a
+/// user-facing message; null after a successful fetch. Fetch failures used to
+/// go only to the debug log, so a bad URL or a rejected API key looked like
+/// "nothing happens" — the picker just said "No models on this server."
+final modelsFetchErrorProvider = StateProvider<String?>((ref) => null);
 
 /// Subscription (the managed Nexus gateway) is locked to the curated **NXS\***
 /// collections — models whose id starts with `NXS`. Local/Mesh servers are
@@ -94,6 +103,8 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
     ref.listen(appModeProvider, (_, __) => fetchModels());
     // Watch for server changes and fetch models for the new server.
     ref.listen(selectedServerProvider, (previous, next) {
+      // A previous server's failure doesn't describe the new one.
+      ref.read(modelsFetchErrorProvider.notifier).state = null;
       if (next == null) {
         state = [];
         return;
@@ -233,6 +244,7 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // A server/mode switch (or a newer fetch) may have landed while the
       // request was in flight — this response belongs to the old world.
       if (_isStale(epoch, selectedServer, mode)) return;
+      ref.read(modelsFetchErrorProvider.notifier).state = null;
       final ggufCtxById = <String, int>{};
       final registryCtxById = <String, int>{};
       for (final m in allModels) {
@@ -251,9 +263,14 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // from the picker and, worse, hid a collection's chat component from
       // the wire resolver, which then fell back to the image/TTS component →
       // "This model does not support chat completion" 400s.
+      //
+      // Only an explicit `downloaded: false` hides a model. Plain
+      // OpenAI-compatible servers (OpenAI, Ollama, LM Studio, vLLM,
+      // llama-server…) don't send the field at all — every model they list
+      // is usable, and `== true` filtered their whole catalog away.
       final apiModels = isGateway
           ? allModels
-          : allModels.where((m) => m.downloaded == true).toList();
+          : allModels.where((m) => m.downloaded != false).toList();
       final modelInfos = apiModels
           .map(
             (m) => ModelInfo(
@@ -357,6 +374,23 @@ class ModelsNotifier extends StateNotifier<List<ModelInfo>> {
       // chat ("model list never syncs") after one transient network error.
       debugPrint('fetchModels failed (${selectedServer.baseUrl}): $e');
       if (mounted && state.isEmpty) state = [];
+      // A 401 from the subscription gateway may mean the stored token was
+      // revoked — confirm (via /account) and sign out if so.
+      if (isManagedGateway &&
+          e is UnauthorizedException &&
+          e is! ApiKeyRejectedException &&
+          e.statusCode == 401 &&
+          mounted) {
+        unawaited(ref
+            .read(authProvider.notifier)
+            .revalidate(minInterval: const Duration(minutes: 1)));
+      }
+      if (!_isStale(epoch, selectedServer, mode)) {
+        ref.read(modelsFetchErrorProvider.notifier).state = friendlyError(
+          e,
+          action: 'load models from "${selectedServer.name}"',
+        );
+      }
     } finally {
       client.close();
     }

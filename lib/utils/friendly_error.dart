@@ -69,9 +69,14 @@ Object _unwrap(Object error) {
 }
 
 String _apiMessage(LemonadeApiException e, String what) {
+  if (e is ApiKeyRejectedException) {
+    return "The server rejected the API key. Check the key under "
+        "Settings → Manage servers.";
+  }
   switch (e.statusCode) {
     case 400:
-      return "The server couldn't process that request. Please try again.";
+      return _withServerReason(
+          "The server couldn't process that request.", e.message);
     case 401:
       // Capability gating elsewhere shows richer upsell cards; this is the
       // generic fallback.
@@ -83,7 +88,9 @@ String _apiMessage(LemonadeApiException e, String what) {
     case 403:
       return "You don't have permission to $what.";
     case 404:
-      return "That wasn't found on the server. It may have been removed.";
+      return _withServerReason(
+          "That wasn't found on the server. It may have been removed.",
+          e.message);
     case 409:
       return "That conflicts with a change made elsewhere. Refresh and try again.";
     case 429:
@@ -96,6 +103,22 @@ String _apiMessage(LemonadeApiException e, String what) {
     return "The connection was interrupted. Please try again.";
   }
   return "Something went wrong trying to $what. Please try again.";
+}
+
+/// Append the server's own explanation (e.g. "model 'x' not found") when it
+/// is a short, human-readable line — the generic text alone hid the actual
+/// cause. Raw bodies (HTML, JSON, multi-line dumps, bare status codes) are
+/// dropped.
+String _withServerReason(String generic, String serverMessage) {
+  final m = serverMessage.trim();
+  final readable = m.isNotEmpty &&
+      m.length <= 160 &&
+      !m.contains('\n') &&
+      !m.startsWith('<') &&
+      !m.startsWith('{') &&
+      !m.startsWith('[') &&
+      !RegExp(r'^HTTP \d+$').hasMatch(m);
+  return readable ? '$generic ($m)' : '$generic Please try again.';
 }
 
 String _platformMessage(PlatformException e, String what) {

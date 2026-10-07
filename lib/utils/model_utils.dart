@@ -60,8 +60,14 @@ class ModelUtils {
 
     // If no capabilities detected from labels, check model name
     if (capabilities.isEmpty) {
-      // Check for vision capability in model name
-      if (lowerId.contains('vision')) {
+      // Check for vision capability in model name. A server that sends no
+      // labels at all (plain OpenAI-compatible endpoints) gets the full
+      // known-vision-family list — `contains('vision')` alone refused images
+      // for llava / qwen-vl / internvl / moondream. A server that DOES label
+      // its models is trusted: the router owns vision routing there.
+      if (labels.isEmpty
+          ? isVisionModel(modelId, labels)
+          : lowerId.contains('vision')) {
         capabilities.add(ModelCapabilities.vision);
       }
 

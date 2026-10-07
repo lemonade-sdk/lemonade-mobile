@@ -6,6 +6,7 @@ import '../../providers/chat_history_provider.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/models_provider.dart';
 import '../../providers/nav_provider.dart';
+import '../../providers/omni_router_provider.dart';
 import '../../screens/talk_screen.dart';
 import '../../themes/nexus_tokens.dart';
 import '../../widgets/nexus/model_picker_sheet.dart';
@@ -67,9 +68,11 @@ class _ChatTabState extends ConsumerState<ChatTab> {
 
   /// Open the searchable model picker and remember the choice for this chat.
   Future<void> _pickModel() async {
-    final current = ref.read(selectedModelProvider);
+    final current = ref.read(requestedLlmModelProvider);
     final picked = await ModelPickerSheet.show(context, current: current);
-    if (picked == null || picked == current) return;
+    // Don't skip when `picked == current`: re-picking must still overwrite a
+    // stale per-chat override that names a model this server doesn't have.
+    if (picked == null) return;
     await ref.read(selectedModelProvider.notifier).selectModel(picked);
     // Persist the model per-conversation so switching chats restores it.
     final active = ref.read(activeChatProvider);
@@ -85,14 +88,25 @@ class _ChatTabState extends ConsumerState<ChatTab> {
   Widget build(BuildContext context) {
     final t = context.nexus;
     final messages = ref.watch(chatProvider);
-    final model = ref.watch(selectedModelProvider) ?? 'No model';
+    // Show what will actually be sent (per-chat / global defaults included),
+    // not just the last globally selected model.
+    final model = ref.watch(requestedLlmModelProvider) ?? 'No model';
 
     // Restore each conversation's own model when switching chats.
-    ref.listen(activeChatProvider, (_, next) {
+    ref.listen(activeChatProvider, (prev, next) {
+      // The active chat is re-emitted on every streamed token (a new
+      // ChatHistory copy each time). Only a real chat switch should restore
+      // the model or jump to the bottom — jumping per token made it
+      // impossible to scroll up while a reply streamed.
+      if (prev?.id == next?.id) return;
       final ov = next?.modelOverrides?.llmModel;
+      final models = ref.read(modelsProvider);
       if (ov != null &&
           ov.isNotEmpty &&
-          ov != ref.read(selectedModelProvider)) {
+          ov != ref.read(selectedModelProvider) &&
+          // A chat's saved model may be from another server — re-selecting
+          // it there only bounced between "syncing" and the auto-pick.
+          models.any((m) => m.id == ov)) {
         ref.read(selectedModelProvider.notifier).selectModel(ov);
       }
       // Switching conversations replaces the whole list. Scroll only after

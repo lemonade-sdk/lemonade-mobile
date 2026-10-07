@@ -171,12 +171,21 @@ String? resolveWireLlmModel(String? selectedId, List<ModelInfo> models) {
 /// still applies.
 final wireLlmModelProvider = Provider<String?>((ref) {
   final models = ref.watch(modelsProvider);
+  return resolveWireLlmModel(ref.watch(requestedLlmModelProvider), models);
+});
+
+/// The model (or Collection) the next message will be addressed to, before
+/// any Collection → component substitution. This is what the chat header and
+/// the picker's checkmark must show — they read `selectedModelProvider`
+/// directly, so a per-chat or global default that won precedence was sent
+/// while a different model was displayed.
+final requestedLlmModelProvider = Provider<String?>((ref) {
+  final models = ref.watch(modelsProvider);
   final rawSelectedId = ref.watch(selectedModelProvider);
   final rawSelected = models.where((m) => m.id == rawSelectedId).firstOrNull;
-  final requestedId = rawSelected?.isCollection == true
+  return rawSelected?.isCollection == true
       ? rawSelectedId
       : ref.watch(effectiveLlmModelProvider);
-  return resolveWireLlmModel(requestedId, models);
 });
 
 /// Resolved view of the active workflow. When the user has a Collection

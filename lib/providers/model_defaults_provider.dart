@@ -26,14 +26,26 @@ ModelDefaults? _activeChatOverrides(List<ChatHistory> chats) {
   return null;
 }
 
+/// Whether a saved override/default [id] can be used against the current
+/// catalog. Overrides are stored per chat and survive server switches, so one
+/// can name a model the active server doesn't have — sending it produced
+/// "not found" errors while the header showed a different (valid) model.
+/// An empty catalog (not fetched yet) can't disprove anything, so the saved
+/// value is kept until the list arrives.
+bool _usable(String? id, List<ModelInfo> models) =>
+    id != null &&
+    id.isNotEmpty &&
+    (models.isEmpty || models.any((m) => m.id == id));
+
 // Derived provider: effective model for a given type, merging per-chat override > global default > first available
 final effectiveLlmModelProvider = Provider<String?>((ref) {
+  final models = ref.watch(modelsProvider);
   final chatOverride = ref.watch(chatHistoryProvider
       .select((chats) => _activeChatOverrides(chats)?.llmModel));
-  if (chatOverride != null) return chatOverride;
+  if (_usable(chatOverride, models)) return chatOverride;
 
   final global = ref.watch(globalModelDefaultsProvider);
-  if (global.llmModel != null) return global.llmModel;
+  if (_usable(global.llmModel, models)) return global.llmModel;
 
   // Fall back to selected model
   return ref.watch(selectedModelProvider);
@@ -42,13 +54,13 @@ final effectiveLlmModelProvider = Provider<String?>((ref) {
 final effectiveAudioModelProvider = Provider<String?>((ref) {
   final chatOverride = ref.watch(chatHistoryProvider
       .select((chats) => _activeChatOverrides(chats)?.audioToTextModel));
-  if (chatOverride != null) return chatOverride;
+  final models = ref.watch(modelsProvider);
+  if (_usable(chatOverride, models)) return chatOverride;
 
   final global = ref.watch(globalModelDefaultsProvider);
-  if (global.audioToTextModel != null) return global.audioToTextModel;
+  if (_usable(global.audioToTextModel, models)) return global.audioToTextModel;
 
   // Fall back to first audio-capable model
-  final models = ref.watch(modelsProvider);
   final audioModels = models.where((m) => m.supportsAudio).toList();
   return audioModels.isNotEmpty ? audioModels.first.id : null;
 });
@@ -56,12 +68,14 @@ final effectiveAudioModelProvider = Provider<String?>((ref) {
 final effectiveImageGenModelProvider = Provider<String?>((ref) {
   final chatOverride = ref.watch(chatHistoryProvider
       .select((chats) => _activeChatOverrides(chats)?.imageGenerationModel));
-  if (chatOverride != null) return chatOverride;
+  final models = ref.watch(modelsProvider);
+  if (_usable(chatOverride, models)) return chatOverride;
 
   final global = ref.watch(globalModelDefaultsProvider);
-  if (global.imageGenerationModel != null) return global.imageGenerationModel;
+  if (_usable(global.imageGenerationModel, models)) {
+    return global.imageGenerationModel;
+  }
 
-  final models = ref.watch(modelsProvider);
   final imageModels = models.where((m) => m.supportsImageGeneration).toList();
   return imageModels.isNotEmpty ? imageModels.first.id : null;
 });

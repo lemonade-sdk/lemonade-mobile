@@ -75,10 +75,18 @@ class _AuthGateState extends ConsumerState<AuthGate> {
       if (!mounted) return;
       // On this screen a 401 means the credentials were wrong — not an
       // expired session.
+      // A 403 is the account itself (suspended, locked) — show the server's
+      // reason rather than blaming the password.
       final msg = (e is LemonadeApiException && e.statusCode == 401)
           ? 'Email or password is incorrect.'
-          : friendlyError(e,
-              action: _register ? 'create your account' : 'sign in');
+          : (e is LemonadeApiException &&
+                  e.statusCode == 403 &&
+                  e.message.isNotEmpty &&
+                  !e.message.startsWith('HTTP ') &&
+                  e.message.length <= 200)
+              ? e.message
+              : friendlyError(e,
+                  action: _register ? 'create your account' : 'sign in');
       setState(() => _error = msg);
     } finally {
       if (mounted) setState(() => _busy = false);

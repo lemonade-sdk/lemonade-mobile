@@ -16,7 +16,8 @@ class ModelsEndpoint {
   /// model override modal, server probe, etc.).
   Future<List<ApiModelInfo>> installed() async {
     final everything = await _fetch(showAll: true);
-    return everything.where((m) => m.downloaded == true).toList();
+    // A missing `downloaded` (plain OpenAI-compatible servers) means usable.
+    return everything.where((m) => m.downloaded != false).toList();
   }
 
   Future<List<ApiModelInfo>> _fetch({required bool showAll}) async {

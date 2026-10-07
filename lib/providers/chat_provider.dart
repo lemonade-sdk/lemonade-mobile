@@ -12,6 +12,8 @@ import '../api/types/chat_message.dart';
 import '../api/types/chat_request.dart';
 import '../constants/messages.dart';
 import '../models/chat_message.dart';
+import '../models/server_config.dart';
+import '../models/thinking_level.dart';
 import '../omni/cancel_token.dart';
 import '../omni/tool_executor.dart';
 import '../providers/chat_history_provider.dart';
@@ -61,6 +63,12 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// the `_stopRequested` check inside `await for`).
   StreamSubscription<ChatTurnEvent>? _turnSub;
 
+  /// The controller the turn loop `await for`s on. [stopStreaming] must close
+  /// it: cancelling [_turnSub] never fires its `onDone`, so the bridge never
+  /// closed and the loop waited forever — the turn's `finally` never ran,
+  /// `_sending` stayed true, and every later send was ignored until restart.
+  StreamController<ChatTurnEvent>? _turnBridge;
+
   /// Cooperative cancel for the agent loop / tools (in addition to stream
   /// subscription cancel).
   CancelToken? _cancelToken;
@@ -90,6 +98,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     _stopRequested = true;
     _cancelToken?.cancel();
     unawaited(_turnSub?.cancel());
+    final bridge = _turnBridge;
+    if (bridge != null && !bridge.isClosed) unawaited(bridge.close());
     // Spec: no cancel RPC — close the client (TCP) to abort mid-body SSE.
     ref.read(lemonadeClientProvider)?.abortInFlight();
   }
@@ -103,8 +113,11 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       return AppMessages.noServerSelected;
     }
     final selectedModel = ref.read(wireLlmModelProvider) ?? '';
-    if (selectedModel.isEmpty) return AppMessages.noModelSelected;
-    if (_modelListOutOfSync()) return AppMessages.modelListSyncing;
+    // When the catalog couldn't be fetched, "select a model" / "syncing" hide
+    // the real problem (bad URL, rejected key, unreachable server).
+    final fetchError = ref.read(modelsFetchErrorProvider);
+    if (selectedModel.isEmpty) return fetchError ?? AppMessages.noModelSelected;
+    if (_modelListOutOfSync()) return fetchError ?? AppMessages.modelListSyncing;
     // The vision check is a PLAIN-model rule: a bare LLM that can't see must
     // not receive image parts. A Collection routes attachments through the
     // omni pipeline instead (analyze_image / edit_image / placeholder
@@ -155,6 +168,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     ScrollController? scrollController,
   }) async {
     if (_sending) return; // one turn at a time — no interleaved histories
+    // The user's message wins over a background title request.
+    _cancelAutoTitle();
     // The composer fires this unawaited — it must never throw into the void.
     try {
       await _sendMessage(
@@ -190,13 +205,14 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     // post the Collection meta-id to /chat/completions (server returns a
     // "GGUF file not found for checkpoint" 500 in that case).
     final selectedModel = ref.read(wireLlmModelProvider) ?? '';
+    final fetchError = ref.read(modelsFetchErrorProvider);
     if (selectedModel.isEmpty) {
-      await _appendError(AppMessages.noModelSelected);
+      await _appendError(fetchError ?? AppMessages.noModelSelected);
       return;
     }
 
     if (_modelListOutOfSync()) {
-      await _appendError(AppMessages.modelListSyncing);
+      await _appendError(fetchError ?? AppMessages.modelListSyncing);
       return;
     }
 
@@ -243,11 +259,36 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     // after the reply visibly finished. It's keyed to the turn's chat uuid
     // and fully best-effort (swallows its own errors).
     if (completedChatId != null) {
-      final client = ref.read(lemonadeClientProvider);
-      if (client != null) {
-        unawaited(_maybeAutoTitle(client, selectedModel, completedChatId));
+      final server = ref.read(selectedServerProvider);
+      if (server != null) {
+        unawaited(_maybeAutoTitle(server, selectedModel, completedChatId));
       }
     }
+  }
+
+  /// Dedicated client for the in-flight auto-title request. Closing it drops
+  /// that connection, which is the only way to make an OpenAI-compatible
+  /// server stop generating (`Future.timeout` alone doesn't) — the shared
+  /// chat client can't be closed without killing the chat stream too.
+  LemonadeApiClient? _titleClient;
+
+  /// Chats that already had their one auto-title attempt this session. A
+  /// failing title request used to be retried after EVERY turn while the
+  /// title stayed empty.
+  final Set<String> _titleAttempted = {};
+
+  /// Abort a still-running title request so it doesn't occupy a single-slot
+  /// server ahead of the user's next message.
+  void _cancelAutoTitle() {
+    final c = _titleClient;
+    _titleClient = null;
+    c?.close();
+  }
+
+  @override
+  void dispose() {
+    _cancelAutoTitle();
+    super.dispose();
   }
 
   /// Runs one chat turn. Returns the turn's chat uuid when the turn completed
@@ -358,6 +399,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
         // Bridge the turn stream so [stopStreaming] can cancel immediately
         // (even mid-idle SSE or mid-tool wait at the next event boundary).
         final bridge = StreamController<ChatTurnEvent>();
+        _turnBridge = bridge;
         _turnSub = stream.listen(
           bridge.add,
           onError: bridge.addError,
@@ -444,6 +486,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
         } finally {
           await _turnSub?.cancel();
           _turnSub = null;
+          if (identical(_turnBridge, bridge)) _turnBridge = null;
           if (!bridge.isClosed) await bridge.close();
         }
         await _flushPersist(chatId, epoch);
@@ -490,14 +533,18 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// existing first-message fallback title untouched. Runs detached from the
   /// turn (composer already unblocked), keyed to the turn's chat uuid.
   Future<void> _maybeAutoTitle(
-    LemonadeApiClient client,
+    ServerConfig server,
     String model,
     String chatId,
   ) async {
+    final notifier = ref.read(chatHistoryProvider.notifier);
+    final chat = notifier.getChatById(chatId);
+    if (chat == null || chat.title.trim().isNotEmpty) return;
+    if (!_titleAttempted.add(chatId)) return;
+    _cancelAutoTitle();
+    final client = LemonadeApiClient(server);
+    _titleClient = client;
     try {
-      final notifier = ref.read(chatHistoryProvider.notifier);
-      final chat = notifier.getChatById(chatId);
-      if (chat == null || chat.title.trim().isNotEmpty) return;
 
       final msgs = chat.messages;
       final firstUser = msgs
@@ -522,9 +569,10 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
           .read(modelsProvider)
           .where((entry) => entry.id == model)
           .firstOrNull;
-      final thinkingLevel = modelInfo?.supportsThinking == true
-          ? ref.read(modelThinkingLevelsProvider.notifier).levelFor(model)
-          : null;
+      // A title needs no reasoning: with the user's thinking level a
+      // reasoning model spent the whole timeout thinking about 5 words.
+      final thinkingLevel =
+          modelInfo?.supportsThinking == true ? ThinkingLevel.off : null;
 
       final res = await client.chat.create(
         ChatCompletionRequest(
@@ -543,6 +591,8 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
           ],
           stream: false,
           thinkingLevel: thinkingLevel,
+          // Bound the work server-side too; a title is a handful of tokens.
+          maxCompletionTokens: 32,
         ),
         timeout: const Duration(seconds: 20),
       );
@@ -564,6 +614,11 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       }
     } catch (_) {
       // best-effort — keep the first-message fallback title
+    } finally {
+      // Also runs after a timeout: dropping the connection makes the server
+      // stop generating instead of holding its slot.
+      if (identical(_titleClient, client)) _titleClient = null;
+      client.close();
     }
   }
 

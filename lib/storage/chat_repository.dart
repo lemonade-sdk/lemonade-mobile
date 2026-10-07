@@ -350,7 +350,17 @@ class ChatRepository {
         // Replace this message's attachments only (not the whole chat).
         await _db.attachments.filter().messageUuidEqualTo(p.uuid).deleteAll();
         if (p.attachments.isNotEmpty) {
-          await _db.attachments.putAll(p.attachments);
+          // Attachment uuids derive from (message, content hash), so the same
+          // image attached twice yields two rows with one uuid. `putAll` then
+          // violates the unique index and aborts the WHOLE transaction — the
+          // chat stopped persisting at all. One row per uuid is enough: the
+          // message's content parts still reference the file twice.
+          final seen = <String>{};
+          final unique = [
+            for (final a in p.attachments)
+              if (seen.add(a.uuid)) a,
+          ];
+          await _db.attachments.putAll(unique);
         }
         // Reuse the Isar primary key when this UUID already exists. Creating
         // a fresh auto-increment row for every streamed token collides with

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/nexus/nexus_call_tasks_models.dart';
+import '../../providers/account_provider.dart';
 import '../../providers/call_tasks_providers.dart';
 import '../../providers/nav_provider.dart';
 import 'call_transcript_screen.dart';
@@ -455,6 +456,16 @@ class _CallsTabState extends ConsumerState<CallsTab> {
     final raw = '$error';
     final needsPlan =
         raw.contains('capability_required') || raw.contains('status=401');
+    if (!raw.contains('capability_required') && raw.contains('status=401')) {
+      // A bare 401 can also be a revoked session, not a missing plan. Check
+      // the token: if it's dead the user is signed out (and sees sign-in);
+      // if it's fine the plan card below is the right answer.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref
+            .read(authProvider.notifier)
+            .revalidate(minInterval: const Duration(minutes: 1));
+      });
+    }
     if (needsPlan) {
       return NexusCard(
         radius: 18,
