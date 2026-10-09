@@ -82,13 +82,19 @@ class ModelSelector extends ConsumerWidget {
               borderRadius: BorderRadius.circular(16),
             ),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  selectedModel ?? 'Select Model',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Theme.of(context).colorScheme.onSurface,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 160),
+                  child: Text(
+                    selectedModel ?? 'Select Model',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),
