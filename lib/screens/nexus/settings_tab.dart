@@ -29,16 +29,21 @@ class SettingsTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(appModeProvider);
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _profile(context, ref),
-        const SizedBox(height: 18),
-        if (mode.showsModelManager) ...[const ModelManager(), const SizedBox(height: 18)],
-        ..._groups(context, ref),
-      ],
-    );
+    // On tablets, keep a readable ~720pt column centered instead of
+    // stretching cards and meters across the whole screen. Measured from
+    // the tab's own width, not the screen (split view, side panels).
+    return LayoutBuilder(builder: (context, box) {
+      final side = box.maxWidth > 752 ? (box.maxWidth - 720) / 2 : 16.0;
+      return ListView(
+        padding: EdgeInsets.symmetric(horizontal: side, vertical: 16),
+        children: [
+          _profile(context, ref),
+          const SizedBox(height: 18),
+          if (mode.showsModelManager) ...[const ModelManager(), const SizedBox(height: 18)],
+          ..._groups(context, ref),
+        ],
+      );
+    });
   }
 
   Widget _profile(BuildContext context, WidgetRef ref) {

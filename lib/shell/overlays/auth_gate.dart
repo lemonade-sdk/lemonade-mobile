@@ -101,10 +101,15 @@ class _AuthGateState extends ConsumerState<AuthGate> {
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(22, 18, 22, 28),
-          child: ConstrainedBox(
-            constraints:
-                BoxConstraints(minHeight: MediaQuery.of(context).size.height - 80),
-            child: _formOpen ? _buildForm(context) : _buildIntro(context),
+          // Centered and width-capped so the intro/form don't stretch edge to
+          // edge on tablets.
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  minHeight: MediaQuery.of(context).size.height - 80,
+                  maxWidth: 440),
+              child: _formOpen ? _buildForm(context) : _buildIntro(context),
+            ),
           ),
         ),
       ),
@@ -115,6 +120,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
   Widget _buildIntro(BuildContext context) {
     final t = context.nexus;
     return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (widget.onBack != null) ...[
           GestureDetector(

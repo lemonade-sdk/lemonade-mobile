@@ -210,6 +210,10 @@ Future<void> _pumpApp(WidgetBuilder home, _ShotDevice device) async {
                   final mq = MediaQuery.of(context);
                   return MediaQuery(
                     data: mq.copyWith(
+                      // Report the device's size, not the native window's,
+                      // so width-based layout matches the real device.
+                      size: Size(logicalW, logicalH),
+                      devicePixelRatio: device.dpr,
                       padding: device.insets,
                       viewPadding: device.insets,
                       systemGestureInsets: EdgeInsets.only(
@@ -237,19 +241,23 @@ class _ShellFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Builder(builder: (context) {
-      final t = context.nexus;
-      return Scaffold(
-        backgroundColor: t.bg,
-        body: Column(
-          children: [
-            const NexusHeader(),
-            Expanded(child: child),
-            const NexusBottomNav(),
-          ],
-        ),
-      );
-    });
+    // Seed the active tab so the bottom nav highlights the scene's tab.
+    return ProviderScope(
+      overrides: [navTabProvider.overrideWith((ref) => tab)],
+      child: Builder(builder: (context) {
+        final t = context.nexus;
+        return Scaffold(
+          backgroundColor: t.bg,
+          body: Column(
+            children: [
+              const NexusHeader(),
+              Expanded(child: child),
+              const NexusBottomNav(),
+            ],
+          ),
+        );
+      }),
+    );
   }
 }
 
@@ -346,6 +354,18 @@ final List<Override> _overrides = [
             'with about 2 GB of VRAM headroom, so there’s room for one more '
             'mid-size model. Want me to unload the older Qwen3 coder model to '
             'free space?'),
+    ChatMessage.text(
+        role: MessageRole.user,
+        text: 'Yes. And give me a curl to check what’s loaded.'),
+    ChatMessage.text(
+        role: MessageRole.assistant,
+        text: 'Done. Qwen3-Coder is unloaded, so there’s room for another '
+            'model. To list models from any machine on your LAN:\n\n'
+            '```bash\n'
+            'curl \$HOST/api/v1/models \\\n'
+            '  -H "Authorization: Bearer \$KEY"\n'
+            '```\n\n'
+            'Everything stays on your network. Nothing is sent to the cloud.'),
   ]),
   _seedStateProvider(chatStreamingProvider, false),
   _seedProvider<ChatHistory?>(activeChatProvider, null),
