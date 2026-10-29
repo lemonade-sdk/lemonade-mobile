@@ -97,6 +97,10 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// One connect at a time; later callers wait for it.
   Future<void>? _connecting;
 
+  /// The app is in the background, and the stop that started when it left.
+  bool _backgrounded = false;
+  Future<void>? _pausing;
+
   Future<void> _hydrate() async {
     final account = await MeshAccount.load();
     if (!mounted) return;
@@ -325,11 +329,21 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
     if (!_active || !state.isSetUp) return;
     if (lifecycle == AppLifecycleState.paused) {
-      _stop(MeshPhase.idle);
-    } else if (lifecycle == AppLifecycleState.resumed &&
-        state.phase != MeshPhase.connected) {
-      _connect();
+      _backgrounded = true;
+      _pausing = _stop(MeshPhase.idle);
+    } else if (lifecycle == AppLifecycleState.resumed) {
+      _backgrounded = false;
+      _resume();
     }
+  }
+
+  /// Back in the foreground: reconnect once the stop that began in the
+  /// background has finished. Coming back while it ran used to find the mesh
+  /// still connected, skip the reconnect, and then show it stopped.
+  Future<void> _resume() async {
+    await _pausing;
+    if (_backgrounded || !_active || !state.isSetUp) return;
+    if (state.phase != MeshPhase.connected) await _connect();
   }
 
   @override
