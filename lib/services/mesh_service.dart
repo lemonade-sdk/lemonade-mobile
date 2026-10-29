@@ -231,7 +231,9 @@ class MeshService {
   /// Stops the mesh port and the mesh; [connect] brings them back.
   Future<void> stop() => _worker.run(_stopTask);
 
-  /// Removes this device from the network, then stops.
+  /// Removes this device from the network, then stops. A failure here does
+  /// not mean the device stayed on the network: the server removes this
+  /// device's tunnel before it answers, so its reply can be lost.
   Future<void> leave() async {
     try {
       await _worker.run(_leaveTask);
