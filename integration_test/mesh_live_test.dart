@@ -33,7 +33,7 @@ void main() {
       expect(session.genesisKey, isNotEmpty);
       // ignore: avoid_print
       print('[live] node=${session.nodeId} tunnel=${session.tunnelIp} '
-          'epoch=${session.tier1Epoch}');
+          'epoch=${session.tier1Epoch} name=${session.deviceName}');
 
       expect(await service.isUp(), isTrue, reason: 'mesh dataplane is not up');
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:lemonade_nexus_sdk/dns_discovery.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart';
 
@@ -173,6 +174,7 @@ class MeshService {
       } catch (e) {
         // The next server even on LnError.auth: joining reports an
         // unreachable server as an auth refusal too.
+        debugPrint('Mesh connect via $host failed: $e');
         lastError = e;
       }
     }
@@ -359,7 +361,9 @@ Future<String?> _nameDevice(
   try {
     await sdk.updateNode(nodeId: nodeId, updates: {'hostname': deviceName});
     return deviceName;
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('Mesh device name "$deviceName" refused: $e');
+  }
   try {
     final group = (await sdk.getNode(nodeId)).parentId;
     final check = await sdk.checkDeviceName(deviceName, groupNodeId: group);
@@ -369,7 +373,8 @@ Future<String?> _nameDevice(
     }
     await sdk.updateNode(nodeId: nodeId, updates: {'hostname': suggestion});
     return suggestion;
-  } catch (_) {
+  } catch (e) {
+    debugPrint('Mesh device name fallback failed: $e');
     return null;
   }
 }
