@@ -23,10 +23,10 @@ if [[ ! -x "$APP" ]]; then
 fi
 
 # device: pointW pointH   (pixel size = points * device dpr, see shot_mode.dart)
-SCENES=(01_local_first 02_chat 03_models)
+SCENES=(01_local_first 02_chat 03_models 04_modes 05_mesh_setup 06_mesh_settings)
 run_shot () {
   local device="$1" ptw="$2" pth="$3"
-  rm -rf "$CONTAINER/$device"
+  rm -rf "$CONTAINER/$device" "assets/store_screenshots/$device"
   mkdir -p "assets/store_screenshots/$device"
   for scene in "${SCENES[@]}"; do
     echo ">> $device / $scene  (${ptw}x${pth}pt)"
@@ -36,12 +36,23 @@ run_shot () {
     cp "$CONTAINER/$device/$scene.png" "assets/store_screenshots/$device/" 2>/dev/null \
       || echo "   (missing $scene)"
   done
+  # App Store Connect rejects any alpha channel; the frames are opaque, so
+  # dropping it changes no pixel.
+  for f in "assets/store_screenshots/$device"/*.png; do
+    magick "$f" -alpha off "PNG24:$f"
+  done
   ls -1 "assets/store_screenshots/$device/"
 }
 
 only="${1:-all}"
 case "$only" in
   all|iphone_pro_max) run_shot iphone_pro_max 440 956 ;;
+esac
+case "$only" in
+  all|iphone_6_3)     run_shot iphone_6_3 402 874 ;;
+esac
+case "$only" in
+  all|iphone_6_5)     run_shot iphone_6_5 428 926 ;;
 esac
 case "$only" in
   all|ipad_pro_13)    run_shot ipad_pro_13 1376 1032 ;;

@@ -18,6 +18,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show MeshPortDevice, MeshPortStatus;
 // ProviderOverride/ProviderBase aren't in the public API surface, but the
 // class is reachable via the src export and is stable. Using it directly lets
 // us seed any provider with a value without the (private) notifier types.
@@ -40,6 +41,7 @@ import '../providers/chat_provider.dart';
 import '../providers/device_stats_provider.dart';
 import '../providers/image_resolution_provider.dart';
 import '../providers/lemonade_client_provider.dart';
+import '../providers/mesh_provider.dart';
 import '../providers/models_provider.dart';
 import '../providers/nav_provider.dart';
 import '../providers/omni_router_provider.dart';
@@ -50,6 +52,9 @@ import '../screens/nexus/settings_tab.dart';
 import '../shell/nexus_bottom_nav.dart';
 import '../shell/nexus_header.dart';
 import '../shell/overlays/auth_gate.dart';
+import '../shell/overlays/mesh_setup_sheet.dart';
+import '../shell/overlays/mode_sheet.dart';
+import '../services/mesh_service.dart';
 import '../themes/nexus_tokens.dart';
 import '../themes/theme_registry.dart';
 
@@ -77,6 +82,10 @@ class _ShotDevice {
 const _devices = <String, _ShotDevice>{
   // iPhone 16/17 Pro Max — 440×956pt @3x (portrait). Notch ~54pt, home bar ~34pt.
   'iphone_pro_max': _ShotDevice(1320, 2868, 3.0, TargetPlatform.iOS, 54, 34),
+  // iPhone 6.3" store slot (iPhone 16/17 Pro) — 402×874pt @3x (portrait).
+  'iphone_6_3': _ShotDevice(1206, 2622, 3.0, TargetPlatform.iOS, 54, 34),
+  // iPhone 6.5" store slot (iPhone 14 Plus class) — 428×926pt @3x (portrait).
+  'iphone_6_5': _ShotDevice(1284, 2778, 3.0, TargetPlatform.iOS, 47, 34),
   // iPad Pro 13" (M-series) — LANDSCAPE for the store: 1376×1032pt @2x
   // (2752×2064 px). Store listings are wide, not tall.
   'ipad_pro_13': _ShotDevice(2752, 2064, 2.0, TargetPlatform.iOS, 0, 0),
@@ -105,6 +114,17 @@ Future<void> runStoreShotMode() async {
     '01_local_first': (context) => const AuthGate(),
     '02_chat': (context) => _ShellFrame(NexusTab.chat, const ChatTab()),
     '03_models': (context) => _ShellFrame(NexusTab.settings, const SettingsTab()),
+    '04_modes': (context) => _ShellFrame(NexusTab.chat,
+        const Stack(children: [ChatTab(), Positioned.fill(child: ModeSheet())])),
+    '05_mesh_setup': (context) => _MeshScope(
+          setUp: false,
+          child: _ShellFrame(NexusTab.chat,
+              const Stack(children: [ChatTab(), Positioned.fill(child: MeshSetupSheet())])),
+        ),
+    '06_mesh_settings': (context) => _MeshScope(
+          setUp: true,
+          child: _ShellFrame(NexusTab.settings, const SettingsTab()),
+        ),
   };
 
   // One scene per process (SHOT_SCENE) — re-rooting the app twice in one
@@ -261,6 +281,45 @@ class _ShellFrame extends StatelessWidget {
   }
 }
 
+/// Mesh mode with a seeded mesh: not set up (the Create / Join popup), or
+/// connected with two computers and Auto selected.
+class _MeshScope extends StatelessWidget {
+  final bool setUp;
+  final Widget child;
+  const _MeshScope({required this.setUp, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final mesh = !setUp
+        ? const MeshState(phase: MeshPhase.notSetUp)
+        : MeshState(
+            phase: MeshPhase.connected,
+            account: MeshAccount.create('iPhone'),
+            session: const MeshSession(
+                nodeId: 'node-phone',
+                tunnelIp: '10.97.26.8/32',
+                genesisKey: '',
+                tier1Epoch: 1),
+            port: const MeshPortStatus(
+              running: true,
+              port: 13306,
+              selection: 'auto',
+              devices: [
+                MeshPortDevice(nodeId: 'node-studio', deviceName: 'Studio Mac', isOnline: true),
+                MeshPortDevice(nodeId: 'node-tower', deviceName: 'Linux tower', isOnline: false),
+              ],
+            ),
+          );
+    return ProviderScope(
+      overrides: [
+        _seedState(appModeProvider, AppMode.mesh),
+        _seedState(meshProvider, mesh),
+      ],
+      child: child,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Seeded providers — the "curated" state every scene renders against.
 // ---------------------------------------------------------------------------
@@ -314,7 +373,6 @@ final List<Override> _overrides = [
   _seedState(themeProvider, ThemeRegistry.byId(ThemeRegistry.nexusDarkId)),
   _seedState(appModeProvider, AppMode.local),
   _seedState(authProvider, const AuthState()),
-  _seedState(overlayProvider, const NexusOverlayState()),
   _seedState(serversProvider, const <ServerConfig>[]),
   _seedState(selectedServerProvider,
       ServerConfig(baseUrl: 'http://192.168.1.42:13305', name: 'Studio Mac')),
