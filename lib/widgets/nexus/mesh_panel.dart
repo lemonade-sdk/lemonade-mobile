@@ -116,7 +116,12 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
     final mesh = ref.watch(meshProvider);
     final connected = mesh.phase == MeshPhase.connected;
     final (dot, status) = switch (mesh.phase) {
-      MeshPhase.connected => (t.good, '${mesh.onlineDevices} online'),
+      MeshPhase.connected => (
+          t.good,
+          mesh.searching && mesh.onlineDevices == 0
+              ? 'Finding devices…'
+              : '${mesh.onlineDevices} online'
+        ),
       MeshPhase.connecting => (t.accent2, 'Connecting…'),
       MeshPhase.error => (t.danger, 'Offline'),
       MeshPhase.idle => (t.faint, 'Stopped'),

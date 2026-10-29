@@ -6,6 +6,7 @@ import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
     show Invite, MeshPortStatus, SessionMoveEvent, normalizeInvite;
 
 import '../models/server_config.dart';
+import '../services/background_time.dart';
 import '../services/mesh_service.dart';
 import '../utils/server_identity.dart';
 
@@ -32,12 +33,17 @@ class MeshState {
   final MeshPortStatus port;
   final String? error;
 
+  /// Connected and still finding the devices: right after a connect or a
+  /// return to the app, before one is online.
+  final bool searching;
+
   const MeshState({
     this.phase = MeshPhase.notSetUp,
     this.account,
     this.session,
     this.port = MeshPortStatus.stopped,
     this.error,
+    this.searching = false,
   });
 
   bool get isSetUp => account != null;
@@ -63,6 +69,7 @@ class MeshState {
     MeshPortStatus? port,
     String? error,
     bool clearError = false,
+    bool? searching,
   }) =>
       MeshState(
         phase: phase ?? this.phase,
@@ -70,6 +77,7 @@ class MeshState {
         session: session ?? this.session,
         port: port ?? this.port,
         error: clearError ? null : (error ?? this.error),
+        searching: searching ?? this.searching,
       );
 }
 
@@ -246,6 +254,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     _portClosed = false;
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 20), (_) => _heartbeat());
+    unawaited(service.refreshPeers());
     _watchForDevices();
   }
 
@@ -254,13 +263,15 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// instead of waiting for the 20 s heartbeat.
   void _watchForDevices() {
     _devicesPoll?.cancel();
-    final until = DateTime.now().add(const Duration(seconds: 30));
+    final until = DateTime.now().add(const Duration(seconds: 60));
+    if (mounted && state.onlineDevices == 0) state = state.copyWith(searching: true);
     _devicesPoll = Timer.periodic(const Duration(seconds: 2), (timer) async {
       if (!mounted ||
           state.phase != MeshPhase.connected ||
           state.onlineDevices > 0 ||
           DateTime.now().isAfter(until)) {
         timer.cancel();
+        if (mounted && state.searching) state = state.copyWith(searching: false);
         return;
       }
       await refresh();
@@ -324,6 +335,8 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
 
   /// Removes this device from the mesh and forgets its identity.
   Future<void> leave() async {
+    _poll?.cancel();
+    _devicesPoll?.cancel();
     final service = _service;
     if (service != null && state.phase == MeshPhase.connected) {
       try {
@@ -361,10 +374,12 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     if (!_active || !state.isSetUp) return;
     if (lifecycle == AppLifecycleState.paused) {
       _backgrounded = true;
+      if (state.phase == MeshPhase.connected) unawaited(BackgroundTime.begin());
       _portTimer?.cancel();
       _portTimer = Timer(_portGrace, _closePort);
     } else if (lifecycle == AppLifecycleState.resumed) {
       _backgrounded = false;
+      unawaited(BackgroundTime.end());
       _portTimer?.cancel();
       _resume();
     }
@@ -406,7 +421,11 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
         return;
       }
     }
+    // After a suspension the device list is stale: fetch it now and look
+    // for the devices every 2 s until one is back.
+    unawaited(service.refreshPeers());
     await refresh();
+    _watchForDevices();
   }
 
   @override

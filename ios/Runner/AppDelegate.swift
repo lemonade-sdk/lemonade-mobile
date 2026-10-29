@@ -6,6 +6,8 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let eventStore = EKEventStore()
   private var calendarChannel: FlutterMethodChannel?
+  private var backgroundChannel: FlutterMethodChannel?
+  private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
   override func application(
     _ application: UIApplication,
@@ -28,6 +30,39 @@ import UIKit
       self?.readEvents(call.arguments, result: result)
     }
     calendarChannel = channel
+
+    // Extra running time after the app leaves the foreground, so the mesh
+    // survives a quick switch to another app (see BackgroundTime in Dart).
+    let background = FlutterMethodChannel(
+      name: "ai.nexus-projects.lemonade/background",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    background.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "begin":
+        self?.beginBackgroundTime()
+        result(nil)
+      case "end":
+        self?.endBackgroundTime()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    backgroundChannel = background
+  }
+
+  private func beginBackgroundTime() {
+    guard backgroundTask == .invalid else { return }
+    backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "mesh") { [weak self] in
+      self?.endBackgroundTime()
+    }
+  }
+
+  private func endBackgroundTime() {
+    guard backgroundTask != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(backgroundTask)
+    backgroundTask = .invalid
   }
 
   private func readEvents(_ arguments: Any?, result: @escaping FlutterResult) {

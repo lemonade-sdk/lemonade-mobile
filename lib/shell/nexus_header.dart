@@ -193,7 +193,9 @@ class NexusHeader extends ConsumerWidget {
           MeshPhase.connected => _Status(
               t.good,
               'Mesh · ${mesh.selectionLabel}',
-              '${mesh.onlineDevices} online',
+              mesh.searching && mesh.onlineDevices == 0
+                  ? 'finding devices…'
+                  : '${mesh.onlineDevices} online',
             ),
           MeshPhase.connecting => _Status(t.accent2, 'Mesh', 'connecting…'),
           MeshPhase.error => _Status(t.danger, 'Mesh', 'offline'),

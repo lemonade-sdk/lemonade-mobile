@@ -221,6 +221,16 @@ class MeshService {
   Future<void> select(String target) =>
       _guard(() => _worker.run(_selectTask(target)));
 
+  /// Fetches the device list from the network now instead of on the next
+  /// periodic refresh, so devices that came back are found sooner.
+  Future<void> refreshPeers() async {
+    try {
+      await _worker.run(_refreshPeersTask);
+    } catch (e) {
+      debugPrint('Mesh peer refresh failed: $e');
+    }
+  }
+
   /// Closes the loopback mesh port only; the session and the mesh stay up.
   Future<void> closePort() => _worker.run(_closePortTask);
 
@@ -420,6 +430,8 @@ Future<void> Function(LemonadeNexusSdk) _selectTask(String target) =>
     (sdk) => sdk.setMeshPortSelection(target);
 
 Future<void> _closePortTask(LemonadeNexusSdk sdk) => sdk.stopMeshPort();
+
+Future<void> _refreshPeersTask(LemonadeNexusSdk sdk) => sdk.refreshMesh();
 
 Future<void> Function(LemonadeNexusSdk) _openPortTask(String selection) => (sdk) async {
       await sdk.startMeshPort(port: kMeshPortNumber);
