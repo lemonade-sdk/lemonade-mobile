@@ -33,7 +33,10 @@ void main() {
       // joiner starts its own on the same loopback port.
       await inviter.stop();
       // A new invite reaches the other servers through consensus; give it
-      // the time a person takes to type the code.
+      // the time a person takes to type the code. The SDK also asks another
+      // server, at most three times, when the first does not hold it yet;
+      // every refusal counts as a wrong code against this address (5 per 10
+      // minutes per server), so this test must not lean on that.
       await Future<void>.delayed(const Duration(seconds: 15));
 
       final joined =
