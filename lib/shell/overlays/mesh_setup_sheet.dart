@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
+    show Invite, inviteFormatError, normalizeInvite;
 
 import '../../providers/app_mode_provider.dart';
 import '../../providers/mesh_provider.dart';
@@ -28,7 +30,7 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
   final _code = TextEditingController();
   bool _busy = false;
   String? _error;
-  (String, DateTime?)? _invite;
+  Invite? _invite;
 
   @override
   void didChangeDependencies() {
@@ -73,9 +75,10 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
   }
 
   Future<void> _join() async {
-    final code = normalizeInviteCode(_code.text);
-    if (code.isEmpty) {
-      setState(() => _error = 'Enter the invite code from Lemonade.');
+    final code = normalizeInvite(_code.text);
+    final malformed = inviteFormatError(code);
+    if (malformed != null) {
+      setState(() => _error = malformed);
       return;
     }
     if (_name.text.trim().isEmpty) {
@@ -192,7 +195,7 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
         final invite = _invite;
         return [
           if (invite != null)
-            MeshInviteCode(code: invite.$1, expiry: invite.$2)
+            MeshInviteCode(invite: invite)
           else
             Text(
                 'Your mesh is ready. Invite a computer from Settings → Mesh '

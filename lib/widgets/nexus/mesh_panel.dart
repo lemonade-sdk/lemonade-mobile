@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show MeshPortDevice;
+import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
+    show Invite, MeshPortDevice, formatInviteCode;
 import 'package:share_plus/share_plus.dart';
 
 import '../../providers/app_mode_provider.dart';
@@ -67,14 +68,14 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
   Future<void> _invite() async {
     setState(() => _busy = true);
     try {
-      final (code, expiry) = await ref.read(meshProvider.notifier).createInvite();
+      final invite = await ref.read(meshProvider.notifier).createInvite();
       if (!mounted) return;
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
           backgroundColor: ctx.nexus.bg2,
           title: const Text('Invite a device'),
-          content: MeshInviteCode(code: code, expiry: expiry),
+          content: MeshInviteCode(invite: invite),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
           ],
@@ -267,20 +268,22 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
 
 /// An invite code with copy / share and where to enter it.
 class MeshInviteCode extends StatelessWidget {
-  final String code;
-  final DateTime? expiry;
-  const MeshInviteCode({super.key, required this.code, this.expiry});
-
-  /// 8-digit codes read better in two groups; `lnk_…` tokens stay as they are.
-  String get _display => RegExp(r'^\d{8}$').hasMatch(code)
-      ? '${code.substring(0, 4)} ${code.substring(4)}'
-      : code;
+  final Invite invite;
+  const MeshInviteCode({super.key, required this.invite});
 
   @override
   Widget build(BuildContext context) {
     final t = context.nexus;
-    final short = _display.length <= 9;
-    final minutes = expiry?.difference(DateTime.now()).inMinutes;
+    // The 8-digit code when the server issued one, else the full token.
+    final code = invite.primary;
+    final display = formatInviteCode(code);
+    final short = invite.hasCode;
+    final expires = invite.hasCode ? invite.codeExpiresAt : invite.expiresAt;
+    final minutes = expires == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(expires * 1000)
+            .difference(DateTime.now())
+            .inMinutes;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,7 +302,7 @@ class MeshInviteCode extends StatelessWidget {
             border: Border.all(color: t.line2),
           ),
           child: SelectableText(
-            _display,
+            display,
             textAlign: short ? TextAlign.center : TextAlign.start,
             style: TextStyle(
               fontFamily: 'monospace',
@@ -337,6 +340,20 @@ class MeshInviteCode extends StatelessWidget {
             onPressed: () => Share.share('Lemonade mesh invite code: $code'),
           ),
         ]),
+        // A Lemonade that predates invite codes takes only the full token.
+        if (invite.hasCode)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: invite.linkToken));
+                ScaffoldMessenger.maybeOf(context)
+                    ?.showSnackBar(const SnackBar(content: Text('Full invite token copied')));
+              },
+              child: Text('Copy full token instead',
+                  style: TextStyle(fontSize: 12, color: t.accent2)),
+            ),
+          ),
       ],
     );
   }

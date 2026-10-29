@@ -25,7 +25,8 @@ void main() {
     try {
       final home = await inviter.connect(MeshAccount.create('join-test inviter'));
       final invite = await inviter.createInvite();
-      final code = invite['link_token'] as String;
+      // The 8-digit code when the network issues one, as a person types it.
+      final code = (invite['code'] ?? invite['link_token']) as String;
       // ignore: avoid_print
       print('[live] inviter node=${home.nodeId} invite=$code');
       // One mesh port per device: the inviter's must close before the

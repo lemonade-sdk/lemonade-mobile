@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show MeshPortStatus, SessionMoveEvent;
+    show Invite, MeshPortStatus, SessionMoveEvent, normalizeInvite;
 
 import '../models/server_config.dart';
 import '../services/mesh_service.dart';
@@ -158,7 +158,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// "Join mesh": a new device identity that joins the group of [inviteCode].
   Future<void> join(String inviteCode, String deviceName) => _setUp(
       MeshAccount.create(deviceName.trim()),
-      inviteCode: normalizeInviteCode(inviteCode));
+      inviteCode: normalizeInvite(inviteCode));
 
   Future<void> _setUp(MeshAccount account, {required String? inviteCode}) async {
     _active = true;
@@ -279,22 +279,14 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     await refresh();
   }
 
-  /// A single-use invite code for this mesh: (code, expiry).
-  Future<(String, DateTime?)> createInvite() async {
+  /// A single-use invite into this mesh: an 8-digit code (from servers that
+  /// issue one) and the full link token, which name the same invite.
+  Future<Invite> createInvite() async {
     final service = _service;
     if (service == null || state.phase != MeshPhase.connected) {
       throw const MeshException('Connect to your mesh first.');
     }
-    final result = await service.createInvite();
-    final code = result['link_token'] as String? ?? '';
-    final expires = result['expires_at'];
-    DateTime? expiry;
-    if (expires is num) {
-      expiry = DateTime.fromMillisecondsSinceEpoch(expires.toInt() * 1000);
-    } else if (expires is String) {
-      expiry = DateTime.tryParse(expires);
-    }
-    return (code, expiry);
+    return Invite.fromJson(await service.createInvite());
   }
 
   /// Removes this device from the mesh and forgets its identity.
@@ -348,13 +340,6 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     _service?.close();
     super.dispose();
   }
-}
-
-/// Invite codes are 8 digits (shown in groups) or full `lnk_…` tokens.
-String normalizeInviteCode(String input) {
-  final trimmed = input.trim();
-  final digits = trimmed.replaceAll(RegExp(r'[\s-]'), '');
-  return RegExp(r'^\d{8}$').hasMatch(digits) ? digits : trimmed;
 }
 
 final meshProvider =

@@ -1,23 +1,15 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
-import 'package:lemonade_mobile/providers/mesh_provider.dart';
 import 'package:lemonade_mobile/services/mesh_service.dart';
+import 'package:lemonade_mobile/themes/theme_registry.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
+import 'package:lemonade_mobile/widgets/nexus/mesh_panel.dart';
+import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show Invite;
 
 void main() {
-  group('normalizeInviteCode', () {
-    test('joins an 8-digit code typed in groups', () {
-      expect(normalizeInviteCode(' 1234 5678 '), '12345678');
-      expect(normalizeInviteCode('1234-5678'), '12345678');
-    });
-
-    test('keeps a full link token as it is', () {
-      expect(normalizeInviteCode('  lnk_AbC-123 '), 'lnk_AbC-123');
-    });
-  });
-
   group('MeshAccount', () {
     test('creates a 32-byte identity seed', () {
       final a = MeshAccount.create('iPhone');
@@ -56,5 +48,33 @@ void main() {
         isMeshPortServer(
             ServerConfig(baseUrl: 'http://192.168.1.5:13305', name: kMeshServerName)),
         isFalse);
+  });
+
+  group('MeshInviteCode', () {
+    const token = 'lnk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+    Widget host(Invite invite) => MaterialApp(
+          theme: ThemeRegistry.byId(ThemeRegistry.nexusDarkId).buildTheme(),
+          home: Scaffold(body: MeshInviteCode(invite: invite)),
+        );
+
+    testWidgets('shows the 8-digit code first, the token on request', (tester) async {
+      await tester.pumpWidget(host(Invite.fromJson({
+        'link_token': token,
+        'code': '12345678',
+        'group_node_id': 'g',
+        'code_expires_at': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 600,
+      })));
+      expect(find.text('1234 5678'), findsOneWidget);
+      expect(find.text(token), findsNothing);
+      expect(find.text('Copy full token instead'), findsOneWidget);
+    });
+
+    testWidgets('shows the token from a server without codes', (tester) async {
+      await tester.pumpWidget(
+          host(Invite.fromJson({'link_token': token, 'group_node_id': 'g'})));
+      expect(find.text(token), findsOneWidget);
+      expect(find.text('Copy full token instead'), findsNothing);
+    });
   });
 }
