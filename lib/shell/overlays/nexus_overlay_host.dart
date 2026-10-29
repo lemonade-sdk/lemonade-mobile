@@ -9,6 +9,7 @@ import 'conversations_drawer.dart';
 import 'flow_editor_overlay.dart';
 import 'image_lightbox_overlay.dart';
 import 'live_call_overlay.dart';
+import 'mesh_setup_sheet.dart';
 import 'mode_sheet.dart';
 import 'number_routing_overlay.dart';
 import 'sub_sheet.dart';
@@ -42,6 +43,8 @@ class NexusOverlayHost extends ConsumerWidget {
         return const Positioned.fill(child: ConversationsDrawer());
       case NexusOverlayKind.modeSheet:
         return const Positioned.fill(child: ModeSheet());
+      case NexusOverlayKind.meshSetup:
+        return const Positioned.fill(child: MeshSetupSheet());
       case NexusOverlayKind.subSheet:
         return Positioned.fill(child: SubSheet(section: s.subSheetSection));
       case NexusOverlayKind.liveCall:

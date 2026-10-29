@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Search results asset: 3:2, rendered at 1920x1280 CSS px @2x = 3840x2560
+     (Apple's max). Copy + the front phone sit inside the centered safe area
+     (~56% x 40%); everything outside it is decoration. -->
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+  .copy { position: absolute; left: 440px; top: 50%; transform: translateY(-50%); width: 640px; }
+  .brand { display: flex; align-items: center; gap: 16px; font-size: 34px; }
+  .brand img { width: 56px; height: 56px; filter: drop-shadow(0 6px 20px rgba(247,208,70,.45)); }
+  h1 { margin-top: 26px; font-size: 76px; line-height: 1.04; font-weight: 800; letter-spacing: -.03em; }
+  h1 span { color: var(--accent2); }
+  p { margin-top: 24px; font-size: 29px; line-height: 1.4; color: var(--muted); font-weight: 500; }
+  .chips { margin-top: 34px; display: flex; flex-wrap: wrap; gap: 14px; }
+  .front { width: 430px; left: 1110px; top: 175px; transform: rotate(4deg); z-index: 2; }
+  .back  { width: 390px; left: 1440px; top: 250px; transform: rotate(10deg); opacity: .8; }
+</style></head>
+<body>
+  <div class="grid"></div>
+  <div class="glow" style="width:1000px;height:800px;left:1000px;top:240px;background:rgba(77,124,255,.30)"></div>
+  <div class="glow" style="width:520px;height:360px;left:300px;top:300px;background:rgba(77,124,255,.14)"></div>
+  <div class="phone back"><img src="../../assets/store_screenshots/iphone_pro_max/03_models.png"></div>
+  <div class="phone front"><img src="../../assets/store_screenshots/iphone_pro_max/02_chat.png"></div>
+  <div class="copy">
+    <div class="brand"><img src="../../assets/lemonade_logo_512.png" alt="">
+      <span class="wordmark">Lemonade <b>Mobile</b></span></div>
+    <h1>Chat with AI on<br><span>your own server.</span></h1>
+    <p>Connect to the models on your home or office network. No account needed. Want more? Add cloud AI with an optional subscription.</p>
+    <div class="chips">
+      <span class="chip"><i></i>Local AI</span>
+      <span class="chip">Voice chat</span>
+      <span class="chip">Model manager</span>
+      <span class="chip">Optional subscription</span>
+    </div>
+  </div>
+</body></html>

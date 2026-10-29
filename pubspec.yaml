@@ -59,6 +59,15 @@ dependencies:
   share_plus: ^10.0.0    # cross-platform "Share…" sheet
   gal: ^2.3.0            # save image to Photos / camera roll / Files
 
+  # Lemonade Nexus client SDK (Mesh mode): Dart API + the native library for
+  # iOS / Android. Local development points this at a lemonade-nexus checkout
+  # in pubspec_overrides.yaml (git-ignored).
+  lemonade_nexus_sdk:
+    git:
+      url: https://github.com/lemonade-sdk/lemonade-nexus.git
+      ref: main
+      path: packages/lemonade_nexus_sdk
+
   # Audio recording & playback
   record: ^6.2.0
   just_audio: ^0.9.39
@@ -80,6 +89,8 @@ dependencies:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
   flutter_launcher_icons: ^0.13.1

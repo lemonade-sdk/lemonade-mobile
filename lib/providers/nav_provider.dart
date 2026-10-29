@@ -21,6 +21,7 @@ enum NexusOverlayKind {
   none,
   conversationsDrawer,
   modeSheet,
+  meshSetup,
   subSheet,
   liveCall,
   flowEditor,
@@ -74,6 +75,9 @@ class _OverlayNotifier extends StateNotifier<NexusOverlayState> {
 
   void openModeSheet() =>
       state = const NexusOverlayState(kind: NexusOverlayKind.modeSheet);
+
+  void openMeshSetup() =>
+      state = const NexusOverlayState(kind: NexusOverlayKind.meshSetup);
 
   void openSubSheet({String section = 'plan'}) => state =
       NexusOverlayState(kind: NexusOverlayKind.subSheet, subSheetSection: section);

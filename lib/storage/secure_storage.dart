@@ -143,6 +143,20 @@ class SecureKeyStore {
     await _remove(_accountIdentityKey);
   }
 
+  // ── Mesh (Lemonade Nexus) device account ────────────────────────────
+  // One JSON blob: the Ed25519 identity seed of this device plus the pinned
+  // network key and mesh settings (see MeshAccount). The seed IS the device's
+  // mesh identity, so it lives only here. Not cleared by clearAccount — the
+  // mesh and the subscription are separate accounts.
+  static const _meshAccountKey = 'nexus_mesh/account';
+
+  static Future<String?> readMeshAccount() => _get(_meshAccountKey);
+
+  static Future<void> writeMeshAccount(String json) =>
+      _put(_meshAccountKey, json);
+
+  static Future<void> deleteMeshAccount() => _remove(_meshAccountKey);
+
   static Future<String?> readApiKey(String serverName) =>
       _get(_key(serverName));
 

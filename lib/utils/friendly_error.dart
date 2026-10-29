@@ -69,6 +69,7 @@ Object _unwrap(Object error) {
 }
 
 String _apiMessage(LemonadeApiException e, String what) {
+  if (e is MeshAccessDeniedException) return e.message;
   if (e is ApiKeyRejectedException) {
     return "The server rejected the API key. Check the key under "
         "Settings → Manage servers.";

@@ -1,0 +1,42 @@
+/* Shared look for the App Store creative assets — colors are the app's
+   Nexus dark tokens (lib/themes/nexus_tokens.dart). */
+:root {
+  --bg: #070B16; --bg2: #0C1326; --surface: #111A33;
+  --text: #EAF0FB; --muted: #93A0C0; --faint: #5D6A8C;
+  --accent: #4D7CFF; --accent2: #6F9BFF; --good: #34D399; --lemon: #F7D046;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+body {
+  font-family: -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+  color: var(--text); -webkit-font-smoothing: antialiased; position: relative;
+}
+.glow { position: absolute; border-radius: 50%; filter: blur(120px); pointer-events: none; }
+.grid {
+  position: absolute; inset: 0; opacity: .5;
+  background-image:
+    linear-gradient(rgba(150,170,220,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150,170,220,.06) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 20%, transparent 75%);
+}
+.phone {
+  position: absolute; padding: 11px; border-radius: 66px;
+  background: linear-gradient(145deg, #2a3350, #121829 60%, #1c2440);
+  box-shadow: 0 0 0 2px rgba(150,170,220,.18), 0 40px 90px rgba(0,0,0,.6),
+              0 0 120px rgba(77,124,255,.18);
+}
+.phone img { display: block; width: 100%; border-radius: 56px; }
+.phone::after { /* Dynamic Island */
+  content: ""; position: absolute; top: 26px; left: 50%; transform: translateX(-50%);
+  width: 30%; height: 34px; border-radius: 20px; background: #000;
+}
+.wordmark { font-weight: 700; letter-spacing: -.02em; }
+.wordmark b { color: var(--accent2); font-weight: 700; }
+.chip {
+  display: inline-flex; align-items: center; gap: 10px; padding: 12px 22px;
+  border-radius: 999px; background: rgba(77,124,255,.14);
+  border: 1.5px solid rgba(111,155,255,.35); color: var(--text);
+  font-size: 22px; font-weight: 600; white-space: nowrap;
+}
+.chip i { width: 10px; height: 10px; border-radius: 50%; background: var(--good); }

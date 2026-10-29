@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- Product page header: 21:9, rendered at 1920x823 CSS px @2x = 3840x1646.
+     Key copy stays in the centered safe area (~43% x 40% of the canvas);
+     the phones at the edges are decoration and may be cropped. -->
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+  .center {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    text-align: center; width: 820px;
+  }
+  .center img { width: 64px; height: 64px; filter: drop-shadow(0 6px 24px rgba(247,208,70,.45)); }
+  h1 { font-size: 92px; line-height: 1.0; font-weight: 800; letter-spacing: -.035em; margin-top: 14px; }
+  h1 span { color: var(--accent2); }
+  p { margin-top: 20px; font-size: 30px; color: var(--muted); font-weight: 500; }
+  .left  { width: 400px; left: 110px;  top: 150px; transform: rotate(-8deg); }
+  .right { width: 400px; right: 110px; top: 150px; transform: rotate(8deg); }
+</style></head>
+<body>
+  <div class="grid"></div>
+  <div class="glow" style="width:900px;height:500px;left:510px;top:160px;background:rgba(77,124,255,.32)"></div>
+  <div class="glow" style="width:380px;height:260px;left:770px;top:150px;background:rgba(247,208,70,.16)"></div>
+  <div class="phone left"><img src="../../assets/store_screenshots/iphone_pro_max/02_chat.png"></div>
+  <div class="phone right"><img src="../../assets/store_screenshots/iphone_pro_max/03_models.png"></div>
+  <div class="center">
+    <img src="../../assets/lemonade_logo_512.png" alt="">
+    <h1>Your AI.<br><span>Your hardware.</span></h1>
+    <p>Local first. Subscription when you want it.</p>
+  </div>
+</body></html>

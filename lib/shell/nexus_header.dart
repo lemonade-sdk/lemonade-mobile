@@ -5,6 +5,7 @@ import '../providers/account_provider.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/beacon_provider.dart';
 import '../providers/device_stats_provider.dart';
+import '../providers/mesh_provider.dart';
 import '../providers/nav_provider.dart';
 import '../providers/servers_provider.dart';
 import '../providers/theme_provider.dart';
@@ -187,7 +188,18 @@ class NexusHeader extends ConsumerWidget {
           parts.isEmpty ? 'local' : parts.join(' · '),
         );
       case AppMode.mesh:
-        return _Status(t.accent2, 'Mesh', 'coming soon');
+        final mesh = ref.watch(meshProvider);
+        return switch (mesh.phase) {
+          MeshPhase.connected => _Status(
+              t.good,
+              'Mesh · ${mesh.selectionLabel}',
+              '${mesh.onlineDevices} online',
+            ),
+          MeshPhase.connecting => _Status(t.accent2, 'Mesh', 'connecting…'),
+          MeshPhase.error => _Status(t.danger, 'Mesh', 'offline'),
+          MeshPhase.idle => _Status(t.warn, 'Mesh', 'stopped'),
+          MeshPhase.notSetUp => _Status(t.warn, 'Mesh', 'not set up'),
+        };
     }
   }
 }

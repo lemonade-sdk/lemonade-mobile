@@ -167,9 +167,14 @@ class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
   final Ref ref;
   String? _savedServerName;
 
+  /// The selection is a server outside the saved list (the mesh port), set by
+  /// [selectTemporary]: not persisted, and kept when the list changes.
+  bool _temporary = false;
+
   SelectedServerNotifier(this.ref) : super(null) {
     _loadSelected();
     ref.listen(serversProvider, (previous, next) {
+      if (_temporary) return;
       if (_savedServerName != null && next.isNotEmpty) {
         state = next.cast<ServerConfig?>().firstWhere(
               (server) => server?.name == _savedServerName,
@@ -207,9 +212,28 @@ class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
   }
 
   Future<void> selectServer(ServerConfig? server) async {
+    _temporary = false;
     state = server;
     _savedServerName = server?.name;
     await _saveSelected();
+  }
+
+  /// Select a server that is not in the saved list and must not be restored
+  /// on the next launch (the mesh port, which runs only in Mesh mode). The
+  /// saved selection stays as it was. [selectServer] ends it.
+  void selectTemporary(ServerConfig? server) {
+    _temporary = true;
+    state = server;
+  }
+
+  /// End a temporary selection: back to the saved server, if it still exists.
+  void restoreSaved() {
+    if (!_temporary) return;
+    _temporary = false;
+    state = ref
+        .read(serversProvider)
+        .cast<ServerConfig?>()
+        .firstWhere((s) => s?.name == _savedServerName, orElse: () => null);
   }
 
   /// Keep the selection (and its persisted name) attached to a server that
@@ -219,6 +243,15 @@ class SelectedServerNotifier extends StateNotifier<ServerConfig?> {
       ServerConfig oldServer, ServerConfig newServer) async {
     if (_savedServerName != oldServer.name) return;
     _savedServerName = newServer.name;
+    if (_temporary) {
+      // Mesh mode: only the saved name follows; the mesh port stays selected.
+      final db = AppDatabase.isOpen ? AppDatabase.instance : null;
+      if (db == null) return;
+      final prefs = await db.readOrCreatePrefs();
+      prefs.selectedServerName = newServer.name;
+      await db.isar.writeTxn(() async => db.appPrefs.put(prefs));
+      return;
+    }
     state = newServer;
     await _saveSelected();
   }

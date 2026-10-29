@@ -107,6 +107,12 @@ class LemonadeApiClient {
         // Per-feature cost attribution for the Nexus Router (≤128 chars).
         // Local Lemonade servers ignore the unknown header.
         'X-Nexus-Agent': 'lemonade_mobile',
+        // The mesh port never forwards Authorization; it sends this header to
+        // the selected device's lemond as its Authorization. Sent per request
+        // rather than stored in the SDK selection, so another app calling the
+        // same loopback port does not get the key attached.
+        if (isMeshPortServer(server) && server.apiKey != null)
+          'X-Lemonade-Peer-Authorization': 'Bearer ${server.apiKey}',
       };
 
   Map<String, String> get jsonHeaders => {
@@ -295,6 +301,10 @@ class LemonadeApiClient {
   // ---------------------------------------------------------------------------
 
   void _ensureOk(int status, String body, String endpoint) {
+    if (status == 403 && isMeshPortServer(server)) {
+      final denied = MeshAccessDeniedException.tryParse(body, endpoint);
+      if (denied != null) throw denied;
+    }
     try {
       ensureHttpOk(status, body, endpoint, map400ToModelMismatch: true);
     } on UnauthorizedException catch (e) {

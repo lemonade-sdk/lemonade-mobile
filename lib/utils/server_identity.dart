@@ -5,6 +5,20 @@ import '../models/server_config.dart';
 /// Reserved display name used only for the server provisioned by account auth.
 const String kSubscriptionServerName = 'Nexus Projects Subscription';
 
+/// Reserved display name of the mesh port server (Mesh mode). It is never
+/// saved in the server list; see [isMeshPortServer].
+const String kMeshServerName = 'Mesh network';
+
+/// Loopback port of the Lemonade Nexus mesh port that the SDK serves.
+// MESH_PORT overrides it for a simulator run on a Mac whose own lemond
+// already holds 13306 (the simulator shares the Mac's loopback).
+const int kMeshPortNumber = int.fromEnvironment('MESH_PORT', defaultValue: 13306);
+
+/// Whether [server] is the loopback mesh port that Mesh mode routes through.
+bool isMeshPortServer(ServerConfig server) =>
+    server.name == kMeshServerName &&
+    server.baseUrl == 'http://127.0.0.1:$kMeshPortNumber';
+
 /// Whether [server] is the app-owned subscription route.
 ///
 /// URL alone is not enough: users can add the same OpenAI-compatible Nexus

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/app_mode_provider.dart';
+import '../../providers/mesh_provider.dart';
 import '../../providers/nav_provider.dart';
 import '../../themes/nexus_tokens.dart';
 import 'sheet_scaffold.dart';
@@ -29,8 +30,8 @@ class ModeSheet extends ConsumerWidget {
       AppMode.mesh,
       Icons.hub_outlined,
       'Mesh',
-      'Agentic WireGuard mesh across your devices.',
-      'Coming soon',
+      'Your own computers from anywhere, over an encrypted WireGuard mesh.',
+      'Uses Lemonade on your computers',
     ),
   ];
 
@@ -56,6 +57,12 @@ class ModeSheet extends ConsumerWidget {
           for (final (mode, icon, title, desc, unlock) in _modes) ...[
             GestureDetector(
               onTap: () {
+                // A device without a mesh account sets one up first; Mesh
+                // mode turns on once it has joined.
+                if (mode == AppMode.mesh && !ref.read(meshProvider).isSetUp) {
+                  ref.read(overlayProvider.notifier).openMeshSetup();
+                  return;
+                }
                 ref.read(appModeProvider.notifier).setMode(mode);
                 close();
               },

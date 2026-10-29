@@ -5,6 +5,7 @@ import '../../providers/account_provider.dart';
 import '../../providers/app_mode_provider.dart';
 import '../../providers/billing_providers.dart';
 import '../../providers/image_resolution_provider.dart';
+import '../../providers/mesh_provider.dart';
 import '../../providers/nexus_gateway_provider.dart';
 import '../../providers/omni_router_provider.dart';
 import '../../providers/theme_provider.dart';
@@ -20,6 +21,7 @@ import '../../screens/servers_screen.dart';
 import '../../themes/nexus_tokens.dart';
 import '../../utils/friendly_error.dart';
 import '../../widgets/nexus/gateway_gate.dart';
+import '../../widgets/nexus/mesh_panel.dart';
 import '../../widgets/nexus/model_manager.dart';
 import '../../widgets/nexus/nexus_ui.dart';
 
@@ -29,6 +31,11 @@ class SettingsTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(appModeProvider);
+    // In Mesh mode the Model Manager manages one device: with "Auto" the mesh
+    // port routes by model, so there is no single device behind it.
+    final mesh = ref.watch(meshProvider);
+    final managesOneDevice = mode != AppMode.mesh ||
+        (mesh.phase == MeshPhase.connected && mesh.selection != 'auto');
     // On tablets, keep a readable ~720pt column centered instead of
     // stretching cards and meters across the whole screen. Measured from
     // the tab's own width, not the screen (split view, side panels).
@@ -39,7 +46,8 @@ class SettingsTab extends ConsumerWidget {
         children: [
           _profile(context, ref),
           const SizedBox(height: 18),
-          if (mode.showsModelManager) ...[const ModelManager(), const SizedBox(height: 18)],
+          if (mode == AppMode.mesh) ...[const MeshPanel(), const SizedBox(height: 18)],
+          if (mode.showsModelManager && managesOneDevice) ...[const ModelManager(), const SizedBox(height: 18)],
           ..._groups(context, ref),
         ],
       );
@@ -51,7 +59,9 @@ class SettingsTab extends ConsumerWidget {
     final auth = ref.watch(authProvider);
     final name = auth.user?.displayName ?? 'Not signed in';
     final email = auth.user?.email ?? 'Subscription optional';
-    final badge = auth.isSignedIn ? (auth.user?.role ?? 'MEMBER') : 'LOCAL';
+    final badge = auth.isSignedIn
+        ? (auth.user?.role ?? 'MEMBER')
+        : (ref.watch(appModeProvider) == AppMode.mesh ? 'MESH' : 'LOCAL');
     // Signed out, the whole row is a shortcut to the account intro — the
     // same gate the header person icon opens: "Use Local AI", sign in, or
     // create an account.

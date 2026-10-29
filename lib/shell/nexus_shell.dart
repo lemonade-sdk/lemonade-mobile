@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/app_mode_provider.dart';
 import '../providers/nav_provider.dart';
 import '../screens/nexus/calls_tab.dart';
 import '../screens/nexus/chat_tab.dart';
 import '../screens/nexus/docs_tab.dart';
-import '../screens/nexus/mesh_coming_soon.dart';
 import '../screens/nexus/pbx_tab.dart';
 import '../screens/nexus/projects_tab.dart';
 import '../screens/nexus/settings_tab.dart';
@@ -24,7 +22,6 @@ class NexusShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.nexus;
     final tab = ref.watch(navTabProvider);
-    final mesh = ref.watch(appModeProvider) == AppMode.mesh;
     final overlayOpen = ref.watch(overlayProvider.select((s) => s.isOpen));
 
     // System back (Android button/gesture): close the open overlay first, then
@@ -50,22 +47,17 @@ class NexusShell extends ConsumerWidget {
               children: [
                 const NexusHeader(),
                 Expanded(
-                  // Mesh mode isn't wired yet — show the coming-soon screen
-                  // instead of the tabs (header + nav stay so the user can
-                  // switch back to Subscription / Local AI).
-                  child: mesh
-                      ? const MeshComingSoon()
-                      : IndexedStack(
-                          index: tab.index,
-                          children: const [
-                            ChatTab(),
-                            ProjectsTab(),
-                            CallsTab(),
-                            PbxTab(),
-                            DocsTab(),
-                            SettingsTab(),
-                          ],
-                        ),
+                  child: IndexedStack(
+                    index: tab.index,
+                    children: const [
+                      ChatTab(),
+                      ProjectsTab(),
+                      CallsTab(),
+                      PbxTab(),
+                      DocsTab(),
+                      SettingsTab(),
+                    ],
+                  ),
                 ),
                 // Hide the tab bar while the keyboard is open so the composer
                 // isn't squeezed above nav + system bar + IME on short phones.

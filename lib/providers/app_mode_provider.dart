@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_config.dart';
 import '../storage/secure_storage.dart';
 import '../utils/server_identity.dart';
+import 'mesh_provider.dart';
 import 'nav_provider.dart';
 import 'servers_provider.dart';
 
@@ -14,7 +15,9 @@ import 'servers_provider.dart';
 ///   and shows the auth gate when signed out.
 /// * [local] — a Lemonade server on the LAN / this device. Unlocks the on-device
 ///   Model Manager; gateway-only tabs show a "needs Subscription" empty state.
-/// * [mesh] — agentic WireGuard mesh. UI / toggle only for now (no FFI yet).
+/// * [mesh] — the Lemonade Nexus mesh: inference on the user's own devices
+///   (lemond, Tier 3) reached through the SDK's loopback mesh port. See
+///   meshProvider.
 enum AppMode { subscription, local, mesh }
 
 extension AppModeX on AppMode {
@@ -56,6 +59,12 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
       selectedServerProvider,
       (_, __) => _selectServerForMode(state),
     );
+    // Mesh mode routes through the mesh port, which exists only while the
+    // mesh is connected.
+    ref.listen<ServerConfig?>(
+      meshServerProvider,
+      (_, __) => _selectServerForMode(state),
+    );
   }
 
   Future<void> _hydrate() async {
@@ -80,6 +89,7 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
         }
         state = mode;
         _selectServerForMode(state);
+        if (mode == AppMode.mesh) ref.read(meshProvider.notifier).activate();
       }
     } catch (_) {
       // SharedPreferences unavailable — keep the default.
@@ -87,8 +97,14 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
   }
 
   Future<void> setMode(AppMode mode) async {
+    final previous = state;
     state = mode;
     _selectServerForMode(mode);
+    if (mode == AppMode.mesh) {
+      ref.read(meshProvider.notifier).activate();
+    } else if (previous == AppMode.mesh) {
+      ref.read(meshProvider.notifier).deactivate();
+    }
     // Leaving Subscription disables the cloud tabs — bounce off them to Chat.
     if (mode != AppMode.subscription) {
       final tab = ref.read(navTabProvider);
@@ -107,10 +123,23 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
   /// Without this, switching modes would leave the previous server selected —
   /// e.g. "Local AI" still talking to the subscription gateway.
   void _selectServerForMode(AppMode mode) {
+    final selectedNotifier = ref.read(selectedServerProvider.notifier);
+    var current = ref.read(selectedServerProvider);
+
+    // Mesh → the mesh port while the mesh runs, nothing otherwise. It is a
+    // temporary selection: never saved, never in the server list.
+    if (mode == AppMode.mesh) {
+      final mesh = ref.read(meshServerProvider);
+      if (current != mesh) selectedNotifier.selectTemporary(mesh);
+      return;
+    }
+    if (current != null && isMeshPortServer(current)) {
+      selectedNotifier.restoreSaved();
+      current = ref.read<ServerConfig?>(selectedServerProvider);
+    }
+
     final servers = ref.read(serversProvider);
     if (servers.isEmpty) return;
-    final selectedNotifier = ref.read(selectedServerProvider.notifier);
-    final current = ref.read(selectedServerProvider);
 
     if (mode == AppMode.subscription) {
       final gw = servers.where(isManagedSubscriptionServer).firstOrNull;
@@ -118,7 +147,7 @@ class _AppModeNotifier extends StateNotifier<AppMode> {
         selectedNotifier.selectServer(gw);
       }
     } else {
-      // Local / Mesh → a server the user controls.
+      // Local → a server the user controls.
       if (current != null && !isManagedSubscriptionServer(current)) {
         return; // already on a user-configured server
       }

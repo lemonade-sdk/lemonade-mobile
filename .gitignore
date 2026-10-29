@@ -114,3 +114,6 @@ logs/
 
 # Local API reference (not committed)
 docs/api.yml
+
+# Local path overrides (e.g. lemonade_nexus_sdk from a lemonade-nexus checkout)
+pubspec_overrides.yaml
