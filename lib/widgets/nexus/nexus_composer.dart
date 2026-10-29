@@ -29,7 +29,19 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
   final List<String> _attached = [];
 
   @override
+  void initState() {
+    super.initState();
+    // Rebuild on focus changes: the keyboard-down button shows while typing.
+    _focus.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    _focus.removeListener(_onFocusChange);
     _controller.dispose();
     _focus.dispose();
     super.dispose();
@@ -235,6 +247,22 @@ class _NexusComposerState extends ConsumerState<NexusComposer> {
                           ),
                         ),
                       ),
+                      // The keyboard's return key sends, so it offers no way
+                      // down: this one closes the keyboard while typing.
+                      if (_focus.hasFocus)
+                        Semantics(
+                          button: true,
+                          label: 'Hide keyboard',
+                          child: GestureDetector(
+                            onTap: _focus.unfocus,
+                            behavior: HitTestBehavior.opaque,
+                            child: Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: Icon(Icons.keyboard_hide_outlined,
+                                  size: 20, color: t.muted),
+                            ),
+                          ),
+                        ),
                       GestureDetector(
                         onTap: () => VoiceInputSheet.show(context,
                             chatScrollController: widget.scrollController),

@@ -121,7 +121,13 @@ class _ChatTabState extends ConsumerState<ChatTab> {
           _subHeader(context, model),
           Expanded(
             child: messages.isEmpty
-                ? _empty(context)
+                // Tapping the empty chat closes the keyboard; there is no
+                // list to drag yet.
+                ? GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+                    child: _empty(context),
+                  )
                 : Stack(
                     children: [
                       NotificationListener<ScrollNotification>(
