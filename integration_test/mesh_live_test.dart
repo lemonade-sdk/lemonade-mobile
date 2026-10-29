@@ -68,6 +68,8 @@ void main() {
       // Best effort, so a cleanup error cannot hide the failure above.
       try {
         await service.leave();
+        // ignore: avoid_print
+        print('[live] left the network');
       } catch (e) {
         // ignore: avoid_print
         print('[live] leave: $e');
