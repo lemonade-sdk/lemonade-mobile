@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lemonade_mobile/api/exceptions.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
+import 'package:lemonade_mobile/utils/friendly_error.dart';
 import 'package:lemonade_mobile/services/mesh_service.dart';
 import 'package:lemonade_mobile/themes/theme_registry.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
@@ -75,6 +77,20 @@ void main() {
           host(Invite.fromJson({'link_token': token, 'group_node_id': 'g'})));
       expect(find.text(token), findsOneWidget);
       expect(find.text('Copy full token instead'), findsNothing);
+    });
+  });
+
+  group('MeshRouteException', () {
+    test("shows the mesh port's reason, not a generic conflict", () {
+      final e = MeshRouteException.tryParse(
+          409, '{"error":"That device is offline or not reachable from this device"}', '/api/v1/chat/completions');
+      expect(e, isNotNull);
+      expect(friendlyError(e!), 'That device is offline or not reachable from this device');
+    });
+
+    test('leaves other bodies and statuses alone', () {
+      expect(MeshRouteException.tryParse(409, 'not json', '/x'), isNull);
+      expect(MeshRouteException.tryParse(500, '{"error":"boom"}', '/x'), isNull);
     });
   });
 }

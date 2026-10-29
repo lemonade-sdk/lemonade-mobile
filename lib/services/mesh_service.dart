@@ -35,6 +35,10 @@ class MeshAccount {
   /// API key per device (node ID) for a lemond that requires one.
   final Map<String, String> peerKeys;
 
+  /// The name last set on the network; a connect renames the device only
+  /// when [deviceName] differs from it.
+  final String? nameOnNetwork;
+
   const MeshAccount({
     required this.seed,
     required this.deviceName,
@@ -43,6 +47,7 @@ class MeshAccount {
     this.nodeId,
     this.selection = 'auto',
     this.peerKeys = const {},
+    this.nameOnNetwork,
   });
 
   /// A new device identity from 32 random bytes.
@@ -59,6 +64,7 @@ class MeshAccount {
     String? nodeId,
     String? selection,
     Map<String, String>? peerKeys,
+    String? nameOnNetwork,
   }) =>
       MeshAccount(
         seed: seed,
@@ -68,6 +74,7 @@ class MeshAccount {
         nodeId: nodeId ?? this.nodeId,
         selection: selection ?? this.selection,
         peerKeys: peerKeys ?? this.peerKeys,
+        nameOnNetwork: nameOnNetwork ?? this.nameOnNetwork,
       );
 
   Map<String, dynamic> toJson() => {
@@ -78,6 +85,7 @@ class MeshAccount {
         'node_id': nodeId,
         'selection': selection,
         'peer_keys': peerKeys,
+        'name_on_network': nameOnNetwork,
       };
 
   factory MeshAccount.fromJson(Map<String, dynamic> json) => MeshAccount(
@@ -88,6 +96,7 @@ class MeshAccount {
         nodeId: json['node_id'] as String?,
         selection: json['selection'] as String? ?? 'auto',
         peerKeys: Map<String, String>.from(json['peer_keys'] as Map? ?? const {}),
+        nameOnNetwork: json['name_on_network'] as String?,
       );
 
   static Future<MeshAccount?> load() async {
@@ -112,8 +121,9 @@ class MeshSession {
   final String genesisKey;
   final int tier1Epoch;
 
-  /// The name the network shows for this device: the account's name, or a
+  /// The name this connect set on the network: the account's name, or a
   /// free variant ("iphone-2") when another device of the group has it.
+  /// Null when the name was already set, or could not be.
   final String? deviceName;
   const MeshSession({
     required this.nodeId,
@@ -160,6 +170,8 @@ class MeshService {
           discoveryHosts: servers,
           seed: account.seed,
           deviceName: account.deviceName,
+          // Renaming is a tree update that takes seconds: only when needed.
+          setName: account.nameOnNetwork != account.deviceName,
           genesisKey: account.genesisKey,
           minEpoch: account.tier1Epoch,
           inviteCode: inviteCode,
@@ -208,6 +220,13 @@ class MeshService {
   /// key is not given to the SDK; the app sends it on its own requests.
   Future<void> select(String target) =>
       _guard(() => _worker.run(_selectTask(target)));
+
+  /// Closes the loopback mesh port only; the session and the mesh stay up.
+  Future<void> closePort() => _worker.run(_closePortTask);
+
+  /// Opens the loopback mesh port again for [selection] after [closePort].
+  Future<void> openPort(String selection) =>
+      _guard(() => _worker.run(_openPortTask(selection)));
 
   /// Stops the mesh port and the mesh; [connect] brings them back.
   Future<void> stop() => _worker.run(_stopTask);
@@ -290,6 +309,7 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
   required List<String> discoveryHosts,
   required String seed,
   required String deviceName,
+  required bool setName,
   required String? genesisKey,
   required int minEpoch,
   required String? inviteCode,
@@ -338,7 +358,8 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
       // directory: the port stays on plain HTTP on loopback.
       await sdk.startMeshPort(port: kMeshPortNumber);
 
-      final shownName = await _nameDevice(sdk, joined.nodeId!, deviceName);
+      final shownName =
+          setName ? await _nameDevice(sdk, joined.nodeId!, deviceName) : null;
       var epoch = minEpoch;
       try {
         epoch = ((await sdk.tier1Membership())['epoch'] as num?)?.toInt() ?? minEpoch;
@@ -395,6 +416,13 @@ Future<bool> _isUpTask(LemonadeNexusSdk sdk) async {
 
 Future<void> Function(LemonadeNexusSdk) _selectTask(String target) =>
     (sdk) => sdk.setMeshPortSelection(target);
+
+Future<void> _closePortTask(LemonadeNexusSdk sdk) => sdk.stopMeshPort();
+
+Future<void> Function(LemonadeNexusSdk) _openPortTask(String selection) => (sdk) async {
+      await sdk.startMeshPort(port: kMeshPortNumber);
+      await sdk.setMeshPortSelection(selection);
+    };
 
 Future<void> _stopTask(LemonadeNexusSdk sdk) async {
   await sdk.stopMeshPort();

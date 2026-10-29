@@ -77,10 +77,10 @@ class MeshState {
 ///
 /// [activate] / [deactivate] are driven by the app mode (appModeProvider);
 /// this notifier does not watch the mode itself, because the mode in turn
-/// follows [meshServerProvider]. While active it also follows the app
-/// lifecycle: the mesh port stops when the app leaves the foreground, so
-/// another app cannot use the loopback port meanwhile, and reconnects on
-/// resume.
+/// follows [meshServerProvider]. The session and the mesh stay up while the
+/// app is in the background. Only the loopback mesh port closes, after
+/// [_portGrace] there, so another app cannot use it meanwhile; it reopens at
+/// once when the app comes back.
 class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver {
   MeshNotifier() : super(const MeshState(phase: MeshPhase.idle)) {
     WidgetsBinding.instance.addObserver(this);
@@ -97,9 +97,16 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// One connect at a time; later callers wait for it.
   Future<void>? _connecting;
 
-  /// The app is in the background, and the stop that started when it left.
+  /// How long the mesh port stays open in the background: a quick switch to
+  /// another app keeps a reply streaming.
+  static const _portGrace = Duration(seconds: 30);
   bool _backgrounded = false;
-  Future<void>? _pausing;
+  Timer? _portTimer;
+  Future<void>? _portClosing;
+  bool _portClosed = false;
+
+  /// Right after a connect, refreshes the devices until one is online.
+  Timer? _devicesPoll;
 
   Future<void> _hydrate() async {
     final account = await MeshAccount.load();
@@ -172,6 +179,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       final session = await service.connect(account, inviteCode: inviteCode);
       final saved = account.copyWith(
           deviceName: session.deviceName,
+          nameOnNetwork: session.deviceName,
           genesisKey: session.genesisKey,
           tier1Epoch: session.tier1Epoch,
           nodeId: session.nodeId);
@@ -199,9 +207,10 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       if (session.tier1Epoch > account.tier1Epoch ||
           account.genesisKey == null ||
           account.nodeId != session.nodeId ||
-          (session.deviceName != null && session.deviceName != account.deviceName)) {
+          session.deviceName != null) {
         saved = account.copyWith(
             deviceName: session.deviceName,
+            nameOnNetwork: session.deviceName,
             genesisKey: session.genesisKey,
             tier1Epoch: session.tier1Epoch,
             nodeId: session.nodeId);
@@ -234,8 +243,28 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     state = MeshState(
         phase: MeshPhase.connected, account: selected, session: session);
     await refresh();
+    _portClosed = false;
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 20), (_) => _heartbeat());
+    _watchForDevices();
+  }
+
+  /// The devices come online over the first seconds after a connect, as the
+  /// mesh reaches them: refresh every 2 s until one is online (at most 30 s)
+  /// instead of waiting for the 20 s heartbeat.
+  void _watchForDevices() {
+    _devicesPoll?.cancel();
+    final until = DateTime.now().add(const Duration(seconds: 30));
+    _devicesPoll = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      if (!mounted ||
+          state.phase != MeshPhase.connected ||
+          state.onlineDevices > 0 ||
+          DateTime.now().isAfter(until)) {
+        timer.cancel();
+        return;
+      }
+      await refresh();
+    });
   }
 
   /// Re-reads the devices and the selection; reconnects when the mesh dropped.
@@ -311,6 +340,8 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   Future<void> _stop(MeshPhase phase) async {
     _poll?.cancel();
     _poll = null;
+    _devicesPoll?.cancel();
+    _portTimer?.cancel();
     await _connecting;
     final service = _service;
     if (service != null) {
@@ -330,26 +361,60 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     if (!_active || !state.isSetUp) return;
     if (lifecycle == AppLifecycleState.paused) {
       _backgrounded = true;
-      _pausing = _stop(MeshPhase.idle);
+      _portTimer?.cancel();
+      _portTimer = Timer(_portGrace, _closePort);
     } else if (lifecycle == AppLifecycleState.resumed) {
       _backgrounded = false;
+      _portTimer?.cancel();
       _resume();
     }
   }
 
-  /// Back in the foreground: reconnect once the stop that began in the
-  /// background has finished. Coming back while it ran used to find the mesh
-  /// still connected, skip the reconnect, and then show it stopped.
+  void _closePort() {
+    final service = _service;
+    if (!_backgrounded || service == null || state.phase != MeshPhase.connected) {
+      return;
+    }
+    _portClosed = true;
+    _portClosing = service.closePort().catchError((Object e) {
+      debugPrint('Mesh port close failed: $e');
+    });
+  }
+
+  /// Back in the foreground: reopen the mesh port if it closed, and check
+  /// that the session survived; a full reconnect only when it did not (iOS
+  /// suspended the app for long, or the network dropped it meanwhile).
   Future<void> _resume() async {
-    await _pausing;
+    await _portClosing;
+    final service = _service;
     if (_backgrounded || !_active || !state.isSetUp) return;
-    if (state.phase != MeshPhase.connected) await _connect();
+    if (service == null || state.phase != MeshPhase.connected) {
+      await _connect();
+      return;
+    }
+    if (!await service.isUp()) {
+      await _connect();
+      return;
+    }
+    if (_portClosed) {
+      try {
+        await service.openPort(state.selection);
+        _portClosed = false;
+      } catch (e) {
+        debugPrint('Mesh port reopen failed: $e');
+        await _connect();
+        return;
+      }
+    }
+    await refresh();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
+    _devicesPoll?.cancel();
+    _portTimer?.cancel();
     _moves?.cancel();
     _service?.close();
     super.dispose();

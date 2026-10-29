@@ -78,6 +78,31 @@ class MeshAccessDeniedException extends LemonadeApiException {
   }
 }
 
+/// The mesh port could not route a request to another device: it is
+/// offline or unreachable from this device right now, or the name fits
+/// several devices (HTTP 409, 502, 503 or 504 with the SDK's `{"error"}`).
+/// [message] is the SDK's reason, written for the user.
+class MeshRouteException extends LemonadeApiException {
+  MeshRouteException(super.message, {required int super.statusCode, super.endpoint});
+
+  static const statuses = {409, 502, 503, 504};
+
+  /// Reads the mesh port's `{"error": "..."}`; null for any other body.
+  static MeshRouteException? tryParse(int status, String body, String endpoint) {
+    if (!statuses.contains(status)) return null;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! Map<String, dynamic>) return null;
+    final error = decoded['error'];
+    if (error is! String || error.isEmpty) return null;
+    return MeshRouteException(error, statusCode: status, endpoint: endpoint);
+  }
+}
+
 class ModelMismatchException extends LemonadeApiException {
   ModelMismatchException(super.message, {super.endpoint, super.cause}) : super(statusCode: 400);
 }

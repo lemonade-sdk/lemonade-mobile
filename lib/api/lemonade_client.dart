@@ -301,9 +301,13 @@ class LemonadeApiClient {
   // ---------------------------------------------------------------------------
 
   void _ensureOk(int status, String body, String endpoint) {
-    if (status == 403 && isMeshPortServer(server)) {
-      final denied = MeshAccessDeniedException.tryParse(body, endpoint);
-      if (denied != null) throw denied;
+    if (isMeshPortServer(server)) {
+      if (status == 403) {
+        final denied = MeshAccessDeniedException.tryParse(body, endpoint);
+        if (denied != null) throw denied;
+      }
+      final route = MeshRouteException.tryParse(status, body, endpoint);
+      if (route != null) throw route;
     }
     try {
       ensureHttpOk(status, body, endpoint, map400ToModelMismatch: true);
