@@ -1,7 +1,7 @@
 name: lemonade_mobile
 description: "A chat app for Lemonade AI servers with syntax highlighting and multi-server support"
 publish_to: 'none'
-version: 4.0.2+27
+version: 4.0.2+26
 
 environment:
   sdk: ^3.8.1
@@ -60,8 +60,10 @@ dependencies:
   gal: ^2.3.0            # save image to Photos / camera roll / Files
 
   # Lemonade Nexus client SDK (Mesh mode): Dart API + the native library for
-  # iOS / Android. Local development points this at a lemonade-nexus checkout
-  # in pubspec_overrides.yaml (git-ignored).
+  # iOS / Android. Builds take lemonade-nexus main as it is at build time
+  # (pubspec.lock is git-ignored); the native archives come from the release
+  # pinned in its native/manifest.json. Local development points this at a
+  # lemonade-nexus checkout in pubspec_overrides.yaml (git-ignored).
   lemonade_nexus_sdk:
     git:
       url: https://github.com/lemonade-sdk/lemonade-nexus.git
