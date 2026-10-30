@@ -246,6 +246,7 @@ class MeshService {
           deviceName: account.deviceName,
           // Renaming is a tree update that takes seconds: only when needed.
           setName: account.nameOnNetwork != account.deviceName,
+          newDevice: account.nodeId == null,
           genesisKey: account.genesisKey,
           minEpoch: account.tier1Epoch,
           inviteCode: inviteCode,
@@ -405,6 +406,7 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
   required String seed,
   required String deviceName,
   required bool setName,
+  required bool newDevice,
   required String? genesisKey,
   required int minEpoch,
   required String? inviteCode,
@@ -444,6 +446,16 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
       lap('genesis');
 
       if (inviteCode != null) sdk.setLinkToken(inviteCode);
+      // A new device gets its name with the join; a rename afterwards is a
+      // separate tree update that took 3 to 10 s. A device that joined
+      // already keeps its stored name, so a new name there is a rename.
+      var namedAtJoin = false;
+      if (setName && newDevice) {
+        try {
+          sdk.setDeviceName(deviceName);
+          namedAtJoin = true;
+        } catch (_) {}
+      }
       final NetworkJoinResponse joined;
       try {
         joined = await sdk.joinNetwork(username: deviceName, password: '');
@@ -467,9 +479,24 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
       await sdk.startMeshPort(port: kMeshPortNumber);
       lap('port');
 
-      final shownName =
-          setName ? await _nameDevice(sdk, joined.nodeId!, deviceName) : null;
-      if (setName) lap('name');
+      String? shownName;
+      if (namedAtJoin && !joined.deviceNameRefused) {
+        shownName = deviceName;
+      } else if (namedAtJoin) {
+        // Another device of the group holds the name: take the free one the
+        // network suggests.
+        final suggestion = joined.deviceNameSuggestion ?? '';
+        if (suggestion.isNotEmpty) {
+          try {
+            await sdk.updateNode(nodeId: joined.nodeId!, updates: {'hostname': suggestion});
+            shownName = suggestion;
+          } catch (_) {}
+        }
+        lap('name');
+      } else if (setName) {
+        shownName = await _nameDevice(sdk, joined.nodeId!, deviceName);
+        lap('name');
+      }
       var epoch = minEpoch;
       try {
         epoch = ((await sdk.tier1Membership())['epoch'] as num?)?.toInt() ?? minEpoch;
