@@ -309,6 +309,7 @@ class _MeshScope extends StatelessWidget {
                 MeshPortDevice(nodeId: 'node-tower', deviceName: 'Linux tower', isOnline: false),
               ],
             ),
+            paths: const {'node-studio': MeshPath.direct},
           );
     return ProviderScope(
       overrides: [

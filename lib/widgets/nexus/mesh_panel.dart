@@ -191,6 +191,7 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
                 title: d.label,
                 sub: d.isOnline ? 'Online' : 'Offline',
                 online: d.isOnline,
+                path: d.isOnline ? mesh.paths[d.nodeId] : null,
                 onTap: _busy ? null : () => _select(d.nodeId),
               ),
             if (mesh.port.devices.isEmpty)
@@ -240,6 +241,7 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
     required String title,
     required String sub,
     required bool online,
+    MeshPath? path,
     required VoidCallback? onTap,
   }) {
     final t = context.nexus;
@@ -264,6 +266,12 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
               Text(sub, style: TextStyle(fontSize: 11.5, color: t.muted)),
             ]),
           ),
+          // Straight to the device, or through a relay server.
+          if (path != null) ...[
+            NexusPill(path == MeshPath.direct ? 'P2P' : 'RELAY',
+                color: path == MeshPath.direct ? t.good : t.warn, outlined: true),
+            const SizedBox(width: 8),
+          ],
           if (selected) Icon(Icons.check_circle, color: t.accent, size: 18),
         ]),
       ),

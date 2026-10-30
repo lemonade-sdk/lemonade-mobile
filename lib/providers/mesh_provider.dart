@@ -37,6 +37,10 @@ class MeshState {
   /// return to the app, before one is online.
   final bool searching;
 
+  /// Peer to peer or relayed, per device node ID, for the devices the mesh
+  /// has a path to.
+  final Map<String, MeshPath> paths;
+
   const MeshState({
     this.phase = MeshPhase.notSetUp,
     this.account,
@@ -44,6 +48,7 @@ class MeshState {
     this.port = MeshPortStatus.stopped,
     this.error,
     this.searching = false,
+    this.paths = const {},
   });
 
   bool get isSetUp => account != null;
@@ -70,6 +75,7 @@ class MeshState {
     String? error,
     bool clearError = false,
     bool? searching,
+    Map<String, MeshPath>? paths,
   }) =>
       MeshState(
         phase: phase ?? this.phase,
@@ -78,6 +84,7 @@ class MeshState {
         port: port ?? this.port,
         error: clearError ? null : (error ?? this.error),
         searching: searching ?? this.searching,
+        paths: paths ?? this.paths,
       );
 }
 
@@ -287,6 +294,12 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       if (mounted) state = state.copyWith(port: port);
     } catch (e) {
       debugPrint('Mesh status failed: $e');
+    }
+    try {
+      final paths = await service.peerPaths();
+      if (mounted) state = state.copyWith(paths: paths);
+    } catch (e) {
+      debugPrint('Mesh paths failed: $e');
     }
   }
 

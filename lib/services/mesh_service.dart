@@ -114,6 +114,18 @@ class MeshAccount {
   static Future<void> delete() => SecureKeyStore.deleteMeshAccount();
 }
 
+/// How traffic reaches another device: straight to it (peer to peer, after
+/// hole punching) or through a relay server.
+enum MeshPath { direct, relay }
+
+/// The path the dataplane uses for [peer] right now, or null before it has
+/// one (no handshake yet).
+MeshPath? meshPathOf(MeshPeer peer) {
+  if ((peer.relayEndpoint ?? '').isNotEmpty) return MeshPath.relay;
+  if ((peer.endpoint ?? '').isNotEmpty) return MeshPath.direct;
+  return null;
+}
+
 /// What [MeshService.connect] learned from the network.
 class MeshSession {
   final String nodeId;
@@ -220,6 +232,9 @@ class MeshService {
   /// key is not given to the SDK; the app sends it on its own requests.
   Future<void> select(String target) =>
       _guard(() => _worker.run(_selectTask(target)));
+
+  /// The current path to each device, by node ID (see [meshPathOf]).
+  Future<Map<String, MeshPath>> peerPaths() => _guard(() => _worker.run(_peerPathsTask));
 
   /// Fetches the device list from the network now instead of on the next
   /// periodic refresh, so devices that came back are found sooner.
@@ -433,6 +448,14 @@ Future<void> Function(LemonadeNexusSdk) _selectTask(String target) =>
 Future<void> _closePortTask(LemonadeNexusSdk sdk) => sdk.stopMeshPort();
 
 Future<void> _refreshPeersTask(LemonadeNexusSdk sdk) => sdk.refreshMesh();
+
+Future<Map<String, MeshPath>> _peerPathsTask(LemonadeNexusSdk sdk) async {
+  final status = await sdk.getMeshStatus();
+  return {
+    for (final peer in status.peers)
+      if (peer.nodeId.isNotEmpty && meshPathOf(peer) != null) peer.nodeId: meshPathOf(peer)!,
+  };
+}
 
 Future<void> Function(LemonadeNexusSdk) _openPortTask(String selection) => (sdk) async {
       await sdk.startMeshPort(port: kMeshPortNumber);

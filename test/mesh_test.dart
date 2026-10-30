@@ -9,7 +9,7 @@ import 'package:lemonade_mobile/services/mesh_service.dart';
 import 'package:lemonade_mobile/themes/theme_registry.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_panel.dart';
-import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show Invite;
+import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show Invite, MeshPeer;
 
 void main() {
   group('MeshAccount', () {
@@ -91,6 +91,24 @@ void main() {
     test('leaves other bodies and statuses alone', () {
       expect(MeshRouteException.tryParse(409, 'not json', '/x'), isNull);
       expect(MeshRouteException.tryParse(500, '{"error":"boom"}', '/x'), isNull);
+    });
+  });
+
+  group('meshPathOf', () {
+    MeshPeer peer(Map<String, dynamic> extra) =>
+        MeshPeer.fromJson({'node_id': 'n1', 'mesh_pubkey': 'k', ...extra});
+
+    test('a relay endpoint means relayed', () {
+      expect(meshPathOf(peer({'endpoint': '1.2.3.4:5', 'relay_endpoint': '9.9.9.9:4000'})),
+          MeshPath.relay);
+    });
+
+    test('an endpoint alone means peer to peer', () {
+      expect(meshPathOf(peer({'endpoint': '1.2.3.4:5'})), MeshPath.direct);
+    });
+
+    test('no endpoint yet means unknown', () {
+      expect(meshPathOf(peer({})), isNull);
     });
   });
 }
