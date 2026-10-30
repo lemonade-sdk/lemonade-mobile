@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
@@ -195,6 +196,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       final saved = account.copyWith(
           deviceName: session.deviceName,
           nameOnNetwork: session.deviceName,
+          servers: session.servers,
           genesisKey: session.genesisKey,
           tier1Epoch: session.tier1Epoch,
           nodeId: session.nodeId);
@@ -222,10 +224,12 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       if (session.tier1Epoch > account.tier1Epoch ||
           account.genesisKey == null ||
           account.nodeId != session.nodeId ||
-          session.deviceName != null) {
+          session.deviceName != null ||
+          !listEquals(account.servers, session.servers)) {
         saved = account.copyWith(
             deviceName: session.deviceName,
             nameOnNetwork: session.deviceName,
+            servers: session.servers,
             genesisKey: session.genesisKey,
             tier1Epoch: session.tier1Epoch,
             nodeId: session.nodeId);
@@ -270,6 +274,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// instead of waiting for the 20 s heartbeat.
   void _watchForDevices() {
     _devicesPoll?.cancel();
+    final clock = Stopwatch()..start();
     final until = DateTime.now().add(const Duration(seconds: 60));
     if (mounted && state.onlineDevices == 0) state = state.copyWith(searching: true);
     _devicesPoll = Timer.periodic(const Duration(seconds: 2), (timer) async {
@@ -282,6 +287,10 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
         return;
       }
       await refresh();
+      if (mounted && state.onlineDevices > 0) {
+        debugPrint('[mesh] a device is online after ${clock.elapsedMilliseconds} ms '
+            '(${state.paths.values.map((p) => p.name).join(', ')})');
+      }
     });
   }
 
@@ -413,6 +422,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// that the session survived; a full reconnect only when it did not (iOS
   /// suspended the app for long, or the network dropped it meanwhile).
   Future<void> _resume() async {
+    debugPrint('[mesh] resumed (port closed: $_portClosed)');
     await _portClosing;
     final service = _service;
     if (_backgrounded || !_active || !state.isSetUp) return;
@@ -421,6 +431,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       return;
     }
     if (!await service.isUp()) {
+      debugPrint('[mesh] the session did not survive the background: reconnecting');
       await _connect();
       return;
     }

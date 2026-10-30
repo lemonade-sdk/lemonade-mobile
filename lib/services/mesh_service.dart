@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -39,6 +40,10 @@ class MeshAccount {
   /// when [deviceName] differs from it.
   final String? nameOnNetwork;
 
+  /// The network's servers from the last connect, the one that answered
+  /// first: a reconnect starts there instead of waiting for DNS discovery.
+  final List<String> servers;
+
   const MeshAccount({
     required this.seed,
     required this.deviceName,
@@ -48,6 +53,7 @@ class MeshAccount {
     this.selection = 'auto',
     this.peerKeys = const {},
     this.nameOnNetwork,
+    this.servers = const [],
   });
 
   /// A new device identity from 32 random bytes.
@@ -65,6 +71,7 @@ class MeshAccount {
     String? selection,
     Map<String, String>? peerKeys,
     String? nameOnNetwork,
+    List<String>? servers,
   }) =>
       MeshAccount(
         seed: seed,
@@ -75,6 +82,7 @@ class MeshAccount {
         selection: selection ?? this.selection,
         peerKeys: peerKeys ?? this.peerKeys,
         nameOnNetwork: nameOnNetwork ?? this.nameOnNetwork,
+        servers: servers ?? this.servers,
       );
 
   Map<String, dynamic> toJson() => {
@@ -86,6 +94,7 @@ class MeshAccount {
         'selection': selection,
         'peer_keys': peerKeys,
         'name_on_network': nameOnNetwork,
+        'servers': servers,
       };
 
   factory MeshAccount.fromJson(Map<String, dynamic> json) => MeshAccount(
@@ -97,6 +106,7 @@ class MeshAccount {
         selection: json['selection'] as String? ?? 'auto',
         peerKeys: Map<String, String>.from(json['peer_keys'] as Map? ?? const {}),
         nameOnNetwork: json['name_on_network'] as String?,
+        servers: [for (final s in (json['servers'] as List? ?? const [])) '$s'],
       );
 
   static Future<MeshAccount?> load() async {
@@ -137,12 +147,16 @@ class MeshSession {
   /// free variant ("iphone-2") when another device of the group has it.
   /// Null when the name was already set, or could not be.
   final String? deviceName;
+
+  /// The servers to start the next connect with, the one used first.
+  final List<String> servers;
   const MeshSession({
     required this.nodeId,
     required this.tunnelIp,
     required this.genesisKey,
     required this.tier1Epoch,
     this.deviceName,
+    this.servers = const [],
   });
 }
 
@@ -168,13 +182,51 @@ class MeshService {
   /// identity's own group is used, which the first connect creates — that is
   /// "Create mesh", and every later reconnect.
   Future<MeshSession> connect(MeshAccount account, {String? inviteCode}) async {
+    final clock = Stopwatch()..start();
+    // The servers from the last connect, the one that answered first: DNS
+    // discovery takes up to a second, so it refreshes the list in the
+    // background instead. A device with no list yet discovers first.
+    final cached = _known.isNotEmpty ? _known : account.servers;
+    if (cached.isNotEmpty) {
+      unawaited(_refreshServers());
+      try {
+        return await _connectVia(cached, account, inviteCode, clock, 'cached list');
+      } catch (e) {
+        debugPrint('[mesh] the cached servers failed ($e): discovering');
+      }
+    }
     final servers = await _discoverServers();
     if (servers.isEmpty) {
       throw const MeshException(
           'No Lemonade Nexus servers answered. Check your internet connection.');
     }
+    _known = servers;
+    return _connectVia(servers, account, inviteCode, clock,
+        'discovery ${clock.elapsedMilliseconds}');
+  }
+
+  /// Servers known in this run, best first; see [connect].
+  List<String> _known = const [];
+
+  Future<void> _refreshServers() async {
+    try {
+      final fresh = await _discoverServers();
+      if (fresh.isEmpty) return;
+      // Keep the server that answered last in front.
+      final first = _known.isNotEmpty ? _known.first : null;
+      _known = [
+        if (first != null && fresh.contains(first)) first,
+        ...fresh.where((h) => h != first),
+      ];
+    } catch (e) {
+      debugPrint('[mesh] server discovery failed: $e');
+    }
+  }
+
+  Future<MeshSession> _connectVia(List<String> servers, MeshAccount account,
+      String? inviteCode, Stopwatch clock, String source) async {
     Object? lastError;
-    // The best-scored server first; any server can redeem an invite.
+    // The best server first; any server can redeem an invite.
     for (final host in servers.take(3)) {
       try {
         final result = await _worker.run(_bootstrapTask(
@@ -188,12 +240,17 @@ class MeshService {
           minEpoch: account.tier1Epoch,
           inviteCode: inviteCode,
         ));
+        debugPrint('[mesh] connected via $host in ${clock.elapsedMilliseconds} ms '
+            '($source, ${result['timings']})');
+        final ordered = [host, ...servers.where((h) => h != host)];
+        _known = ordered;
         return MeshSession(
           nodeId: result['node_id'] as String,
           tunnelIp: result['tunnel_ip'] as String? ?? '',
           genesisKey: result['genesis_key'] as String,
           tier1Epoch: result['epoch'] as int,
           deviceName: result['device_name'] as String?,
+          servers: ordered,
         );
       } catch (e) {
         // The next server even on LnError.auth: joining reports an
@@ -343,14 +400,24 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
   required String? inviteCode,
 }) =>
     (sdk) async {
+      // Time per step, for the connect log line: where a slow connect goes.
+      final clock = Stopwatch()..start();
+      final timings = <String>[];
+      void lap(String step) {
+        timings.add('$step ${clock.elapsedMilliseconds}');
+        clock.reset();
+      }
+
       // A reconnect replaces the previous client: stop its mesh first.
       try {
         await sdk.disableMesh();
       } catch (_) {}
       sdk.disconnect(clearIdentity: true);
       await sdk.connectTls(host, kMeshServerPort);
+      lap('tls');
       await sdk.createIdentityFromSeed(base64Decode(seed));
       await sdk.setIdentity();
+      lap('identity');
 
       // Tree, session and private-API calls go only to Tier 1 servers
       // verified from the network key. First connect: the SDK accepts a key
@@ -364,6 +431,7 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
       } else {
         sdk.setGenesisKey(key, minEpoch: minEpoch);
       }
+      lap('genesis');
 
       if (inviteCode != null) sdk.setLinkToken(inviteCode);
       final NetworkJoinResponse joined;
@@ -372,12 +440,14 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
       } finally {
         if (inviteCode != null) sdk.setLinkToken('');
       }
+      lap('join');
       if (!joined.success || joined.nodeId == null) {
         throw SdkException(LnError.auth,
             message: joined.error ?? 'The network did not accept this device');
       }
 
       await sdk.enableMesh();
+      lap('mesh');
       if ((await sdk.getMeshStatus()).needsRejoin) {
         throw SdkException(LnError.connect,
             message: 'The network dropped the session while connecting');
@@ -385,14 +455,18 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
       // No local service (the phone runs no lemond) and no certificate
       // directory: the port stays on plain HTTP on loopback.
       await sdk.startMeshPort(port: kMeshPortNumber);
+      lap('port');
 
       final shownName =
           setName ? await _nameDevice(sdk, joined.nodeId!, deviceName) : null;
+      if (setName) lap('name');
       var epoch = minEpoch;
       try {
         epoch = ((await sdk.tier1Membership())['epoch'] as num?)?.toInt() ?? minEpoch;
       } catch (_) {}
+      lap('membership');
       return {
+        'timings': timings.join(', '),
         'node_id': joined.nodeId,
         'tunnel_ip': joined.tunnelIp,
         'genesis_key': key,
