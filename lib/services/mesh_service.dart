@@ -257,9 +257,9 @@ class MeshService {
   Future<void> stop() => _worker.run(_stopTask);
 
   /// Removes this device from the network, then stops. The device keeps its
-  /// key, so it can join again with a new invite. A server from before the
-  /// mobile SDK 0.9.8.6 release can lose the reply (it removed this device's
-  /// tunnel before answering), so a failure does not mean the device stayed.
+  /// key, so it can join again with a new invite. The server can still lose
+  /// the reply (it removes this device's tunnel before answering), so a
+  /// failure does not mean the device stayed on the network.
   Future<void> leave() async {
     try {
       await _worker.run(_leaveTask);
