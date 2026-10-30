@@ -124,13 +124,23 @@ class MeshAccount {
   static Future<void> delete() => SecureKeyStore.deleteMeshAccount();
 }
 
-/// How traffic reaches another device: straight to it (peer to peer, after
-/// hole punching) or through a relay server.
+/// How traffic reaches another device: straight to it (peer to peer, over
+/// this network's LAN or across the internet after hole punching) or
+/// through a relay server.
 enum MeshPath { direct, relay }
 
 /// The path the dataplane uses for [peer] right now, or null before it has
-/// one (no handshake yet).
+/// one (no handshake yet). The SDK reports it as `path` since mobile SDK
+/// 0.9.8.8 ("lan" counts as peer to peer); an older one is read from its
+/// endpoints.
 MeshPath? meshPathOf(MeshPeer peer) {
+  switch (peer.path) {
+    case 'lan':
+    case 'direct':
+      return MeshPath.direct;
+    case 'relay':
+      return MeshPath.relay;
+  }
   if ((peer.relayEndpoint ?? '').isNotEmpty) return MeshPath.relay;
   if ((peer.endpoint ?? '').isNotEmpty) return MeshPath.direct;
   return null;

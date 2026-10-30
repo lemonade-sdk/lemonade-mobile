@@ -266,7 +266,7 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
               Text(sub, style: TextStyle(fontSize: 11.5, color: t.muted)),
             ]),
           ),
-          // Straight to the device, or through a relay server.
+          // Straight to the device (LAN included), or through a relay.
           if (path != null) ...[
             NexusPill(path == MeshPath.direct ? 'P2P' : 'RELAY',
                 color: path == MeshPath.direct ? t.good : t.warn, outlined: true),

@@ -110,5 +110,11 @@ void main() {
     test('no endpoint yet means unknown', () {
       expect(meshPathOf(peer({})), isNull);
     });
+
+    test("the SDK's path wins", () {
+      expect(meshPathOf(peer({'path': 'lan', 'endpoint': '10.0.0.82:51820'})), MeshPath.direct);
+      expect(meshPathOf(peer({'path': 'direct'})), MeshPath.direct);
+      expect(meshPathOf(peer({'path': 'relay', 'endpoint': '1.2.3.4:5'})), MeshPath.relay);
+    });
   });
 }

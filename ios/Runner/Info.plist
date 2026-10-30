@@ -46,7 +46,7 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Read calendar events only when you ask Lemonade to summarize your schedule or day. Event details are sent to your active AI server.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>This app uses the local network to discover Lemonade AI servers on your network.</string>
+	<string>This app uses the local network to find Lemonade AI servers on your network and to reach your mesh devices directly when they are on the same network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app does not use location services.</string>
 	<key>NSMicrophoneUsageDescription</key>
