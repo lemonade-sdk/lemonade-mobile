@@ -18,7 +18,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show MeshPortDevice, MeshPortStatus;
+import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show MeshPortDevice, MeshPortStatus, NetworkDevice;
 // ProviderOverride/ProviderBase aren't in the public API surface, but the
 // class is reachable via the src export and is stable. Using it directly lets
 // us seed any provider with a value without the (private) notifier types.
@@ -282,7 +282,8 @@ class _ShellFrame extends StatelessWidget {
 }
 
 /// Mesh mode with a seeded mesh: not set up (the Create / Join popup), or
-/// connected with two computers and Auto selected.
+/// connected with two computers and Auto selected, plus a member device from
+/// another network in the device list.
 class _MeshScope extends StatelessWidget {
   final bool setUp;
   final Widget child;
@@ -310,6 +311,40 @@ class _MeshScope extends StatelessWidget {
               ],
             ),
             paths: const {'node-studio': MeshPath.direct},
+            peerOnline: const {'node-studio': true, 'node-tower': false, 'node-friend': true},
+            networkDevices: const [
+              NetworkDevice(
+                  nodeId: 'node-phone',
+                  deviceName: 'iPhone',
+                  tunnelIp: '10.97.26.8/32',
+                  groupRole: 'home',
+                  isSelf: true,
+                  admin: true),
+              NetworkDevice(
+                  nodeId: 'node-studio',
+                  deviceName: 'Studio Mac',
+                  tunnelIp: '10.97.26.2/32',
+                  groupRole: 'home',
+                  isInference: true,
+                  canConnect: true,
+                  admin: true),
+              NetworkDevice(
+                  nodeId: 'node-tower',
+                  deviceName: 'Linux tower',
+                  tunnelIp: '10.97.26.3/32',
+                  groupRole: 'home',
+                  isInference: true,
+                  canConnect: true,
+                  admin: true),
+              NetworkDevice(
+                  nodeId: 'node-friend',
+                  deviceName: "Sam's laptop",
+                  tunnelIp: '10.97.40.5/32',
+                  groupRole: 'home',
+                  isInference: true,
+                  member: true,
+                  canConnect: true),
+            ],
           );
     return ProviderScope(
       overrides: [

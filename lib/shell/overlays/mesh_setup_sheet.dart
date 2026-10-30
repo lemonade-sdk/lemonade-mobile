@@ -12,7 +12,7 @@ import '../../widgets/nexus/mesh_panel.dart';
 import '../../widgets/nexus/nexus_form.dart';
 import 'sheet_scaffold.dart';
 
-enum _Step { choose, create, join, invite }
+enum _Step { choose, create, join, invite, joined }
 
 /// Shown when Mesh is picked on a device without a mesh account: create a new
 /// mesh (then invite a computer running Lemonade) or join one with an invite
@@ -31,6 +31,9 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
   bool _busy = false;
   String? _error;
   Invite? _invite;
+
+  /// What the join became when this device already had its own network.
+  MeshJoinNotice? _notice;
 
   @override
   void didChangeDependencies() {
@@ -90,9 +93,19 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
       _error = null;
     });
     try {
-      await ref.read(meshProvider.notifier).join(code, _name.text);
+      final session = await ref.read(meshProvider.notifier).join(code, _name.text);
       await ref.read(appModeProvider.notifier).setMode(AppMode.mesh);
-      _close();
+      final notice = session.joinNotice;
+      if (notice == null) {
+        _close();
+      } else if (mounted) {
+        // The device is connected in its own network either way; say what
+        // the invite became instead of closing as if it joined the network.
+        setState(() {
+          _notice = notice;
+          _step = _Step.joined;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = MeshException.from(e).message);
     } finally {
@@ -127,6 +140,7 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
               _Step.create => 'Create a mesh',
               _Step.join => 'Join a mesh',
               _Step.invite => 'Add your computer',
+              _Step.joined => (_notice?.isError ?? false) ? 'Invite not accepted' : 'Joined as a member',
             },
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: t.text)),
           ]),
@@ -201,6 +215,18 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
                 'Your mesh is ready. Invite a computer from Settings → Mesh '
                 'network → Invite a device.',
                 style: TextStyle(fontSize: 13, height: 1.45, color: t.muted)),
+          const SizedBox(height: 14),
+          NexusButton(label: 'Done', onTap: _close),
+        ];
+      case _Step.joined:
+        final notice = _notice;
+        return [
+          if (notice != null)
+            Text(notice.message,
+                style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: notice.isError ? t.danger : t.muted)),
           const SizedBox(height: 14),
           NexusButton(label: 'Done', onTap: _close),
         ];
