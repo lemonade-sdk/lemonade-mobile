@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show Invite, MeshPortStatus, SessionMoveEvent, normalizeInvite;
+    show Invite, MeshPortStatus, NetworkDevice, SessionMoveEvent, normalizeInvite;
 
 import '../models/server_config.dart';
 import '../services/background_time.dart';
@@ -42,6 +42,13 @@ class MeshState {
   /// has a path to.
   final Map<String, MeshPath> paths;
 
+  /// Online state per mesh peer node ID (see [MeshPeerState]).
+  final Map<String, bool> peerOnline;
+
+  /// Every device of this identity's networks, or null before the first
+  /// list or when the native SDK has no device list.
+  final List<NetworkDevice>? networkDevices;
+
   const MeshState({
     this.phase = MeshPhase.notSetUp,
     this.account,
@@ -50,6 +57,8 @@ class MeshState {
     this.error,
     this.searching = false,
     this.paths = const {},
+    this.peerOnline = const {},
+    this.networkDevices,
   });
 
   bool get isSetUp => account != null;
@@ -68,6 +77,11 @@ class MeshState {
 
   int get onlineDevices => port.devices.where((d) => d.isOnline).length;
 
+  /// Whether [device] of [networkDevices] is online; null when unknown (see
+  /// [meshDeviceOnline]).
+  bool? isDeviceOnline(NetworkDevice device) => meshDeviceOnline(device,
+      peerOnline: peerOnline, meshUp: phase == MeshPhase.connected);
+
   MeshState copyWith({
     MeshPhase? phase,
     MeshAccount? account,
@@ -77,6 +91,8 @@ class MeshState {
     bool clearError = false,
     bool? searching,
     Map<String, MeshPath>? paths,
+    Map<String, bool>? peerOnline,
+    List<NetworkDevice>? networkDevices,
   }) =>
       MeshState(
         phase: phase ?? this.phase,
@@ -86,6 +102,8 @@ class MeshState {
         error: clearError ? null : (error ?? this.error),
         searching: searching ?? this.searching,
         paths: paths ?? this.paths,
+        peerOnline: peerOnline ?? this.peerOnline,
+        networkDevices: networkDevices ?? this.networkDevices,
       );
 }
 
@@ -123,6 +141,12 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
 
   /// Right after a connect, refreshes the devices until one is online.
   Timer? _devicesPoll;
+
+  /// When [refresh] last read the device list from the network. The list
+  /// is a server call, so the 2 s polls after a connect read it at most
+  /// every [_networkDevicesMaxAge]; the online state is read every time.
+  DateTime? _networkDevicesAt;
+  static const _networkDevicesMaxAge = Duration(seconds: 15);
 
   Future<void> _hydrate() async {
     final account = await MeshAccount.load();
@@ -183,11 +207,13 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       _setUp(MeshAccount.create(deviceName.trim()), inviteCode: null);
 
   /// "Join mesh": a new device identity that joins the group of [inviteCode].
-  Future<void> join(String inviteCode, String deviceName) => _setUp(
+  /// The session's [MeshSession.joinNotice] says when the device had a
+  /// network of its own and the invite made it a member instead.
+  Future<MeshSession> join(String inviteCode, String deviceName) => _setUp(
       MeshAccount.create(deviceName.trim()),
       inviteCode: normalizeInvite(inviteCode));
 
-  Future<void> _setUp(MeshAccount account, {required String? inviteCode}) async {
+  Future<MeshSession> _setUp(MeshAccount account, {required String? inviteCode}) async {
     _active = true;
     state = MeshState(phase: MeshPhase.connecting, account: account);
     try {
@@ -202,6 +228,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
           nodeId: session.nodeId);
       await saved.save();
       await _connected(service, saved, session);
+      return session;
     } catch (e) {
       // Nothing is saved: the next attempt starts with a fresh identity.
       state = MeshState(
@@ -261,6 +288,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     }
     state = MeshState(
         phase: MeshPhase.connected, account: selected, session: session);
+    _networkDevicesAt = null;
     await refresh();
     _portClosed = false;
     _poll?.cancel();
@@ -305,10 +333,24 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       debugPrint('Mesh status failed: $e');
     }
     try {
-      final paths = await service.peerPaths();
-      if (mounted) state = state.copyWith(paths: paths);
+      final peers = await service.peers();
+      if (mounted) state = state.copyWith(paths: peers.paths, peerOnline: peers.online);
     } catch (e) {
       debugPrint('Mesh paths failed: $e');
+    }
+    final listedAt = _networkDevicesAt;
+    if (listedAt != null &&
+        DateTime.now().difference(listedAt) < _networkDevicesMaxAge) {
+      return;
+    }
+    _networkDevicesAt = DateTime.now();
+    try {
+      // Null from a native SDK without the list: the panel keeps showing
+      // the mesh port's devices only.
+      final devices = await service.networkDevices();
+      if (mounted && devices != null) state = state.copyWith(networkDevices: devices);
+    } catch (e) {
+      debugPrint('Mesh device list failed: $e');
     }
   }
 

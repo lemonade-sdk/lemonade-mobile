@@ -11,6 +11,7 @@ import '../../providers/app_mode_provider.dart';
 import '../../providers/mesh_provider.dart';
 import '../../services/mesh_service.dart';
 import '../../themes/nexus_tokens.dart';
+import 'mesh_device_list.dart';
 import 'nexus_form.dart';
 import 'nexus_ui.dart';
 
@@ -21,7 +22,8 @@ String meshDefaultDeviceName(BuildContext context) {
   return tablet ? 'Android tablet' : 'Android phone';
 }
 
-/// Settings → Mesh: the network, the device that serves chat, invites, leave.
+/// Settings → Mesh: the network, the device that serves chat, every device
+/// of this identity's networks, invites, leave.
 class MeshPanel extends ConsumerStatefulWidget {
   const MeshPanel({super.key});
 
@@ -215,6 +217,12 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
                 const SizedBox(width: 8),
                 TextButton(onPressed: () => _saveKey(selection), child: const Text('Save')),
               ]),
+            ],
+            // Null from a native SDK without the device list: only the mesh
+            // port's devices above.
+            if (mesh.networkDevices case final devices?) ...[
+              const SizedBox(height: 16),
+              MeshDeviceList(devices: devices, online: mesh.isDeviceOnline),
             ],
             const SizedBox(height: 14),
             Row(children: [

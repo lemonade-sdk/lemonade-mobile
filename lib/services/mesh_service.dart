@@ -146,6 +146,66 @@ MeshPath? meshPathOf(MeshPeer peer) {
   return null;
 }
 
+/// What the mesh reports about the other devices: the path to each one (see
+/// [meshPathOf]) and whether it is online, by node ID. A device missing from
+/// [online] is not a mesh peer of this device, so its state is unknown.
+typedef MeshPeerState = ({Map<String, MeshPath> paths, Map<String, bool> online});
+
+MeshPeerState meshPeerStateOf(Iterable<MeshPeer> peers) => (
+      paths: {
+        for (final peer in peers)
+          if (peer.nodeId.isNotEmpty && meshPathOf(peer) != null) peer.nodeId: meshPathOf(peer)!,
+      },
+      online: {
+        for (final peer in peers)
+          if (peer.nodeId.isNotEmpty) peer.nodeId: peer.isOnline,
+      },
+    );
+
+/// Whether [device] is online: this device while the mesh is up, another one
+/// as its mesh peer reports. Null when it is not a mesh peer of this device
+/// (the mesh has no state for it), so the list does not call it offline.
+bool? meshDeviceOnline(NetworkDevice device,
+    {required Map<String, bool> peerOnline, required bool meshUp}) {
+  if (device.isSelf) return meshUp;
+  final online = peerOnline[device.nodeId];
+  if (online != null) return online;
+  return device.canConnect ? false : null;
+}
+
+/// What a join with an invite code tells the user when this device already
+/// had its own network, so the invite made its identity a member of the
+/// invite's network instead (see [JoinMembership]).
+class MeshJoinNotice {
+  final String message;
+
+  /// The network refused the membership: show [message] as an error.
+  final bool isError;
+  const MeshJoinNotice(this.message, {required this.isError});
+}
+
+/// The notice for [membership], or null when the join needs none (no
+/// membership: the device joined the invite's network itself). [networkName]
+/// names the invite's network when known.
+MeshJoinNotice? meshJoinNotice(JoinMembership? membership, {String? networkName}) {
+  if (membership == null) return null;
+  final network =
+      (networkName ?? '').trim().isEmpty ? 'the invited network' : networkName!.trim();
+  if (membership.status == 'refused') {
+    final reason = (membership.error ?? '').trim();
+    return MeshJoinNotice(
+        reason.isEmpty
+            ? 'The invite was not accepted. This phone stays in its own network.'
+            : 'The invite was not accepted ($reason). This phone stays in its own network.',
+        isError: true);
+  }
+  if (!membership.isMember) return null;
+  return MeshJoinNotice(
+      'This phone already had its own network, so it joined $network as a '
+      'member and stays in its own network.',
+      isError: false);
+}
+
 /// What [MeshService.connect] learned from the network.
 class MeshSession {
   final String nodeId;
@@ -160,6 +220,15 @@ class MeshSession {
 
   /// The servers to start the next connect with, the one used first.
   final List<String> servers;
+
+  /// Set when the connect carried an invite code but this device already
+  /// had its own network: what the invite became (see [meshJoinNotice]).
+  final JoinMembership? membership;
+
+  /// The name of the invite's network for [membership], when the network
+  /// gave it.
+  final String? membershipNetwork;
+
   const MeshSession({
     required this.nodeId,
     required this.tunnelIp,
@@ -167,7 +236,13 @@ class MeshSession {
     required this.tier1Epoch,
     this.deviceName,
     this.servers = const [],
+    this.membership,
+    this.membershipNetwork,
   });
+
+  /// The notice for the user about [membership], or null.
+  MeshJoinNotice? get joinNotice =>
+      meshJoinNotice(membership, networkName: membershipNetwork);
 }
 
 /// Runs the Lemonade Nexus SDK for Mesh mode on a [NexusWorker].
@@ -255,6 +330,7 @@ class MeshService {
             '($source, ${result['timings']})');
         final ordered = [host, ...servers.where((h) => h != host)];
         _known = ordered;
+        final membership = result['membership'];
         return MeshSession(
           nodeId: result['node_id'] as String,
           tunnelIp: result['tunnel_ip'] as String? ?? '',
@@ -262,6 +338,10 @@ class MeshService {
           tier1Epoch: result['epoch'] as int,
           deviceName: result['device_name'] as String?,
           servers: ordered,
+          membership: membership is Map
+              ? JoinMembership.fromJson(Map<String, dynamic>.from(membership))
+              : null,
+          membershipNetwork: result['membership_network'] as String?,
         );
       } catch (e) {
         // The next server even on LnError.auth: joining reports an
@@ -301,8 +381,22 @@ class MeshService {
   Future<void> select(String target) =>
       _guard(() => _worker.run(_selectTask(target)));
 
-  /// The current path to each device, by node ID (see [meshPathOf]).
-  Future<Map<String, MeshPath>> peerPaths() => _guard(() => _worker.run(_peerPathsTask));
+  /// The path to each mesh peer and whether it is online (see
+  /// [MeshPeerState]).
+  Future<MeshPeerState> peers() => _guard(() => _worker.run(_peersTask));
+
+  /// Every device of this identity's networks (see
+  /// [LemonadeNexusSdk.listNetworkDevices]), or null when the native SDK
+  /// has no device list (it predates ln_list_network_devices). After a null
+  /// the service does not ask again.
+  Future<List<NetworkDevice>?> networkDevices() async {
+    if (_noDeviceList) return null;
+    final devices = await _guard(() => _worker.run(_networkDevicesTask));
+    if (devices == null) _noDeviceList = true;
+    return devices;
+  }
+
+  bool _noDeviceList = false;
 
   /// Fetches the device list from the network now instead of on the next
   /// periodic refresh, so devices that came back are found sooner.
@@ -502,6 +596,18 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
         epoch = ((await sdk.tier1Membership())['epoch'] as num?)?.toInt() ?? minEpoch;
       } catch (_) {}
       lap('membership');
+      // The invite made this identity a member of another network: name it
+      // for the notice when the network lets this device read it.
+      String? membershipNetwork;
+      final membership = joined.membership;
+      if (membership != null && membership.isMember && membership.groupId.isNotEmpty) {
+        try {
+          membershipNetwork = (await sdk.getNode(membership.groupId)).hostname;
+        } catch (e) {
+          debugPrint('[mesh] the name of network ${membership.groupId} is not readable: $e');
+        }
+        lap('network name');
+      }
       return {
         'timings': timings.join(', '),
         'node_id': joined.nodeId,
@@ -509,6 +615,8 @@ Future<Map<String, Object?>> Function(LemonadeNexusSdk) _bootstrapTask({
         'genesis_key': key,
         'epoch': epoch,
         'device_name': shownName,
+        'membership': membership?.toJson(),
+        'membership_network': membershipNetwork,
       };
     };
 
@@ -560,12 +668,18 @@ Future<void> _closePortTask(LemonadeNexusSdk sdk) => sdk.stopMeshPort();
 
 Future<void> _refreshPeersTask(LemonadeNexusSdk sdk) => sdk.refreshMesh();
 
-Future<Map<String, MeshPath>> _peerPathsTask(LemonadeNexusSdk sdk) async {
-  final status = await sdk.getMeshStatus();
-  return {
-    for (final peer in status.peers)
-      if (peer.nodeId.isNotEmpty && meshPathOf(peer) != null) peer.nodeId: meshPathOf(peer)!,
-  };
+Future<MeshPeerState> _peersTask(LemonadeNexusSdk sdk) async =>
+    meshPeerStateOf((await sdk.getMeshStatus()).peers);
+
+/// Null when the native SDK lacks ln_list_network_devices: its lookup fails
+/// with an ArgumentError on the first call.
+Future<List<NetworkDevice>?> _networkDevicesTask(LemonadeNexusSdk sdk) async {
+  try {
+    return await sdk.listNetworkDevices();
+  } on ArgumentError catch (e) {
+    debugPrint('[mesh] this native SDK has no device list: $e');
+    return null;
+  }
 }
 
 Future<void> Function(LemonadeNexusSdk) _openPortTask(String selection) => (sdk) async {
