@@ -376,6 +376,20 @@ class MeshService {
   /// session left. A move that is not silent needs [connect] again.
   Stream<SessionMoveEvent> get sessionMoves => _worker.sessionMoves;
 
+  /// What may have changed in the mesh, as the SDK learns it (see
+  /// [MeshEvent]): read that state again instead of polling it. Empty with
+  /// a native SDK older than mesh events; see [hasMeshEvents].
+  Stream<MeshEvent> get meshEvents => _worker.meshEvents;
+
+  /// Whether the native SDK reports [meshEvents].
+  Future<bool> hasMeshEvents() async {
+    try {
+      return await _worker.run(_hasMeshEventsTask);
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Serve [target] ("auto" or a node ID) on the mesh port. The device's API
   /// key is not given to the SDK; the app sends it on its own requests.
   Future<void> select(String target) =>
@@ -651,6 +665,8 @@ Future<Map<String, dynamic>> Function(LemonadeNexusSdk) _inviteTask(int ttl) =>
     (sdk) => sdk.createLinkToken(ttlSec: ttl);
 
 Future<MeshPortStatus> _portStatusTask(LemonadeNexusSdk sdk) => sdk.getMeshPortStatus();
+
+Future<bool> _hasMeshEventsTask(LemonadeNexusSdk sdk) async => sdk.hasMeshEvents;
 
 Future<bool> _isUpTask(LemonadeNexusSdk sdk) async {
   if (!sdk.isMeshActive()) return false;
