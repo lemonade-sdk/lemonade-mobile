@@ -4,7 +4,14 @@ import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show Invite, MeshPortStatus, NetworkDevice, SessionMoveEvent, normalizeInvite;
+    show
+        Invite,
+        MeshEvent,
+        MeshEventKind,
+        MeshPortStatus,
+        NetworkDevice,
+        SessionMoveEvent,
+        normalizeInvite;
 
 import '../models/server_config.dart';
 import '../services/background_time.dart';
@@ -126,6 +133,18 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   bool _active = false;
   Timer? _poll;
   StreamSubscription<SessionMoveEvent>? _moves;
+  StreamSubscription<MeshEvent>? _events;
+
+  /// The native SDK reports mesh events: the state is read again when one
+  /// arrives, not on a schedule.
+  bool _hasEvents = false;
+
+  /// A refresh runs; another one was asked for meanwhile.
+  bool _refreshing = false;
+  bool _refreshAgain = false;
+
+  /// Since when the devices are looked for (see [_watchForDevices]).
+  Stopwatch? _searchClock;
   DateTime? _lastRejoin;
 
   /// One connect at a time; later callers wait for it.
@@ -142,9 +161,9 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// Right after a connect, refreshes the devices until one is online.
   Timer? _devicesPoll;
 
-  /// How often [_watchForDevices] reads the online state. The SDK applies
-  /// a peer that comes online at once, and the read is local (no server
-  /// call), so a short interval costs little.
+  /// How often [_watchForDevices] checks the search. Without mesh events it
+  /// also reads the online state then; the read is local (no server call),
+  /// so a short interval costs little.
   static const _devicesPollInterval = Duration(seconds: 1);
 
   /// When [refresh] last read the device list from the network. The list
@@ -166,6 +185,8 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     if (existing != null) return existing;
     final service = await MeshService.start();
     _moves = service.sessionMoves.listen(_onSessionMoved);
+    _events = service.meshEvents.listen(_onMeshEvent);
+    _hasEvents = await service.hasMeshEvents();
     return _service = service;
   }
 
@@ -302,12 +323,38 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     _watchForDevices();
   }
 
+  /// The SDK reported a change: read the state again. A device list event
+  /// also reads the list from the network, whatever its age.
+  void _onMeshEvent(MeshEvent event) {
+    if (!_active || state.phase != MeshPhase.connected) return;
+    if (event.kind == MeshEventKind.devices) _networkDevicesAt = null;
+    unawaited(_refreshSoon());
+  }
+
+  /// One refresh at a time: events during a refresh run one more after it.
+  Future<void> _refreshSoon() async {
+    if (_refreshing) {
+      _refreshAgain = true;
+      return;
+    }
+    _refreshing = true;
+    try {
+      do {
+        _refreshAgain = false;
+        await refresh();
+      } while (_refreshAgain && mounted);
+    } finally {
+      _refreshing = false;
+    }
+  }
+
   /// The devices come online over the first seconds after a connect, as the
-  /// mesh reaches them: refresh every [_devicesPollInterval] until one is
-  /// online (at most 60 s) instead of waiting for the 20 s heartbeat.
+  /// mesh reaches them. With mesh events each change is read as it comes;
+  /// without them, refresh every [_devicesPollInterval]. Either way the
+  /// search ends when a device is online, or after 60 s.
   void _watchForDevices() {
     _devicesPoll?.cancel();
-    final clock = Stopwatch()..start();
+    _searchClock = Stopwatch()..start();
     final until = DateTime.now().add(const Duration(seconds: 60));
     if (mounted && state.onlineDevices == 0) state = state.copyWith(searching: true);
     _devicesPoll = Timer.periodic(_devicesPollInterval, (timer) async {
@@ -319,11 +366,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
         if (mounted && state.searching) state = state.copyWith(searching: false);
         return;
       }
-      await refresh();
-      if (mounted && state.onlineDevices > 0) {
-        debugPrint('[mesh] a device is online after ${clock.elapsedMilliseconds} ms '
-            '(${state.paths.values.map((p) => p.name).join(', ')})');
-      }
+      if (!_hasEvents) await refresh();
     });
   }
 
@@ -350,6 +393,15 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     } catch (e) {
       debugPrint('Mesh paths failed: $e');
     }
+    final clock = _searchClock;
+    if (mounted && state.searching && state.onlineDevices > 0) {
+      state = state.copyWith(searching: false);
+      if (clock != null) {
+        debugPrint('[mesh] a device is online after ${clock.elapsedMilliseconds} ms '
+            '(${_hasEvents ? 'events' : 'polling'}; '
+            '${state.paths.values.map((p) => p.name).join(', ')})');
+      }
+    }
     final listedAt = _networkDevicesAt;
     if (listedAt != null &&
         DateTime.now().difference(listedAt) < _networkDevicesMaxAge) {
@@ -372,7 +424,9 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     final service = _service;
     if (service == null || !_active || state.phase != MeshPhase.connected) return;
     if (await service.isUp()) {
-      await refresh();
+      // With mesh events the state is already current; the heartbeat only
+      // checks that the session is still up.
+      if (!_hasEvents) await refresh();
     } else {
       await _connect();
     }
@@ -515,6 +569,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     _devicesPoll?.cancel();
     _portTimer?.cancel();
     _moves?.cancel();
+    _events?.cancel();
     _service?.close();
     super.dispose();
   }
