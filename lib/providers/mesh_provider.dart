@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
@@ -142,9 +142,14 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// Right after a connect, refreshes the devices until one is online.
   Timer? _devicesPoll;
 
+  /// How often [_watchForDevices] reads the online state. The SDK applies
+  /// a peer that comes online at once, and the read is local (no server
+  /// call), so a short interval costs little.
+  static const _devicesPollInterval = Duration(seconds: 1);
+
   /// When [refresh] last read the device list from the network. The list
-  /// is a server call, so the 2 s polls after a connect read it at most
-  /// every [_networkDevicesMaxAge]; the online state is read every time.
+  /// is a server call, so the polls after a connect read it at most every
+  /// [_networkDevicesMaxAge]; the online state is read every time.
   DateTime? _networkDevicesAt;
   static const _networkDevicesMaxAge = Duration(seconds: 15);
 
@@ -298,14 +303,14 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   }
 
   /// The devices come online over the first seconds after a connect, as the
-  /// mesh reaches them: refresh every 2 s until one is online (at most 30 s)
-  /// instead of waiting for the 20 s heartbeat.
+  /// mesh reaches them: refresh every [_devicesPollInterval] until one is
+  /// online (at most 60 s) instead of waiting for the 20 s heartbeat.
   void _watchForDevices() {
     _devicesPoll?.cancel();
     final clock = Stopwatch()..start();
     final until = DateTime.now().add(const Duration(seconds: 60));
     if (mounted && state.onlineDevices == 0) state = state.copyWith(searching: true);
-    _devicesPoll = Timer.periodic(const Duration(seconds: 2), (timer) async {
+    _devicesPoll = Timer.periodic(_devicesPollInterval, (timer) async {
       if (!mounted ||
           state.phase != MeshPhase.connected ||
           state.onlineDevices > 0 ||
@@ -322,19 +327,26 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     });
   }
 
-  /// Re-reads the devices and the selection; reconnects when the mesh dropped.
+  /// Re-reads the devices and the selection. The state changes only where
+  /// the read found a change, so an unchanged poll rebuilds nothing.
   Future<void> refresh() async {
     final service = _service;
     if (service == null || state.phase != MeshPhase.connected) return;
     try {
       final port = await service.portStatus();
-      if (mounted) state = state.copyWith(port: port);
+      if (mounted && port != state.port) state = state.copyWith(port: port);
     } catch (e) {
       debugPrint('Mesh status failed: $e');
     }
     try {
       final peers = await service.peers();
-      if (mounted) state = state.copyWith(paths: peers.paths, peerOnline: peers.online);
+      final pathsChanged = !mapEquals(peers.paths, state.paths);
+      final onlineChanged = !mapEquals(peers.online, state.peerOnline);
+      if (mounted && (pathsChanged || onlineChanged)) {
+        state = state.copyWith(
+            paths: pathsChanged ? peers.paths : null,
+            peerOnline: onlineChanged ? peers.online : null);
+      }
     } catch (e) {
       debugPrint('Mesh paths failed: $e');
     }
@@ -348,7 +360,9 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       // Null from a native SDK without the list: the panel keeps showing
       // the mesh port's devices only.
       final devices = await service.networkDevices();
-      if (mounted && devices != null) state = state.copyWith(networkDevices: devices);
+      if (mounted && devices != null && !listEquals(devices, state.networkDevices)) {
+        state = state.copyWith(networkDevices: devices);
+      }
     } catch (e) {
       debugPrint('Mesh device list failed: $e');
     }
