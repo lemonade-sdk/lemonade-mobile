@@ -1,8 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart' show NetworkDevice;
 
+import '../../services/mesh_service.dart';
 import '../../themes/nexus_tokens.dart';
 import 'nexus_ui.dart';
+
+/// The color of a [MeshConnection] pill and status dot.
+Color meshConnectionColor(BuildContext context, MeshConnection connection) {
+  final t = context.nexus;
+  return switch (connection) {
+    MeshConnection.p2p => t.good,
+    MeshConnection.relay => t.warn,
+    MeshConnection.connecting => t.accent2,
+    MeshConnection.offline => t.muted,
+  };
+}
 
 /// A pill on a row of [MeshDeviceList].
 enum MeshDeviceTag {
@@ -19,24 +31,19 @@ enum MeshDeviceTag {
   joinedNetwork('JOINED NETWORK'),
 
   /// Its identity administers the network it is listed for.
-  admin('ADMIN'),
-  online('ONLINE'),
-  offline('OFFLINE');
+  admin('ADMIN');
 
   const MeshDeviceTag(this.label);
   final String label;
 }
 
-/// The pills for [device]. [online] is null when the mesh has no state for
-/// it (see meshDeviceOnline): then there is no online pill.
-List<MeshDeviceTag> meshDeviceTags(NetworkDevice device, {required bool? online}) => [
+/// The pills for [device], before its connection pill.
+List<MeshDeviceTag> meshDeviceTags(NetworkDevice device) => [
       if (device.isSelf) MeshDeviceTag.thisDevice,
       device.isInference ? MeshDeviceTag.server : MeshDeviceTag.client,
       if (device.member) MeshDeviceTag.member,
       if (device.groupRole == 'member') MeshDeviceTag.joinedNetwork,
       if (device.admin) MeshDeviceTag.admin,
-      if (online == true) MeshDeviceTag.online,
-      if (online == false) MeshDeviceTag.offline,
     ];
 
 /// Every device of this identity's networks, in the order the SDK lists
@@ -44,10 +51,11 @@ List<MeshDeviceTag> meshDeviceTags(NetworkDevice device, {required bool? online}
 class MeshDeviceList extends StatelessWidget {
   final List<NetworkDevice> devices;
 
-  /// Whether a device is online; null when unknown (no online pill).
-  final bool? Function(NetworkDevice device) online;
+  /// The connection to a device; null for no connection pill (see
+  /// meshDeviceConnection).
+  final MeshConnection? Function(NetworkDevice device) connection;
 
-  const MeshDeviceList({super.key, required this.devices, required this.online});
+  const MeshDeviceList({super.key, required this.devices, required this.connection});
 
   @override
   Widget build(BuildContext context) {
@@ -57,7 +65,7 @@ class MeshDeviceList extends StatelessWidget {
       children: [
         const NexusSectionLabel('Devices'),
         const SizedBox(height: 8),
-        for (final d in devices) _row(context, d, online(d)),
+        for (final d in devices) _row(context, d, connection(d)),
         if (devices.isEmpty)
           Text('No devices listed yet.',
               style: TextStyle(fontSize: 12.5, height: 1.4, color: t.muted)),
@@ -65,7 +73,7 @@ class MeshDeviceList extends StatelessWidget {
     );
   }
 
-  Widget _row(BuildContext context, NetworkDevice d, bool? online) {
+  Widget _row(BuildContext context, NetworkDevice d, MeshConnection? connection) {
     final t = context.nexus;
     final name = d.deviceName.isNotEmpty ? d.deviceName : 'Unnamed device';
     return Container(
@@ -81,7 +89,12 @@ class MeshDeviceList extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(top: 5),
           child: NexusStatusDot(
-              color: online == true ? t.good : t.faint, pulse: online == true),
+              color: d.isSelf
+                  ? t.good
+                  : connection == null
+                      ? t.faint
+                      : meshConnectionColor(context, connection),
+              pulse: d.isSelf || (connection != null && connection != MeshConnection.offline)),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -93,8 +106,11 @@ class MeshDeviceList extends StatelessWidget {
                   style: TextStyle(fontSize: 11.5, color: t.muted)),
             const SizedBox(height: 6),
             Wrap(spacing: 6, runSpacing: 6, children: [
-              for (final tag in meshDeviceTags(d, online: online))
+              for (final tag in meshDeviceTags(d))
                 NexusPill(tag.label, color: _color(context, tag), outlined: true),
+              if (connection != null)
+                NexusPill(connection.label,
+                    color: meshConnectionColor(context, connection), outlined: true),
             ]),
           ]),
         ),
@@ -108,8 +124,7 @@ class MeshDeviceList extends StatelessWidget {
       MeshDeviceTag.thisDevice || MeshDeviceTag.admin => t.accent,
       MeshDeviceTag.server || MeshDeviceTag.joinedNetwork => t.accent2,
       MeshDeviceTag.member => t.warn,
-      MeshDeviceTag.online => t.good,
-      MeshDeviceTag.client || MeshDeviceTag.offline => t.muted,
+      MeshDeviceTag.client => t.muted,
     };
   }
 }

@@ -148,31 +148,56 @@ MeshPath? meshPathOf(MeshPeer peer) {
   return null;
 }
 
-/// What the mesh reports about the other devices: the path to each one (see
-/// [meshPathOf]) and whether it is online, by node ID. A device missing from
-/// [online] is not a mesh peer of this device, so its state is unknown.
-typedef MeshPeerState = ({Map<String, MeshPath> paths, Map<String, bool> online});
+/// How this device reaches another one, as its status pill shows it.
+enum MeshConnection {
+  /// Straight to the device, its LAN address included.
+  p2p('P2P'),
+  relay('RELAY'),
 
-MeshPeerState meshPeerStateOf(Iterable<MeshPeer> peers) => (
-      paths: {
-        for (final peer in peers)
-          if (peer.nodeId.isNotEmpty && meshPathOf(peer) != null) peer.nodeId: meshPathOf(peer)!,
-      },
-      online: {
-        for (final peer in peers)
-          if (peer.nodeId.isNotEmpty) peer.nodeId: peer.isOnline,
-      },
-    );
+  /// The device is up, and the mesh is still building a path to it.
+  connecting('CONNECTING'),
 
-/// Whether [device] is online: this device while the mesh is up, another one
-/// as its mesh peer reports. Null when it is not a mesh peer of this device
-/// (the mesh has no state for it), so the list does not call it offline.
-bool? meshDeviceOnline(NetworkDevice device,
-    {required Map<String, bool> peerOnline, required bool meshUp}) {
-  if (device.isSelf) return meshUp;
-  final online = peerOnline[device.nodeId];
-  if (online != null) return online;
-  return device.canConnect ? false : null;
+  /// The server reports the device offline.
+  offline('OFFLINE');
+
+  const MeshConnection(this.label);
+  final String label;
+
+  bool get isConnected => this == p2p || this == relay;
+}
+
+/// The connection to [peer]. A device without a working path is
+/// connecting while the server reports it online: after a resume the mesh
+/// needs a while to rebuild the path to a device that never went away.
+MeshConnection meshConnectionOf(MeshPeer peer) {
+  if (peer.isOnline) {
+    switch (meshPathOf(peer)) {
+      case MeshPath.direct:
+        return MeshConnection.p2p;
+      case MeshPath.relay:
+        return MeshConnection.relay;
+      case null:
+        return MeshConnection.connecting;
+    }
+  }
+  return peer.serverOnline ? MeshConnection.connecting : MeshConnection.offline;
+}
+
+/// The connection to each mesh peer, by node ID. A device missing here is
+/// not a mesh peer of this device (yet).
+Map<String, MeshConnection> meshConnectionsOf(Iterable<MeshPeer> peers) => {
+      for (final peer in peers)
+        if (peer.nodeId.isNotEmpty) peer.nodeId: meshConnectionOf(peer),
+    };
+
+/// The connection to [device] of the device list, or null when it has no
+/// pill: this device, or a device this one may not connect to. A device it
+/// may connect to that the mesh does not list yet is connecting.
+MeshConnection? meshDeviceConnection(NetworkDevice device,
+    {required Map<String, MeshConnection> connections}) {
+  if (device.isSelf) return null;
+  return connections[device.nodeId] ??
+      (device.canConnect ? MeshConnection.connecting : null);
 }
 
 /// What a join with an invite code tells the user when this device already
@@ -397,9 +422,8 @@ class MeshService {
   Future<void> select(String target) =>
       _guard(() => _worker.run(_selectTask(target)));
 
-  /// The path to each mesh peer and whether it is online (see
-  /// [MeshPeerState]).
-  Future<MeshPeerState> peers() => _guard(() => _worker.run(_peersTask));
+  /// The connection to each mesh peer, by node ID (see [meshConnectionsOf]).
+  Future<Map<String, MeshConnection>> peers() => _guard(() => _worker.run(_peersTask));
 
   /// Every device of this identity's networks (see
   /// [LemonadeNexusSdk.listNetworkDevices]), or null when the native SDK
@@ -686,8 +710,8 @@ Future<void> _closePortTask(LemonadeNexusSdk sdk) => sdk.stopMeshPort();
 
 Future<void> _refreshPeersTask(LemonadeNexusSdk sdk) => sdk.refreshMesh();
 
-Future<MeshPeerState> _peersTask(LemonadeNexusSdk sdk) async =>
-    meshPeerStateOf((await sdk.getMeshStatus()).peers);
+Future<Map<String, MeshConnection>> _peersTask(LemonadeNexusSdk sdk) async =>
+    meshConnectionsOf((await sdk.getMeshStatus()).peers);
 
 /// Null when the native SDK lacks ln_list_network_devices: its lookup fails
 /// with an ArgumentError on the first call.
