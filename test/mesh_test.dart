@@ -105,8 +105,11 @@ void main() {
           MeshPath.relay);
     });
 
-    test('an endpoint alone means peer to peer', () {
-      expect(meshPathOf(peer({'endpoint': '1.2.3.4:5'})), MeshPath.direct);
+    // Every peer lists its public endpoint, reached or not: without a path
+    // from the SDK there is no handshake on it yet, so it is not P2P.
+    test('an endpoint without a path is not peer to peer', () {
+      expect(meshPathOf(peer({'endpoint': '1.2.3.4:5'})), isNull);
+      expect(meshPathOf(peer({'endpoint': '1.2.3.4:5', 'path': ''})), isNull);
     });
 
     test('no endpoint yet means unknown', () {
