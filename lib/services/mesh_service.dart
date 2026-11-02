@@ -129,10 +129,13 @@ class MeshAccount {
 /// through a relay server.
 enum MeshPath { direct, relay }
 
-/// The path the dataplane uses for [peer] right now, or null before it has
-/// one (no handshake yet). The SDK reports it as `path` since mobile SDK
-/// 0.9.8.8 ("lan" counts as peer to peer); an older one is read from its
-/// endpoints.
+/// The path the dataplane uses for [peer] right now, as the SDK reports it in
+/// `path` ("lan" counts as peer to peer), or null while it has none (no fresh
+/// handshake yet).
+///
+/// A listed endpoint alone is not a path: every peer lists its public
+/// address, reached or not. Reading it as peer to peer showed P2P after each
+/// start until the relay paired, and then a switch to the relay.
 MeshPath? meshPathOf(MeshPeer peer) {
   switch (peer.path) {
     case 'lan':
@@ -142,7 +145,6 @@ MeshPath? meshPathOf(MeshPeer peer) {
       return MeshPath.relay;
   }
   if ((peer.relayEndpoint ?? '').isNotEmpty) return MeshPath.relay;
-  if ((peer.endpoint ?? '').isNotEmpty) return MeshPath.direct;
   return null;
 }
 
