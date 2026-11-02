@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show Invite, MeshPortDevice, formatInviteCode;
+    show Invite, formatInviteCode;
 import 'package:share_plus/share_plus.dart';
 
 import '../../providers/app_mode_provider.dart';
@@ -119,10 +119,8 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
     final connected = mesh.phase == MeshPhase.connected;
     final (dot, status) = switch (mesh.phase) {
       MeshPhase.connected => (
-          t.good,
-          mesh.searching && mesh.onlineDevices == 0
-              ? 'Finding devices…'
-              : '${mesh.onlineDevices} online'
+          mesh.onlineDevices > 0 ? t.good : t.accent2,
+          _capitalized(mesh.devicesSummary)
         ),
       MeshPhase.connecting => (t.accent2, 'Connecting…'),
       MeshPhase.error => (t.danger, 'Offline'),
@@ -183,20 +181,18 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
               selected: selection == 'auto',
               title: 'Auto',
               sub: 'Each model on the device that has it',
-              online: true,
               onTap: _busy ? null : () => _select('auto'),
             ),
-            for (final MeshPortDevice d in mesh.port.devices)
+            for (final d in mesh.chatDevices)
               _choice(
                 context,
                 selected: selection == d.nodeId,
                 title: d.label,
-                sub: d.isOnline ? 'Online' : 'Offline',
-                online: d.isOnline,
-                path: d.isOnline ? mesh.paths[d.nodeId] : null,
+                sub: d.tunnelIp,
+                connection: mesh.connectionOf(d.nodeId),
                 onTap: _busy ? null : () => _select(d.nodeId),
               ),
-            if (mesh.port.devices.isEmpty)
+            if (mesh.chatDevices.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 4, bottom: 4),
                 child: Text(
@@ -222,7 +218,7 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
             // port's devices above.
             if (mesh.networkDevices case final devices?) ...[
               const SizedBox(height: 16),
-              MeshDeviceList(devices: devices, online: mesh.isDeviceOnline),
+              MeshDeviceList(devices: devices, connection: mesh.deviceConnection),
             ],
             const SizedBox(height: 14),
             Row(children: [
@@ -243,13 +239,16 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
     );
   }
 
+  static String _capitalized(String text) =>
+      text.isEmpty ? text : text[0].toUpperCase() + text.substring(1);
+
+  /// A row of "Chat runs on". [connection] is null for Auto.
   Widget _choice(
     BuildContext context, {
     required bool selected,
     required String title,
     required String sub,
-    required bool online,
-    MeshPath? path,
+    MeshConnection? connection,
     required VoidCallback? onTap,
   }) {
     final t = context.nexus;
@@ -265,19 +264,20 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
           border: Border.all(color: selected ? t.accent : t.line2),
         ),
         child: Row(children: [
-          NexusStatusDot(color: online ? t.good : t.faint),
+          NexusStatusDot(
+              color: connection == null ? t.good : meshConnectionColor(context, connection),
+              pulse: connection == null || connection != MeshConnection.offline),
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title,
                   style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: t.text)),
-              Text(sub, style: TextStyle(fontSize: 11.5, color: t.muted)),
+              if (sub.isNotEmpty) Text(sub, style: TextStyle(fontSize: 11.5, color: t.muted)),
             ]),
           ),
-          // Straight to the device (LAN included), or through a relay.
-          if (path != null) ...[
-            NexusPill(path == MeshPath.direct ? 'P2P' : 'RELAY',
-                color: path == MeshPath.direct ? t.good : t.warn, outlined: true),
+          if (connection != null) ...[
+            NexusPill(connection.label,
+                color: meshConnectionColor(context, connection), outlined: true),
             const SizedBox(width: 8),
           ],
           if (selected) Icon(Icons.check_circle, color: t.accent, size: 18),

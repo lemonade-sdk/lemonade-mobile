@@ -41,16 +41,9 @@ class MeshState {
   final MeshPortStatus port;
   final String? error;
 
-  /// Connected and still finding the devices: right after a connect or a
-  /// return to the app, before one is online.
-  final bool searching;
-
-  /// Peer to peer or relayed, per device node ID, for the devices the mesh
-  /// has a path to.
-  final Map<String, MeshPath> paths;
-
-  /// Online state per mesh peer node ID (see [MeshPeerState]).
-  final Map<String, bool> peerOnline;
+  /// The connection to each mesh peer, by node ID (see
+  /// [meshConnectionsOf]).
+  final Map<String, MeshConnection> connections;
 
   /// Every device of this identity's networks, or null before the first
   /// list or when the native SDK has no device list.
@@ -62,9 +55,7 @@ class MeshState {
     this.session,
     this.port = MeshPortStatus.stopped,
     this.error,
-    this.searching = false,
-    this.paths = const {},
-    this.peerOnline = const {},
+    this.connections = const {},
     this.networkDevices,
   });
 
@@ -82,12 +73,49 @@ class MeshState {
     return 'Selected device';
   }
 
-  int get onlineDevices => port.devices.where((d) => d.isOnline).length;
+  /// The devices chat can run on: every Lemonade server of the device list
+  /// that this device may connect to, whether the mesh has a path to it yet
+  /// or not. The mesh port's devices when the native SDK has no list.
+  List<MeshChatDevice> get chatDevices {
+    final devices = networkDevices;
+    if (devices == null) {
+      return [for (final d in port.devices) (nodeId: d.nodeId, label: d.label, tunnelIp: '')];
+    }
+    final seen = <String>{};
+    return [
+      for (final d in devices)
+        if (d.isInference && d.canConnect && !d.isSelf && seen.add(d.nodeId))
+          (
+            nodeId: d.nodeId,
+            label: d.deviceName.isNotEmpty ? d.deviceName : d.nodeId,
+            tunnelIp: d.tunnelIp.split('/').first,
+          ),
+    ];
+  }
 
-  /// Whether [device] of [networkDevices] is online; null when unknown (see
-  /// [meshDeviceOnline]).
-  bool? isDeviceOnline(NetworkDevice device) => meshDeviceOnline(device,
-      peerOnline: peerOnline, meshUp: phase == MeshPhase.connected);
+  /// The connection to chat device [nodeId]: connecting until the mesh
+  /// lists it.
+  MeshConnection connectionOf(String nodeId) =>
+      connections[nodeId] ?? MeshConnection.connecting;
+
+  int get onlineDevices =>
+      chatDevices.where((d) => connectionOf(d.nodeId).isConnected).length;
+
+  /// The chat devices as one line: how many are online, else whether the
+  /// mesh still connects to one.
+  String get devicesSummary {
+    final online = onlineDevices;
+    if (online > 0) return '$online online';
+    final devices = chatDevices;
+    if (devices.isEmpty) return 'no devices';
+    return devices.any((d) => connectionOf(d.nodeId) == MeshConnection.connecting)
+        ? 'connecting…'
+        : 'devices offline';
+  }
+
+  /// The pill for [device] of [networkDevices] (see [meshDeviceConnection]).
+  MeshConnection? deviceConnection(NetworkDevice device) =>
+      meshDeviceConnection(device, connections: connections);
 
   MeshState copyWith({
     MeshPhase? phase,
@@ -96,9 +124,7 @@ class MeshState {
     MeshPortStatus? port,
     String? error,
     bool clearError = false,
-    bool? searching,
-    Map<String, MeshPath>? paths,
-    Map<String, bool>? peerOnline,
+    Map<String, MeshConnection>? connections,
     List<NetworkDevice>? networkDevices,
   }) =>
       MeshState(
@@ -107,9 +133,7 @@ class MeshState {
         session: session ?? this.session,
         port: port ?? this.port,
         error: clearError ? null : (error ?? this.error),
-        searching: searching ?? this.searching,
-        paths: paths ?? this.paths,
-        peerOnline: peerOnline ?? this.peerOnline,
+        connections: connections ?? this.connections,
         networkDevices: networkDevices ?? this.networkDevices,
       );
 }
@@ -122,6 +146,9 @@ class MeshState {
 /// app is in the background. Only the loopback mesh port closes, after
 /// [_portGrace] there, so another app cannot use it meanwhile; it reopens at
 /// once when the app comes back.
+/// A device chat can run on (see [MeshState.chatDevices]).
+typedef MeshChatDevice = ({String nodeId, String label, String tunnelIp});
+
 class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver {
   MeshNotifier() : super(const MeshState(phase: MeshPhase.idle)) {
     WidgetsBinding.instance.addObserver(this);
@@ -350,20 +377,18 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
 
   /// The devices come online over the first seconds after a connect, as the
   /// mesh reaches them. With mesh events each change is read as it comes;
-  /// without them, refresh every [_devicesPollInterval]. Either way the
-  /// search ends when a device is online, or after 60 s.
+  /// without them, refresh every [_devicesPollInterval] until a device is
+  /// online, for at most 60 s.
   void _watchForDevices() {
     _devicesPoll?.cancel();
     _searchClock = Stopwatch()..start();
     final until = DateTime.now().add(const Duration(seconds: 60));
-    if (mounted && state.onlineDevices == 0) state = state.copyWith(searching: true);
     _devicesPoll = Timer.periodic(_devicesPollInterval, (timer) async {
       if (!mounted ||
           state.phase != MeshPhase.connected ||
           state.onlineDevices > 0 ||
           DateTime.now().isAfter(until)) {
         timer.cancel();
-        if (mounted && state.searching) state = state.copyWith(searching: false);
         return;
       }
       if (!_hasEvents) await refresh();
@@ -375,33 +400,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   Future<void> refresh() async {
     final service = _service;
     if (service == null || state.phase != MeshPhase.connected) return;
-    try {
-      final port = await service.portStatus();
-      if (mounted && port != state.port) state = state.copyWith(port: port);
-    } catch (e) {
-      debugPrint('Mesh status failed: $e');
-    }
-    try {
-      final peers = await service.peers();
-      final pathsChanged = !mapEquals(peers.paths, state.paths);
-      final onlineChanged = !mapEquals(peers.online, state.peerOnline);
-      if (mounted && (pathsChanged || onlineChanged)) {
-        state = state.copyWith(
-            paths: pathsChanged ? peers.paths : null,
-            peerOnline: onlineChanged ? peers.online : null);
-      }
-    } catch (e) {
-      debugPrint('Mesh paths failed: $e');
-    }
-    final clock = _searchClock;
-    if (mounted && state.searching && state.onlineDevices > 0) {
-      state = state.copyWith(searching: false);
-      if (clock != null) {
-        debugPrint('[mesh] a device is online after ${clock.elapsedMilliseconds} ms '
-            '(${_hasEvents ? 'events' : 'polling'}; '
-            '${state.paths.values.map((p) => p.name).join(', ')})');
-      }
-    }
+    await _readMesh(service);
     final listedAt = _networkDevicesAt;
     if (listedAt != null &&
         DateTime.now().difference(listedAt) < _networkDevicesMaxAge) {
@@ -417,6 +416,32 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       }
     } catch (e) {
       debugPrint('Mesh device list failed: $e');
+    }
+  }
+
+  /// Reads the mesh port and the connection to each peer: local reads, no
+  /// server call.
+  Future<void> _readMesh(MeshService service) async {
+    try {
+      final port = await service.portStatus();
+      if (mounted && port != state.port) state = state.copyWith(port: port);
+    } catch (e) {
+      debugPrint('Mesh status failed: $e');
+    }
+    try {
+      final connections = await service.peers();
+      if (mounted && !mapEquals(connections, state.connections)) {
+        state = state.copyWith(connections: connections);
+      }
+    } catch (e) {
+      debugPrint('Mesh peers failed: $e');
+    }
+    final clock = _searchClock;
+    if (mounted && clock != null && state.onlineDevices > 0) {
+      _searchClock = null;
+      debugPrint('[mesh] a device is online after ${clock.elapsedMilliseconds} ms '
+          '(${_hasEvents ? 'events' : 'polling'}; '
+          '${state.connections.values.map((c) => c.name).join(', ')})');
     }
   }
 
@@ -555,8 +580,8 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
         return;
       }
     }
-    // After a suspension the device list is stale: fetch it now and look
-    // for the devices every 2 s until one is back.
+    // After a suspension the device list is stale: fetch it now, and read
+    // the peers again until one is back.
     unawaited(service.refreshPeers());
     await refresh();
     _watchForDevices();

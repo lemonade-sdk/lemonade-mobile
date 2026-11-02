@@ -310,8 +310,11 @@ class _MeshScope extends StatelessWidget {
                 MeshPortDevice(nodeId: 'node-tower', deviceName: 'Linux tower', isOnline: false),
               ],
             ),
-            paths: const {'node-studio': MeshPath.direct},
-            peerOnline: const {'node-studio': true, 'node-tower': false, 'node-friend': true},
+            connections: const {
+              'node-studio': MeshConnection.p2p,
+              'node-tower': MeshConnection.connecting,
+              'node-friend': MeshConnection.relay,
+            },
             networkDevices: const [
               NetworkDevice(
                   nodeId: 'node-phone',

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lemonade_mobile/api/exceptions.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
+import 'package:lemonade_mobile/providers/mesh_provider.dart';
 import 'package:lemonade_mobile/utils/friendly_error.dart';
 import 'package:lemonade_mobile/services/mesh_service.dart';
 import 'package:lemonade_mobile/themes/theme_registry.dart';
@@ -123,50 +124,112 @@ void main() {
     });
   });
 
-  group('network devices', () {
-    MeshPeer peer(String id, {required bool online}) =>
-        MeshPeer.fromJson({'node_id': id, 'mesh_pubkey': 'k', 'is_online': online});
+  group('meshConnectionOf', () {
+    MeshPeer peer(Map<String, dynamic> extra) =>
+        MeshPeer.fromJson({'node_id': 'n1', 'mesh_pubkey': 'k', ...extra});
 
-    test('the peer state keeps every peer, online or not', () {
-      final state = meshPeerStateOf([
-        peer('a', online: true),
-        peer('b', online: false),
-        peer('', online: true),
-      ]);
-      expect(state.online, {'a': true, 'b': false});
+    test('a peer with a working path shows the path', () {
+      expect(meshConnectionOf(peer({'is_online': true, 'path': 'direct'})), MeshConnection.p2p);
+      expect(meshConnectionOf(peer({'is_online': true, 'path': 'lan'})), MeshConnection.p2p);
+      expect(meshConnectionOf(peer({'is_online': true, 'path': 'relay'})), MeshConnection.relay);
     });
 
-    test('online state: self follows the mesh, others their mesh peer', () {
-      const self = NetworkDevice(nodeId: 'me', deviceName: 'iPhone', isSelf: true);
-      const server = NetworkDevice(nodeId: 's', deviceName: 'Mac', canConnect: true);
-      const friend = NetworkDevice(nodeId: 'f', deviceName: 'Phone', member: true);
-      expect(meshDeviceOnline(self, peerOnline: const {}, meshUp: true), isTrue);
-      expect(meshDeviceOnline(self, peerOnline: const {}, meshUp: false), isFalse);
-      expect(meshDeviceOnline(server, peerOnline: const {'s': true}, meshUp: true), isTrue);
-      // A device this one may connect to but no peer yet: offline.
-      expect(meshDeviceOnline(server, peerOnline: const {}, meshUp: true), isFalse);
-      // Not a mesh peer of this device: unknown, not offline.
-      expect(meshDeviceOnline(friend, peerOnline: const {}, meshUp: true), isNull);
-      expect(meshDeviceOnline(friend, peerOnline: const {'f': true}, meshUp: true), isTrue);
+    test('a working peer without a path is still connecting', () {
+      expect(meshConnectionOf(peer({'is_online': true})), MeshConnection.connecting);
+    });
+
+    // After a resume the SDK has no working path to any peer until it
+    // rebuilds one, while the devices never went away: they are connecting.
+    test('a peer the server reports online is connecting until a path works', () {
+      expect(meshConnectionOf(peer({'is_online': false, 'server_online': true})),
+          MeshConnection.connecting);
+    });
+
+    test('a peer the server reports offline is offline', () {
+      expect(meshConnectionOf(peer({'is_online': false, 'server_online': false})),
+          MeshConnection.offline);
+      expect(meshConnectionOf(peer({'is_online': false})), MeshConnection.offline);
+    });
+
+    test('the connections keep every listed peer', () {
+      expect(
+          meshConnectionsOf([
+            peer({'node_id': 'a', 'is_online': true, 'path': 'relay'}),
+            peer({'node_id': 'b', 'is_online': false}),
+            peer({'node_id': '', 'is_online': true}),
+          ]),
+          {'a': MeshConnection.relay, 'b': MeshConnection.offline});
+    });
+  });
+
+  group('network devices', () {
+    const self = NetworkDevice(nodeId: 'me', deviceName: 'iPhone', isSelf: true);
+    const server = NetworkDevice(
+        nodeId: 's', deviceName: 'Mac', tunnelIp: '10.0.0.5/32', isInference: true, canConnect: true);
+    const friend = NetworkDevice(nodeId: 'f', deviceName: 'Phone', member: true);
+
+    test('a device pill: none for this device, connecting until the mesh lists it', () {
+      expect(meshDeviceConnection(self, connections: const {}), isNull);
+      expect(meshDeviceConnection(server, connections: const {}), MeshConnection.connecting);
+      expect(meshDeviceConnection(server, connections: const {'s': MeshConnection.p2p}),
+          MeshConnection.p2p);
+      // Not a mesh peer of this device: no pill.
+      expect(meshDeviceConnection(friend, connections: const {}), isNull);
+      expect(meshDeviceConnection(friend, connections: const {'f': MeshConnection.relay}),
+          MeshConnection.relay);
+    });
+
+    test('chat runs on every server of the device list, online or not', () {
+      const state = MeshState(
+        phase: MeshPhase.connected,
+        networkDevices: [
+          self,
+          server,
+          friend,
+          NetworkDevice(nodeId: 's', deviceName: 'Mac', groupId: 'other', isInference: true, canConnect: true),
+          NetworkDevice(nodeId: 'x', deviceName: 'Their GPU', isInference: true),
+        ],
+      );
+      expect(state.chatDevices, [(nodeId: 's', label: 'Mac', tunnelIp: '10.0.0.5')]);
+      expect(state.connectionOf('s'), MeshConnection.connecting);
+      expect(state.devicesSummary, 'connecting…');
+    });
+
+    test('the summary counts the connected servers', () {
+      const devices = [
+        server,
+        NetworkDevice(nodeId: 't', deviceName: 'Tower', isInference: true, canConnect: true),
+      ];
+      expect(
+          const MeshState(
+                  phase: MeshPhase.connected,
+                  networkDevices: devices,
+                  connections: {'s': MeshConnection.relay, 't': MeshConnection.connecting})
+              .devicesSummary,
+          '1 online');
+      expect(
+          const MeshState(
+                  phase: MeshPhase.connected,
+                  networkDevices: devices,
+                  connections: {'s': MeshConnection.offline, 't': MeshConnection.offline})
+              .devicesSummary,
+          'devices offline');
+      expect(const MeshState(phase: MeshPhase.connected, networkDevices: []).devicesSummary,
+          'no devices');
     });
 
     test('pills for this device, a server, and a device of a joined network', () {
       expect(
-          meshDeviceTags(
-              const NetworkDevice(
-                  nodeId: 'me', deviceName: 'iPhone', isSelf: true, admin: true, groupRole: 'home'),
-              online: true),
-          [MeshDeviceTag.thisDevice, MeshDeviceTag.client, MeshDeviceTag.admin, MeshDeviceTag.online]);
+          meshDeviceTags(const NetworkDevice(
+              nodeId: 'me', deviceName: 'iPhone', isSelf: true, admin: true, groupRole: 'home')),
+          [MeshDeviceTag.thisDevice, MeshDeviceTag.client, MeshDeviceTag.admin]);
+      expect(
+          meshDeviceTags(const NetworkDevice(
+              nodeId: 'f', deviceName: 'Laptop', isInference: true, member: true, groupRole: 'home')),
+          [MeshDeviceTag.server, MeshDeviceTag.member]);
       expect(
           meshDeviceTags(
-              const NetworkDevice(
-                  nodeId: 'f', deviceName: 'Laptop', isInference: true, member: true, groupRole: 'home'),
-              online: false),
-          [MeshDeviceTag.server, MeshDeviceTag.member, MeshDeviceTag.offline]);
-      expect(
-          meshDeviceTags(
-              const NetworkDevice(nodeId: 'x', deviceName: 'Their Mac', groupRole: 'member'),
-              online: null),
+              const NetworkDevice(nodeId: 'x', deviceName: 'Their Mac', groupRole: 'member')),
           [MeshDeviceTag.client, MeshDeviceTag.joinedNetwork]);
     });
 
@@ -179,15 +242,16 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         theme: ThemeRegistry.byId(ThemeRegistry.nexusDarkId).buildTheme(),
         home: Scaffold(
-          body: MeshDeviceList(devices: devices, online: (d) => d.isSelf ? true : null),
+          body: MeshDeviceList(
+              devices: devices,
+              connection: (d) => d.isSelf ? null : MeshConnection.connecting),
         ),
       ));
       expect(find.text('iPhone'), findsOneWidget);
       expect(find.text('10.0.0.9'), findsOneWidget);
       expect(find.text(MeshDeviceTag.thisDevice.label), findsOneWidget);
       expect(find.text(MeshDeviceTag.member.label), findsOneWidget);
-      expect(find.text(MeshDeviceTag.online.label), findsOneWidget);
-      expect(find.text(MeshDeviceTag.offline.label), findsNothing);
+      expect(find.text(MeshConnection.connecting.label), findsOneWidget);
     });
   });
 
