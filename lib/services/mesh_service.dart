@@ -398,9 +398,10 @@ class MeshService {
   /// Mesh port state: the selection and the Tier 3 devices it can reach.
   Future<MeshPortStatus> portStatus() => _guard(() => _worker.run(_portStatusTask));
 
-  /// Whether the mesh is still usable: the dataplane is up (it drops when
-  /// iOS suspends the app or the network changes) and the network has not
-  /// dropped the session (which needs a join again).
+  /// Whether the mesh is still usable: the dataplane is up, the tunnel to
+  /// the session server carried traffic lately (the SDK's heartbeat runs
+  /// over it every 3 s), and the network has not dropped the session. False
+  /// after iOS suspended the app or the network changed under it.
   Future<bool> isUp() async {
     try {
       return await _worker.run(_isUpTask);
@@ -546,20 +547,6 @@ String? meshConnectDetail(Tier1Progress? progress) {
 }
 
 Tier1Progress? _readTier1Progress(LemonadeNexusSdk sdk) => sdk.tier1Progress();
-
-/// True when the tunnel looks dead: the network reports devices online, but
-/// none has had a path (every connection is CONNECTING) since [noPathSince],
-/// at least [kMeshStalledAfter] ago. A device that is simply offline reads
-/// OFFLINE, not CONNECTING, so this does not fire for a quiet network.
-bool meshTunnelStalled(Map<String, MeshConnection> connections, DateTime? noPathSince,
-    DateTime now) {
-  if (connections.isEmpty || noPathSince == null) return false;
-  if (connections.values.any((c) => c != MeshConnection.connecting)) return false;
-  return now.difference(noPathSince) >= kMeshStalledAfter;
-}
-
-/// How long every device may stay CONNECTING before the mesh is restarted.
-const kMeshStalledAfter = Duration(seconds: 30);
 
 /// A mesh failure with a message for the user.
 class MeshException implements Exception {
@@ -761,7 +748,8 @@ Future<bool> _hasMeshEventsTask(LemonadeNexusSdk sdk) async => sdk.hasMeshEvents
 Future<bool> _isUpTask(LemonadeNexusSdk sdk) async {
   if (!sdk.isMeshActive()) return false;
   try {
-    return !(await sdk.getMeshStatus()).needsRejoin;
+    final status = await sdk.getMeshStatus();
+    return !status.needsRejoin && status.tunnelUp;
   } catch (_) {
     return true;
   }
