@@ -767,6 +767,12 @@ Future<void> _suspendTask(LemonadeNexusSdk sdk) async {
   try {
     await sdk.disableMesh();
   } catch (_) {}
+  // The bye: iOS defuncts the sockets of a suspended app, so the SDK gives
+  // up the dataplane socket and the private connections now and opens new
+  // ones on resume.
+  try {
+    await sdk.suspend();
+  } catch (_) {}
 }
 
 Future<void> _resumeTask(LemonadeNexusSdk sdk) => sdk.resume();

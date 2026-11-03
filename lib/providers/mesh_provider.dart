@@ -216,6 +216,10 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   DateTime? _networkDevicesAt;
   static const _networkDevicesMaxAge = Duration(seconds: 15);
 
+  /// The last network list failed, so the poll keeps asking (see
+  /// [_watchForDevices]).
+  bool _networkDevicesFailed = false;
+
   Future<void> _hydrate() async {
     final account = await MeshAccount.load();
     if (!mounted) return;
@@ -424,14 +428,19 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     _searchClock = Stopwatch()..start();
     final until = DateTime.now().add(const Duration(seconds: 60));
     _devicesPoll = Timer.periodic(_devicesPollInterval, (timer) async {
-      if (!mounted ||
-          state.phase != MeshPhase.connected ||
-          state.onlineDevices > 0 ||
-          DateTime.now().isAfter(until)) {
+      if (!mounted || state.phase != MeshPhase.connected) {
         timer.cancel();
         return;
       }
-      if (!_hasEvents) await refresh();
+      // A failed network list keeps the poll alive past the search: mesh
+      // events only announce a change, so nothing else would ask again,
+      // and the panel would show no devices until the next resume.
+      if (!_networkDevicesFailed &&
+          (state.onlineDevices > 0 || DateTime.now().isAfter(until))) {
+        timer.cancel();
+        return;
+      }
+      if (!_hasEvents || _networkDevicesFailed) await refresh();
     });
   }
 
@@ -451,16 +460,19 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       // the mesh port's devices only.
       final devices = await service.networkDevices();
       _networkDevicesAt = DateTime.now();
+      _networkDevicesFailed = false;
       if (mounted && devices != null && !listEquals(devices, state.networkDevices)) {
         state = state.copyWith(networkDevices: devices);
       }
     } catch (e) {
       debugPrint('Mesh device list failed: $e');
-      // A failed list (the tunnel was cold) is asked for again in 5 s, not
-      // after the full age, and not at once: the polls without events run
-      // every second.
+      // A failed list (the tunnel was cold, or the server rate limited the
+      // join burst) is asked for again in 5 s, not after the full age, and
+      // not at once: the polls run every second.
+      _networkDevicesFailed = true;
       _networkDevicesAt =
           DateTime.now().subtract(_networkDevicesMaxAge - const Duration(seconds: 5));
+      if (_devicesPoll == null || !_devicesPoll!.isActive) _watchForDevices();
     }
   }
 

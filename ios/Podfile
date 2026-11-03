@@ -39,5 +39,14 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    # Xcode 26 and later refuse a pod that still declares a deployment target
+    # below 15.0; raise every pod to the app's own floor.
+    target.build_configurations.each do |config|
+      floor = Gem::Version.new('15.1')
+      current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+      if current.nil? || Gem::Version.new(current) < floor
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = floor.to_s
+      end
+    end
   end
 end
