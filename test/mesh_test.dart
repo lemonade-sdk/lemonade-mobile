@@ -311,4 +311,27 @@ void main() {
       expect(meshConnectDetail(progress(active: false, total: 4)), isNull);
     });
   });
+
+  group('meshTunnelStalled', () {
+    final now = DateTime(2026, 11, 3, 12);
+    final old = now.subtract(kMeshStalledAfter);
+    const connecting = {'a': MeshConnection.connecting, 'b': MeshConnection.connecting};
+
+    test('fires when every device has been connecting long enough', () {
+      expect(meshTunnelStalled(connecting, old, now), isTrue);
+    });
+
+    test('waits out the stall window', () {
+      expect(meshTunnelStalled(connecting, now.subtract(const Duration(seconds: 5)), now),
+          isFalse);
+      expect(meshTunnelStalled(connecting, null, now), isFalse);
+    });
+
+    test('does not fire for a working or a quiet mesh', () {
+      expect(meshTunnelStalled({'a': MeshConnection.p2p, 'b': MeshConnection.connecting}, old, now),
+          isFalse);
+      expect(meshTunnelStalled({'a': MeshConnection.offline}, old, now), isFalse);
+      expect(meshTunnelStalled(const {}, old, now), isFalse);
+    });
+  });
 }

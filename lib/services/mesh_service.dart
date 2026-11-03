@@ -461,6 +461,31 @@ class MeshService {
   /// Closes the loopback mesh port only; the session and the mesh stay up.
   Future<void> closePort() => _worker.run(_closePortTask);
 
+  /// Disconnects from the mesh devices for a long stay in the background:
+  /// closes the loopback mesh port and the mesh (peers, relay sessions, the
+  /// event socket). The session stays, so [restartMesh] brings the mesh back
+  /// without a join.
+  Future<void> suspend() => _worker.run(_suspendTask);
+
+  /// Resets the SDK's transport after a short suspension (dead connections,
+  /// the fail-fast breaker, relay backoffs; see [LemonadeNexusSdk.resume]).
+  /// The mesh keeps running. Never throws.
+  Future<void> resume() async {
+    try {
+      await _worker.run(_resumeTask);
+    } catch (e) {
+      debugPrint('Mesh resume failed: $e');
+    }
+  }
+
+  /// Brings the mesh back after [suspend] or a long suspension, without a
+  /// join: resets the SDK's transport, rebuilds the mesh and reopens the
+  /// port for [selection]. Throws a [MeshException] from LnError.connect
+  /// when the network dropped the session meanwhile; [connect] is needed
+  /// then.
+  Future<void> restartMesh(String selection) =>
+      _guard(() => _worker.run(_restartMeshTask(selection)));
+
   /// Opens the loopback mesh port again for [selection] after [closePort].
   Future<void> openPort(String selection) =>
       _guard(() => _worker.run(_openPortTask(selection)));
@@ -521,6 +546,20 @@ String? meshConnectDetail(Tier1Progress? progress) {
 }
 
 Tier1Progress? _readTier1Progress(LemonadeNexusSdk sdk) => sdk.tier1Progress();
+
+/// True when the tunnel looks dead: the network reports devices online, but
+/// none has had a path (every connection is CONNECTING) since [noPathSince],
+/// at least [kMeshStalledAfter] ago. A device that is simply offline reads
+/// OFFLINE, not CONNECTING, so this does not fire for a quiet network.
+bool meshTunnelStalled(Map<String, MeshConnection> connections, DateTime? noPathSince,
+    DateTime now) {
+  if (connections.isEmpty || noPathSince == null) return false;
+  if (connections.values.any((c) => c != MeshConnection.connecting)) return false;
+  return now.difference(noPathSince) >= kMeshStalledAfter;
+}
+
+/// How long every device may stay CONNECTING before the mesh is restarted.
+const kMeshStalledAfter = Duration(seconds: 30);
 
 /// A mesh failure with a message for the user.
 class MeshException implements Exception {
@@ -732,6 +771,37 @@ Future<void> Function(LemonadeNexusSdk) _selectTask(String target) =>
     (sdk) => sdk.setMeshPortSelection(target);
 
 Future<void> _closePortTask(LemonadeNexusSdk sdk) => sdk.stopMeshPort();
+
+Future<void> _suspendTask(LemonadeNexusSdk sdk) async {
+  try {
+    await sdk.stopMeshPort();
+  } catch (_) {}
+  try {
+    await sdk.disableMesh();
+  } catch (_) {}
+}
+
+Future<void> _resumeTask(LemonadeNexusSdk sdk) => sdk.resume();
+
+Future<void> Function(LemonadeNexusSdk) _restartMeshTask(String selection) => (sdk) async {
+      // The transport reset first: it makes a request still waiting on a
+      // dead connection fail at once, so stopping the mesh does not wait
+      // for its timeout.
+      await sdk.resume();
+      try {
+        await sdk.stopMeshPort();
+      } catch (_) {}
+      try {
+        await sdk.disableMesh();
+      } catch (_) {}
+      await sdk.enableMesh();
+      if ((await sdk.getMeshStatus()).needsRejoin) {
+        throw SdkException(LnError.connect,
+            message: 'The network dropped the session while the app was in the background');
+      }
+      await sdk.startMeshPort(port: kMeshPortNumber);
+      await sdk.setMeshPortSelection(selection);
+    };
 
 Future<void> _refreshPeersTask(LemonadeNexusSdk sdk) => sdk.refreshMesh();
 

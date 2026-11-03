@@ -185,13 +185,26 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// One connect at a time; later callers wait for it.
   Future<void>? _connecting;
 
-  /// How long the mesh port stays open in the background: a quick switch to
-  /// another app keeps a reply streaming.
+  /// How long the mesh port and the mesh stay up in the background: a quick
+  /// switch to another app keeps a reply streaming. After it the mesh is
+  /// suspended (the session stays), and the resume rebuilds it.
   static const _portGrace = Duration(seconds: 30);
   bool _backgrounded = false;
   Timer? _portTimer;
   Future<void>? _portClosing;
   bool _portClosed = false;
+
+  /// When the app went to the background; null while in the foreground or
+  /// when no pause came (a resume after a system sheet, or the launch).
+  DateTime? _pausedAt;
+
+  /// The mesh was suspended in the background ([MeshService.suspend]).
+  bool _meshSuspended = false;
+
+  /// Since when every device has been CONNECTING (see [meshTunnelStalled]).
+  DateTime? _noPathSince;
+  DateTime? _lastRestart;
+  static const _restartGap = Duration(minutes: 2);
 
   /// Right after a connect, refreshes the devices until one is online.
   Timer? _devicesPoll;
@@ -239,7 +252,9 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
         await saved.save();
         if (mounted) state = state.copyWith(account: saved);
       }
-      await refresh();
+      // The tunnel is cold right after a move; the mesh events that follow
+      // read the state once it answers.
+      if (!_hasEvents) await refresh();
       return;
     }
     final last = _lastRejoin;
@@ -372,6 +387,8 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     _networkDevicesAt = null;
     await refresh();
     _portClosed = false;
+    _meshSuspended = false;
+    _noPathSince = null;
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 20), (_) => _heartbeat());
     unawaited(service.refreshPeers());
@@ -434,16 +451,21 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
         DateTime.now().difference(listedAt) < _networkDevicesMaxAge) {
       return;
     }
-    _networkDevicesAt = DateTime.now();
     try {
       // Null from a native SDK without the list: the panel keeps showing
       // the mesh port's devices only.
       final devices = await service.networkDevices();
+      _networkDevicesAt = DateTime.now();
       if (mounted && devices != null && !listEquals(devices, state.networkDevices)) {
         state = state.copyWith(networkDevices: devices);
       }
     } catch (e) {
       debugPrint('Mesh device list failed: $e');
+      // A failed list (the tunnel was cold) is asked for again in 5 s, not
+      // after the full age, and not at once: the polls without events run
+      // every second.
+      _networkDevicesAt =
+          DateTime.now().subtract(_networkDevicesMaxAge - const Duration(seconds: 5));
     }
   }
 
@@ -461,6 +483,9 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       if (mounted && !mapEquals(connections, state.connections)) {
         state = state.copyWith(connections: connections);
       }
+      final allConnecting = connections.isNotEmpty &&
+          connections.values.every((c) => c == MeshConnection.connecting);
+      _noPathSince = allConnecting ? (_noPathSince ?? DateTime.now()) : null;
     } catch (e) {
       debugPrint('Mesh peers failed: $e');
     }
@@ -480,6 +505,15 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       // With mesh events the state is already current; the heartbeat only
       // checks that the session is still up.
       if (!_hasEvents) await refresh();
+      // isUp() cannot see a dead tunnel (the dataplane object is there);
+      // every device stuck on CONNECTING can.
+      final last = _lastRestart;
+      if (meshTunnelStalled(state.connections, _noPathSince, DateTime.now()) &&
+          (last == null || DateTime.now().difference(last) >= _restartGap)) {
+        debugPrint('[mesh] every device has been connecting for '
+            '${kMeshStalledAfter.inSeconds} s: restarting the mesh');
+        await _restartMesh(service);
+      }
     } else {
       await _connect();
     }
@@ -559,9 +593,10 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     if (!_active || !state.isSetUp) return;
     if (lifecycle == AppLifecycleState.paused) {
       _backgrounded = true;
+      _pausedAt ??= DateTime.now();
       if (state.phase == MeshPhase.connected) unawaited(BackgroundTime.begin());
       _portTimer?.cancel();
-      _portTimer = Timer(_portGrace, _closePort);
+      _portTimer = Timer(_portGrace, _suspendMesh);
     } else if (lifecycle == AppLifecycleState.resumed) {
       _backgrounded = false;
       unawaited(BackgroundTime.end());
@@ -570,22 +605,33 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     }
   }
 
-  void _closePort() {
+  /// The grace passed in the background: disconnect from the mesh devices.
+  /// The session stays, so the resume needs no join.
+  void _suspendMesh() {
     final service = _service;
     if (!_backgrounded || service == null || state.phase != MeshPhase.connected) {
       return;
     }
     _portClosed = true;
-    _portClosing = service.closePort().catchError((Object e) {
-      debugPrint('Mesh port close failed: $e');
+    _meshSuspended = true;
+    _portClosing = service.suspend().catchError((Object e) {
+      debugPrint('Mesh suspend failed: $e');
     });
   }
 
-  /// Back in the foreground: reopen the mesh port if it closed, and check
-  /// that the session survived; a full reconnect only when it did not (iOS
-  /// suspended the app for long, or the network dropped it meanwhile).
+  /// Back in the foreground. A resume without a pause before it (a system
+  /// sheet, the launch) changes nothing. After a quick switch the mesh is
+  /// still up: reset the SDK's transport and go on. After a long stay the
+  /// mesh was suspended, or iOS froze the app before the grace ran out, so
+  /// the mesh is rebuilt on the kept session; a full reconnect only when
+  /// the network dropped the session meanwhile.
   Future<void> _resume() async {
-    debugPrint('[mesh] resumed (port closed: $_portClosed)');
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+    if (pausedAt == null) return;
+    final away = DateTime.now().difference(pausedAt);
+    debugPrint('[mesh] resumed after ${away.inSeconds} s '
+        '(mesh suspended: $_meshSuspended, port closed: $_portClosed)');
     await _portClosing;
     final service = _service;
     if (_backgrounded || !_active || !state.isSetUp) return;
@@ -593,25 +639,34 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       await _connect();
       return;
     }
-    if (!await service.isUp()) {
-      debugPrint('[mesh] the session did not survive the background: reconnecting');
+    if (_meshSuspended || _portClosed || away >= _portGrace) {
+      await _restartMesh(service);
+      return;
+    }
+    await service.resume();
+    _noPathSince = null;
+    await _readMesh(service);
+    _watchForDevices();
+  }
+
+  /// Rebuilds the mesh on the kept session ([MeshService.restartMesh]); a
+  /// full reconnect when the session is gone.
+  Future<void> _restartMesh(MeshService service) async {
+    _lastRestart = DateTime.now();
+    final clock = Stopwatch()..start();
+    try {
+      await service.restartMesh(state.selection);
+    } catch (e) {
+      debugPrint('[mesh] the mesh restart failed ($e): reconnecting');
       await _connect();
       return;
     }
-    if (_portClosed) {
-      try {
-        await service.openPort(state.selection);
-        _portClosed = false;
-      } catch (e) {
-        debugPrint('Mesh port reopen failed: $e');
-        await _connect();
-        return;
-      }
-    }
-    // After a suspension the device list is stale: fetch it now, and read
-    // the peers again until one is back.
-    unawaited(service.refreshPeers());
-    await refresh();
+    debugPrint('[mesh] mesh restarted in ${clock.elapsedMilliseconds} ms');
+    _meshSuspended = false;
+    _portClosed = false;
+    _noPathSince = null;
+    _networkDevicesAt = null;
+    await _readMesh(service);
     _watchForDevices();
   }
 
