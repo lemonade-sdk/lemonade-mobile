@@ -122,7 +122,7 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
           mesh.onlineDevices > 0 ? t.good : t.accent2,
           _capitalized(mesh.devicesSummary)
         ),
-      MeshPhase.connecting => (t.accent2, 'Connecting…'),
+      MeshPhase.connecting => (t.accent2, mesh.connectDetail ?? 'Connecting…'),
       MeshPhase.error => (t.danger, 'Offline'),
       MeshPhase.idle => (t.faint, 'Stopped'),
       MeshPhase.notSetUp => (t.faint, 'Not set up'),

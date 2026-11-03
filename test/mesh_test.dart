@@ -12,7 +12,7 @@ import 'package:lemonade_mobile/utils/server_identity.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_device_list.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_panel.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show Invite, JoinMembership, MeshPeer, NetworkDevice;
+    show Invite, JoinMembership, MeshPeer, NetworkDevice, Tier1Progress;
 
 void main() {
   group('MeshAccount', () {
@@ -288,6 +288,27 @@ void main() {
       expect(session.joinNotice!.isError, isTrue);
       expect(const MeshSession(nodeId: 'n', tunnelIp: '', genesisKey: '', tier1Epoch: 1).joinNotice,
           isNull);
+    });
+  });
+
+  group('meshConnectDetail', () {
+    Tier1Progress progress({bool active = true, int done = 0, int total = 0}) => Tier1Progress(
+        active: active, epoch: 0, target: 100, pagesDone: done, pagesTotal: total);
+
+    test('counts the pages of a long key history', () {
+      expect(meshConnectDetail(progress(done: 0, total: 4)), 'Verifying network keys 1 of 4');
+      expect(meshConnectDetail(progress(done: 3, total: 4)), 'Verifying network keys 4 of 4');
+      expect(meshConnectDetail(progress(done: 5, total: 4)), 'Verifying network keys 4 of 4');
+    });
+
+    test('names the step when the page count is unknown', () {
+      expect(meshConnectDetail(progress()), 'Verifying network keys');
+      expect(meshConnectDetail(progress(total: 1)), 'Verifying network keys');
+    });
+
+    test('says nothing when no check runs', () {
+      expect(meshConnectDetail(null), isNull);
+      expect(meshConnectDetail(progress(active: false, total: 4)), isNull);
     });
   });
 }

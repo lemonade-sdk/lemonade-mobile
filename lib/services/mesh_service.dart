@@ -293,6 +293,16 @@ class MeshService {
   /// With [inviteCode] a new device joins the inviter's group. Without it the
   /// identity's own group is used, which the first connect creates — that is
   /// "Create mesh", and every later reconnect.
+  /// Progress of the network key check that a [connect] waits on, read
+  /// without waiting for the connect. Null when unknown.
+  Future<Tier1Progress?> tier1Progress() async {
+    try {
+      return await _worker.peek(_readTier1Progress);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<MeshSession> connect(MeshAccount account, {String? inviteCode}) async {
     final clock = Stopwatch()..start();
     // The servers from the last connect, the one that answered first: DNS
@@ -496,6 +506,21 @@ class MeshService {
     }
   }
 }
+
+/// The connecting status line for [progress], or null when there is nothing
+/// more specific than "Connecting". Before a device can sign in, the SDK
+/// verifies the network's key history page by page; on a long history that
+/// takes several requests.
+String? meshConnectDetail(Tier1Progress? progress) {
+  if (progress == null || !progress.active) return null;
+  if (progress.pagesTotal > 1) {
+    final step = (progress.pagesDone + 1).clamp(1, progress.pagesTotal);
+    return 'Verifying network keys $step of ${progress.pagesTotal}';
+  }
+  return 'Verifying network keys';
+}
+
+Tier1Progress? _readTier1Progress(LemonadeNexusSdk sdk) => sdk.tier1Progress();
 
 /// A mesh failure with a message for the user.
 class MeshException implements Exception {

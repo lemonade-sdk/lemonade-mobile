@@ -195,7 +195,8 @@ class NexusHeader extends ConsumerWidget {
               'Mesh · ${mesh.selectionLabel}',
               mesh.devicesSummary,
             ),
-          MeshPhase.connecting => _Status(t.accent2, 'Mesh', 'connecting…'),
+          MeshPhase.connecting =>
+            _Status(t.accent2, 'Mesh', mesh.connectDetail ?? 'connecting…'),
           MeshPhase.error => _Status(t.danger, 'Mesh', 'offline'),
           MeshPhase.idle => _Status(t.warn, 'Mesh', 'stopped'),
           MeshPhase.notSetUp => _Status(t.warn, 'Mesh', 'not set up'),

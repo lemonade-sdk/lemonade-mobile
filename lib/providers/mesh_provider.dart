@@ -49,6 +49,10 @@ class MeshState {
   /// list or when the native SDK has no device list.
   final List<NetworkDevice>? networkDevices;
 
+  /// What a connect is doing now, such as "Verifying network keys 2 of 4";
+  /// null when there is nothing more specific than "Connecting".
+  final String? connectDetail;
+
   const MeshState({
     this.phase = MeshPhase.notSetUp,
     this.account,
@@ -57,6 +61,7 @@ class MeshState {
     this.error,
     this.connections = const {},
     this.networkDevices,
+    this.connectDetail,
   });
 
   bool get isSetUp => account != null;
@@ -126,6 +131,8 @@ class MeshState {
     bool clearError = false,
     Map<String, MeshConnection>? connections,
     List<NetworkDevice>? networkDevices,
+    String? connectDetail,
+    bool clearConnectDetail = false,
   }) =>
       MeshState(
         phase: phase ?? this.phase,
@@ -135,6 +142,7 @@ class MeshState {
         error: clearError ? null : (error ?? this.error),
         connections: connections ?? this.connections,
         networkDevices: networkDevices ?? this.networkDevices,
+        connectDetail: clearConnectDetail ? null : (connectDetail ?? this.connectDetail),
       );
 }
 
@@ -271,7 +279,8 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     state = MeshState(phase: MeshPhase.connecting, account: account);
     try {
       final service = await _ensureService();
-      final session = await service.connect(account, inviteCode: inviteCode);
+      final session =
+          await _showProgress(service, service.connect(account, inviteCode: inviteCode));
       final saved = account.copyWith(
           deviceName: session.deviceName,
           nameOnNetwork: session.deviceName,
@@ -290,16 +299,35 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     }
   }
 
+  /// Shows what [connecting] waits on in [MeshState.connectDetail], such as
+  /// the network key check on a long key history, until it completes.
+  Future<T> _showProgress<T>(MeshService service, Future<T> connecting) async {
+    final timer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
+      final detail = meshConnectDetail(await service.tier1Progress());
+      if (state.phase != MeshPhase.connecting || detail == state.connectDetail) return;
+      state = detail == null
+          ? state.copyWith(clearConnectDetail: true)
+          : state.copyWith(connectDetail: detail);
+    });
+    try {
+      return await connecting;
+    } finally {
+      timer.cancel();
+      if (state.connectDetail != null) state = state.copyWith(clearConnectDetail: true);
+    }
+  }
+
   Future<void> _connect() =>
       _connecting ??= _doConnect().whenComplete(() => _connecting = null);
 
   Future<void> _doConnect() async {
     final account = state.account;
     if (account == null) return;
-    state = state.copyWith(phase: MeshPhase.connecting, clearError: true);
+    state = state.copyWith(
+        phase: MeshPhase.connecting, clearError: true, clearConnectDetail: true);
     try {
       final service = await _ensureService();
-      final session = await service.connect(account);
+      final session = await _showProgress(service, service.connect(account));
       var saved = account;
       if (session.tier1Epoch > account.tier1Epoch ||
           account.genesisKey == null ||
