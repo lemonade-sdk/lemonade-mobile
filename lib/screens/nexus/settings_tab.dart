@@ -236,8 +236,7 @@ class SettingsTab extends ConsumerWidget {
           ),
         ]),
       _group(context, 'Privacy & notifications', [
-        // Not wired to a backend yet — disabled so they don't read as real.
-        _toggleRow(context, 'End-to-end encryption', sub: 'Coming soon', value: false, onChanged: null),
+        // Not wired to a backend yet — disabled so it doesn't read as real.
         _toggleRow(context, 'Push notifications', sub: 'Coming soon', value: false, onChanged: null),
       ]),
       _group(context, 'Appearance', [_valueRow(context, 'Theme', theme.displayName)]),
