@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/endpoints/admin_endpoint.dart';
+import '../../providers/app_mode_provider.dart';
 import '../../providers/lemonade_client_provider.dart';
 import '../../providers/models_provider.dart';
 import '../../themes/nexus_tokens.dart';
@@ -262,11 +263,17 @@ class _ModelManagerState extends ConsumerState<ModelManager> {
     final collections = models.where((m) => m.isCollection).toList();
     final plainModels = models.where((m) => !m.isCollection).toList();
 
+    // Live CPU, GPU and RAM belong to Local AI only: Mesh and Subscription
+    // mode run inference on another device or in the cloud.
+    final localAi = ref.watch(appModeProvider) == AppMode.local;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const DeviceStatsCard(),
-        const SizedBox(height: 16),
+        if (localAi) ...[
+          const DeviceStatsCard(),
+          const SizedBox(height: 16),
+        ],
         _loadedHero(context, selected, maxCtx),
         const SizedBox(height: 16),
         _contextSlider(context, maxCtx, ctxKnown),
