@@ -8,6 +8,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:lemonade_mobile/services/mesh_roles.dart';
 import 'package:lemonade_mobile/services/mesh_service.dart';
 
 const _live = bool.fromEnvironment('MESH_LIVE');
@@ -24,7 +25,7 @@ void main() {
     final joiner = await MeshService.start();
     try {
       final home = await inviter.connect(MeshAccount.create('join-test inviter'));
-      final invite = await inviter.createInvite();
+      final invite = await inviter.createInvite(meshRolePermissions(MeshRole.user));
       // The 8-digit code when the network issues one, as a person types it.
       final code = (invite['code'] ?? invite['link_token']) as String;
       // ignore: avoid_print

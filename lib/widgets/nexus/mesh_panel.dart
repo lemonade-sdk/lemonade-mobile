@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../providers/app_mode_provider.dart';
 import '../../providers/mesh_provider.dart';
+import '../../services/mesh_roles.dart';
 import '../../services/mesh_service.dart';
 import '../../themes/nexus_tokens.dart';
 import 'mesh_device_list.dart';
@@ -68,26 +69,23 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
   }
 
   Future<void> _invite() async {
-    setState(() => _busy = true);
-    try {
-      final invite = await ref.read(meshProvider.notifier).createInvite();
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: ctx.nexus.bg2,
-          title: const Text('Invite a device'),
-          content: MeshInviteCode(invite: invite),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
-          ],
+    // Every role until the access is read: the network refuses what this
+    // device may not grant, and the dialog shows why.
+    final roles = ref.read(meshProvider).access?.rolesOffered ?? MeshRole.values;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.nexus.bg2,
+        title: const Text('Invite a device'),
+        content: MeshInviteFlow(
+          roles: roles,
+          create: (role) => ref.read(meshProvider.notifier).createInvite(role),
         ),
-      );
-    } catch (e) {
-      _toast(MeshException.from(e).message);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+        ],
+      ),
+    );
   }
 
   Future<void> _leave() async {
@@ -221,9 +219,16 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
               MeshDeviceList(devices: devices, connection: mesh.deviceConnection),
             ],
             const SizedBox(height: 14),
-            Row(children: [
-              Expanded(child: NexusButton(label: 'Invite a device', busy: _busy, onTap: _invite)),
-            ]),
+            // A device invited as a user holds no add_child on the group:
+            // the network would refuse its invite, so say so instead.
+            if (mesh.canInvite == false)
+              Text(meshInviteNotAllowedMessage,
+                  style: TextStyle(fontSize: 12.5, height: 1.4, color: t.muted))
+            else
+              Row(children: [
+                Expanded(
+                    child: NexusButton(label: 'Invite a device', busy: _busy, onTap: _invite)),
+              ]),
           ],
           if (mesh.isSetUp) ...[
             const SizedBox(height: 6),
@@ -281,6 +286,105 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
             const SizedBox(width: 8),
           ],
           if (selected) Icon(Icons.check_circle, color: t.accent, size: 18),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Invite a device: pick the role it gets in the mesh, then the code to
+/// enter on it. [roles] are the roles this device may invite with
+/// ([MeshAccess.rolesOffered]); [create] mints the invite and may throw.
+class MeshInviteFlow extends StatefulWidget {
+  final List<MeshRole> roles;
+  final Future<Invite> Function(MeshRole role) create;
+
+  /// Replaces the line above the roles.
+  final String? intro;
+
+  const MeshInviteFlow({super.key, required this.roles, required this.create, this.intro});
+
+  @override
+  State<MeshInviteFlow> createState() => _MeshInviteFlowState();
+}
+
+class _MeshInviteFlowState extends State<MeshInviteFlow> {
+  Invite? _invite;
+  MeshRole? _minting;
+  String? _error;
+
+  Future<void> _pick(MeshRole role) async {
+    setState(() {
+      _minting = role;
+      _error = null;
+    });
+    try {
+      final invite = await widget.create(role);
+      if (mounted) setState(() => _invite = invite);
+    } catch (e) {
+      if (mounted) setState(() => _error = MeshException.from(e).message);
+    } finally {
+      if (mounted) setState(() => _minting = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.nexus;
+    final invite = _invite;
+    if (invite != null) return MeshInviteCode(invite: invite);
+    if (widget.roles.isEmpty) {
+      return Text(meshInviteNotAllowedMessage,
+          style: TextStyle(fontSize: 13, height: 1.45, color: t.muted));
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(widget.intro ?? 'The role the device gets in this mesh:',
+            style: TextStyle(fontSize: 13, height: 1.45, color: t.muted)),
+        const SizedBox(height: 12),
+        for (final role in widget.roles) _roleTile(context, role),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(_error!, style: TextStyle(fontSize: 12.5, height: 1.4, color: t.danger)),
+          ),
+      ],
+    );
+  }
+
+  Widget _roleTile(BuildContext context, MeshRole role) {
+    final t = context.nexus;
+    final minting = _minting == role;
+    return GestureDetector(
+      onTap: _minting == null ? () => _pick(role) : null,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: t.bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: minting ? t.accent : t.line2),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(role.label,
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: t.text)),
+              Text(role.description,
+                  style: TextStyle(fontSize: 11.5, height: 1.35, color: t.muted)),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          if (minting)
+            SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: t.accent))
+          else
+            Icon(Icons.chevron_right, color: t.faint),
         ]),
       ),
     );

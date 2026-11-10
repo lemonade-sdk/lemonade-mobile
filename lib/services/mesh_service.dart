@@ -9,6 +9,7 @@ import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart';
 
 import '../storage/secure_storage.dart';
 import '../utils/server_identity.dart';
+import 'mesh_roles.dart';
 
 /// The Lemonade Nexus network that Mesh mode joins.
 const String kMeshDomain = 'lemonade-nexus.io';
@@ -390,10 +391,18 @@ class MeshService {
     throw MeshException.from(lastError);
   }
 
-  /// A single-use invite code for this device's group, valid for
+  /// A single-use invite into this device's group that grants [permissions]
+  /// (a role's names, see [meshInvitePermissions]), valid for
   /// [kMeshInviteTtlSec] seconds. Returns {link_token, expires_at, ...}.
-  Future<Map<String, dynamic>> createInvite() =>
-      _guard(() => _worker.run(_inviteTask(kMeshInviteTtlSec)));
+  /// The network refuses the call when this device holds no add_child on
+  /// the group or lacks one of the names ([LnError.auth]).
+  Future<Map<String, dynamic>> createInvite(List<String> permissions) =>
+      _guard(() => _worker.run(_inviteTask(kMeshInviteTtlSec, permissions)));
+
+  /// The groups this identity belongs to, with its own permissions on each
+  /// (see [LemonadeNexusSdk.listMemberships]).
+  Future<List<Map<String, dynamic>>> memberships() =>
+      _guard(() => _worker.run(_membershipsTask));
 
   /// Mesh port state: the selection and the Tier 3 devices it can reach.
   Future<MeshPortStatus> portStatus() => _guard(() => _worker.run(_portStatusTask));
@@ -559,11 +568,19 @@ class MeshException implements Exception {
       final detail = error.message ?? '';
       switch (error.error) {
         case LnError.auth:
-          return MeshException(detail.toLowerCase().contains('token') ||
-                  detail.toLowerCase().contains('invite') ||
-                  detail.toLowerCase().contains('link')
-              ? 'That invite code is invalid, expired or already used. Ask for a new one.'
-              : 'The network refused this device: $detail');
+          final lower = detail.toLowerCase();
+          // The network's refusal of an invite this device may not mint
+          // ("add_child permission required on <group>", "the inviter needs
+          // add_child on the invite target", "the inviter does not hold
+          // '<name>' on the invite target") names the invite too, so it
+          // goes before the invalid-code case.
+          if (lower.contains('add_child') || lower.contains('inviter')) {
+            return const MeshException(meshInviteNotAllowedMessage);
+          }
+          return MeshException(
+              lower.contains('token') || lower.contains('invite') || lower.contains('link')
+                  ? 'That invite code is invalid, expired or already used. Ask for a new one.'
+                  : 'The network refused this device: $detail');
         case LnError.connect:
           return const MeshException(
               'Could not reach the Lemonade Nexus network. Check your internet connection.');
@@ -738,8 +755,12 @@ Future<String?> _nameDevice(
   }
 }
 
-Future<Map<String, dynamic>> Function(LemonadeNexusSdk) _inviteTask(int ttl) =>
-    (sdk) => sdk.createLinkToken(ttlSec: ttl);
+Future<Map<String, dynamic>> Function(LemonadeNexusSdk) _inviteTask(
+        int ttl, List<String> permissions) =>
+    (sdk) => sdk.createInvite(permissions: permissions, ttlSec: ttl);
+
+Future<List<Map<String, dynamic>>> _membershipsTask(LemonadeNexusSdk sdk) =>
+    sdk.listMemberships();
 
 Future<MeshPortStatus> _portStatusTask(LemonadeNexusSdk sdk) => sdk.getMeshPortStatus();
 

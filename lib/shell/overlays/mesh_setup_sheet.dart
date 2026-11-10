@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show Invite, inviteFormatError, normalizeInvite;
+    show inviteFormatError, normalizeInvite;
 
 import '../../providers/app_mode_provider.dart';
 import '../../providers/mesh_provider.dart';
 import '../../providers/nav_provider.dart';
+import '../../services/mesh_roles.dart';
 import '../../services/mesh_service.dart';
 import '../../themes/nexus_tokens.dart';
 import '../../widgets/nexus/mesh_panel.dart';
@@ -30,7 +31,6 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
   final _code = TextEditingController();
   bool _busy = false;
   String? _error;
-  Invite? _invite;
 
   /// What the join became when this device already had its own network.
   MeshJoinNotice? _notice;
@@ -60,15 +60,10 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
       _error = null;
     });
     try {
-      final mesh = ref.read(meshProvider.notifier);
-      await mesh.create(_name.text);
+      await ref.read(meshProvider.notifier).create(_name.text);
       await ref.read(appModeProvider.notifier).setMode(AppMode.mesh);
-      // The mesh is useful once a computer running Lemonade joins it.
-      try {
-        _invite = await mesh.createInvite();
-      } catch (_) {
-        _invite = null;
-      }
+      // The mesh is useful once a computer running Lemonade joins it: the
+      // next step invites one, with the role picked there.
       if (mounted) setState(() => _step = _Step.invite);
     } catch (e) {
       if (mounted) setState(() => _error = MeshException.from(e).message);
@@ -206,15 +201,15 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
           NexusButton(label: 'Join mesh', busy: _busy, onTap: _join),
         ];
       case _Step.invite:
-        final invite = _invite;
+        // This device created the mesh, so it may grant every role; the
+        // list narrows once its access is read.
+        final roles = ref.watch(meshProvider).access?.rolesOffered ?? MeshRole.values;
         return [
-          if (invite != null)
-            MeshInviteCode(invite: invite)
-          else
-            Text(
-                'Your mesh is ready. Invite a computer from Settings → Mesh '
-                'network → Invite a device.',
-                style: TextStyle(fontSize: 13, height: 1.45, color: t.muted)),
+          MeshInviteFlow(
+            roles: roles,
+            create: (role) => ref.read(meshProvider.notifier).createInvite(role),
+            intro: 'Your mesh is ready. Pick the role your computer gets in it:',
+          ),
           const SizedBox(height: 14),
           NexusButton(label: 'Done', onTap: _close),
         ];

@@ -12,6 +12,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:integration_test/integration_test.dart';
+import 'package:lemonade_mobile/services/mesh_roles.dart';
 import 'package:lemonade_mobile/services/mesh_service.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
 
@@ -54,7 +55,7 @@ void main() {
       print('[live] GET /api/v1/models -> ${reply.statusCode} ${reply.body}');
       expect(reply.statusCode, isNot(0));
 
-      final invite = await service.createInvite();
+      final invite = await service.createInvite(meshRolePermissions(MeshRole.user));
       final code = invite['link_token'] as String?;
       // ignore: avoid_print
       print('[live] invite: $code expires ${invite['expires_at']}');

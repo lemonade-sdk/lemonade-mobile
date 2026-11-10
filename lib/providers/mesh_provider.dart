@@ -15,6 +15,7 @@ import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
 
 import '../models/server_config.dart';
 import '../services/background_time.dart';
+import '../services/mesh_roles.dart';
 import '../services/mesh_service.dart';
 import '../utils/server_identity.dart';
 
@@ -53,6 +54,10 @@ class MeshState {
   /// null when there is nothing more specific than "Connecting".
   final String? connectDetail;
 
+  /// What this device holds on its group (whether it may invite, and with
+  /// which roles), or null until the first read.
+  final MeshAccess? access;
+
   const MeshState({
     this.phase = MeshPhase.notSetUp,
     this.account,
@@ -62,9 +67,14 @@ class MeshState {
     this.connections = const {},
     this.networkDevices,
     this.connectDetail,
+    this.access,
   });
 
   bool get isSetUp => account != null;
+
+  /// Whether this device may invite others into its network; null until
+  /// its access is known.
+  bool? get canInvite => access?.canInvite;
 
   /// "auto", or the node ID that serves every request.
   String get selection => account?.selection ?? 'auto';
@@ -133,6 +143,7 @@ class MeshState {
     List<NetworkDevice>? networkDevices,
     String? connectDetail,
     bool clearConnectDetail = false,
+    MeshAccess? access,
   }) =>
       MeshState(
         phase: phase ?? this.phase,
@@ -143,6 +154,7 @@ class MeshState {
         connections: connections ?? this.connections,
         networkDevices: networkDevices ?? this.networkDevices,
         connectDetail: clearConnectDetail ? null : (connectDetail ?? this.connectDetail),
+        access: access ?? this.access,
       );
 }
 
@@ -464,6 +476,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
       if (mounted && devices != null && !listEquals(devices, state.networkDevices)) {
         state = state.copyWith(networkDevices: devices);
       }
+      await _readAccess(service, devices ?? state.networkDevices);
     } catch (e) {
       debugPrint('Mesh device list failed: $e');
       // A failed list (the tunnel was cold, or the server rate limited the
@@ -541,14 +554,35 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
     await refresh();
   }
 
-  /// A single-use invite into this mesh: an 8-digit code (from servers that
-  /// issue one) and the full link token, which name the same invite.
-  Future<Invite> createInvite() async {
+  /// This device's permissions on its group, read with the device list: the
+  /// panel offers Invite only to a device that may invite. A failed read
+  /// keeps the last value; the invite itself reports a refusal.
+  Future<void> _readAccess(MeshService service, List<NetworkDevice>? devices) async {
+    try {
+      final access = MeshAccess.of(devices, await service.memberships());
+      if (mounted && access != null && access != state.access) {
+        state = state.copyWith(access: access);
+      }
+    } catch (e) {
+      debugPrint('Mesh memberships failed: $e');
+    }
+  }
+
+  /// A single-use invite into this mesh that gives the device joining with
+  /// it [role]: an 8-digit code (from servers that issue one) and the full
+  /// link token, which name the same invite. Throws [MeshException] with
+  /// [meshInviteNotAllowedMessage] when this device may not invite.
+  Future<Invite> createInvite(MeshRole role) async {
     final service = _service;
     if (service == null || state.phase != MeshPhase.connected) {
       throw const MeshException('Connect to your mesh first.');
     }
-    return Invite.fromJson(await service.createInvite());
+    final access = state.access;
+    if (access != null && !access.canInvite) {
+      throw const MeshException(meshInviteNotAllowedMessage);
+    }
+    final permissions = access?.invitePermissions(role) ?? meshRolePermissions(role);
+    return Invite.fromJson(await service.createInvite(permissions));
   }
 
   /// Removes this device from the mesh and forgets its identity.

@@ -6,13 +6,21 @@ import 'package:lemonade_mobile/api/exceptions.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
 import 'package:lemonade_mobile/providers/mesh_provider.dart';
 import 'package:lemonade_mobile/utils/friendly_error.dart';
+import 'package:lemonade_mobile/services/mesh_roles.dart';
 import 'package:lemonade_mobile/services/mesh_service.dart';
 import 'package:lemonade_mobile/themes/theme_registry.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_device_list.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_panel.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show Invite, JoinMembership, MeshPeer, NetworkDevice, Tier1Progress;
+    show
+        Invite,
+        JoinMembership,
+        LnError,
+        MeshPeer,
+        NetworkDevice,
+        SdkException,
+        Tier1Progress;
 
 void main() {
   group('MeshAccount', () {
@@ -309,6 +317,131 @@ void main() {
     test('says nothing when no check runs', () {
       expect(meshConnectDetail(null), isNull);
       expect(meshConnectDetail(progress(active: false, total: 4)), isNull);
+    });
+  });
+
+  group('MeshRole', () {
+    test('the presets match lemond: every role uses inference, moderators add devices', () {
+      expect(meshRolePermissions(MeshRole.user), ['read', 'connect_private', 'svc:inference']);
+      final moderator = meshRolePermissions(MeshRole.moderator);
+      expect(moderator, containsAll(['read', 'write', 'add_child', 'connect_private']));
+      expect(moderator, containsAll(['svc:inference', 'svc:mcp', 'svc:models_manage', 'svc:jobs']));
+      expect(moderator, isNot(contains('admin')));
+      final admin = meshRolePermissions(MeshRole.administrator);
+      expect(admin, containsAll(['read', 'connect_private', 'admin']));
+      for (final family in kMeshServiceFamilies) {
+        expect(admin, contains('svc:$family'));
+      }
+    });
+  });
+
+  group('MeshAccess', () {
+    const owner = NetworkDevice(
+        nodeId: 'me', deviceName: 'iPhone', isSelf: true, admin: true, groupId: 'g', groupRole: 'home');
+    const invited =
+        NetworkDevice(nodeId: 'me', deviceName: 'iPhone', isSelf: true, groupId: 'g', groupRole: 'home');
+    Map<String, dynamic> membership(List<String> permissions, {String role = 'home'}) =>
+        {'node_id': 'g', 'hostname': 'Home', 'role': role, 'permissions': permissions};
+
+    test('the owner invites with every role and grants the whole preset', () {
+      final access = MeshAccess.of([owner], [membership([])])!;
+      expect(access.canInvite, isTrue);
+      expect(access.rolesOffered, MeshRole.values);
+      expect(access.invitePermissions(MeshRole.administrator),
+          meshRolePermissions(MeshRole.administrator));
+    });
+
+    test('a device invited as a user cannot invite', () {
+      final access = MeshAccess.of([invited], [membership(['read', 'connect_private', 'svc:inference'])])!;
+      expect(access.canInvite, isFalse);
+      expect(access.rolesOffered, isEmpty);
+    });
+
+    test('a moderator invites users and moderators with what it holds', () {
+      const held = ['read', 'write', 'add_child', 'connect_private', 'svc:inference'];
+      final access = MeshAccess.of([invited], [membership(held)])!;
+      expect(access.rolesOffered, [MeshRole.user, MeshRole.moderator]);
+      expect(access.invitePermissions(MeshRole.moderator), held);
+      expect(access.invitePermissions(MeshRole.user), ['read', 'connect_private', 'svc:inference']);
+    });
+
+    test('the membership names the group when the device list has none', () {
+      expect(MeshAccess.of(null, [membership(['admin'])])!.admin, isTrue);
+      expect(MeshAccess.of(null, [membership(['read'], role: 'member')]), isNull);
+      expect(MeshAccess.of(const [], const []), isNull);
+    });
+
+    test('the state says whether the device may invite once its access is read', () {
+      expect(const MeshState().canInvite, isNull);
+      expect(MeshState(access: MeshAccess.of([owner], const [])).canInvite, isTrue);
+    });
+  });
+
+  group('MeshException', () {
+    test('a refused invite names the roles, not the connection', () {
+      for (final reason in [
+        'add_child permission required on customer-1',
+        'the inviter needs add_child on the invite target',
+        "the inviter does not hold 'svc:jobs' on the invite target",
+      ]) {
+        expect(MeshException.from(SdkException(LnError.auth, message: reason)).message,
+            meshInviteNotAllowedMessage,
+            reason: reason);
+      }
+    });
+
+    test('an invalid code and a lost connection keep their messages', () {
+      expect(
+          MeshException.from(SdkException(LnError.auth, message: 'invalid or expired link token'))
+              .message,
+          contains('invite code is invalid'));
+      expect(MeshException.from(SdkException(LnError.connect, message: 'no route')).message,
+          contains('internet connection'));
+    });
+  });
+
+  group('MeshInviteFlow', () {
+    const token = 'lnk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    Widget host(Widget child) => MaterialApp(
+          theme: ThemeRegistry.byId(ThemeRegistry.nexusDarkId).buildTheme(),
+          home: Scaffold(body: child),
+        );
+
+    testWidgets('offers only the roles the device may grant, then shows the code',
+        (tester) async {
+      MeshRole? picked;
+      await tester.pumpWidget(host(MeshInviteFlow(
+        roles: const [MeshRole.user, MeshRole.moderator],
+        create: (role) async {
+          picked = role;
+          return Invite.fromJson({'link_token': token, 'code': '12345678', 'group_node_id': 'g'});
+        },
+      )));
+      expect(find.text('User'), findsOneWidget);
+      expect(find.text('Moderator'), findsOneWidget);
+      expect(find.text('Administrator'), findsNothing);
+      await tester.tap(find.text('Moderator'));
+      await tester.pumpAndSettle();
+      expect(picked, MeshRole.moderator);
+      expect(find.text('1234 5678'), findsOneWidget);
+    });
+
+    testWidgets("a refusal shows the network's reason under the roles", (tester) async {
+      await tester.pumpWidget(host(MeshInviteFlow(
+        roles: MeshRole.values,
+        create: (_) async => throw SdkException(LnError.auth,
+            message: 'add_child permission required on customer-1'),
+      )));
+      await tester.tap(find.text('User'));
+      await tester.pumpAndSettle();
+      expect(find.text(meshInviteNotAllowedMessage), findsOneWidget);
+      expect(find.text('User'), findsOneWidget);
+    });
+
+    testWidgets('a device that may not invite sees why', (tester) async {
+      await tester.pumpWidget(host(MeshInviteFlow(
+          roles: const [], create: (_) async => throw StateError('not called'))));
+      expect(find.text(meshInviteNotAllowedMessage), findsOneWidget);
     });
   });
 }
