@@ -63,6 +63,27 @@ void main() {
         isFalse);
   });
 
+  group('MeshException.from', () {
+    test('a failed TLS verification is named, not blamed on the connection', () {
+      // The SDK's reason on Android before the trust store reached OpenSSL.
+      final e = MeshException.from(SdkException(LnError.connect,
+          message: 'Genesis key discovery needs 3 agreeing servers inside the network '
+              'domain, found 0; asked 1 host(s): sn01.example:9100 unreachable '
+              '(SSL server verification failed); set the Genesis key explicitly'));
+      expect(e.message, meshTlsVerificationMessage);
+      expect(e.message, isNot(contains('internet')));
+      expect(meshTlsVerificationFailed('x unreachable (SSL server hostname verification failed)'),
+          isTrue);
+    });
+
+    test('an unreachable network is still a connection problem', () {
+      final e = MeshException.from(SdkException(LnError.connect,
+          message: 'sn01.example:9100 unreachable (connection error)'));
+      expect(e.message, contains('internet connection'));
+      expect(meshTlsVerificationFailed('connection error'), isFalse);
+    });
+  });
+
   group('MeshInviteCode', () {
     const token = 'lnk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
