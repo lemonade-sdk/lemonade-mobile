@@ -557,6 +557,21 @@ String? meshConnectDetail(Tier1Progress? progress) {
 
 Tier1Progress? _readTier1Progress(LemonadeNexusSdk sdk) => sdk.tier1Progress();
 
+/// The message for a connect that reached a server but could not verify its
+/// certificate (see [meshTlsVerificationFailed]).
+const String meshTlsVerificationMessage =
+    'Could not verify the Lemonade Nexus servers (TLS certificate check failed). '
+    'Check the date and time of this device and that nothing on the network '
+    'intercepts HTTPS.';
+
+/// Whether the SDK's reason for a failed connect names a TLS verification
+/// failure: cpp-httplib's "SSL server verification failed" or "SSL server
+/// hostname verification failed", as the SDK quotes them per server.
+bool meshTlsVerificationFailed(String detail) {
+  final lower = detail.toLowerCase();
+  return lower.contains('ssl server') || lower.contains('certificate verif');
+}
+
 /// A mesh failure with a message for the user.
 class MeshException implements Exception {
   final String message;
@@ -582,6 +597,13 @@ class MeshException implements Exception {
                   ? 'That invite code is invalid, expired or already used. Ask for a new one.'
                   : 'The network refused this device: $detail');
         case LnError.connect:
+          // The SDK reports a failed TLS verification as a transport failure
+          // too ("... unreachable (SSL server verification failed)"): the
+          // device reached the server and refused its certificate. Say so;
+          // a connectivity message sends the user to check the wrong thing.
+          if (meshTlsVerificationFailed(detail)) {
+            return const MeshException(meshTlsVerificationMessage);
+          }
           return const MeshException(
               'Could not reach the Lemonade Nexus network. Check your internet connection.');
         case LnError.portInUse:
