@@ -117,6 +117,10 @@ flutter:
   assets:
     - assets/lemonade_logo.png
     - assets/lemonade_logo_512.png
+    # Inter Tight and IBM Plex Mono (SIL OFL 1.1), the files google_fonts
+    # would otherwise fetch from fonts.gstatic.com on first start. Bundled so
+    # the app never contacts Google and starts offline; see main.dart.
+    - assets/google_fonts/
 
 flutter_launcher_icons:
   android: "launcher_icon"

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:lemonade_mobile/dev/shot_mode.dart';
 import 'package:lemonade_mobile/providers/account_provider.dart';
 import 'package:lemonade_mobile/providers/beacon_provider.dart';
@@ -18,6 +19,9 @@ import 'package:lemonade_mobile/utils/constants.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The fonts are bundled (assets/google_fonts); the app never fetches them
+  // from fonts.gstatic.com, so it starts offline without a Google request.
+  GoogleFonts.config.allowRuntimeFetching = false;
   // Store-screenshot harness (see lib/dev/shot_mode.dart). Only present in
   // builds compiled with --dart-define=STORE_SHOT=true; never ships.
   if (const bool.fromEnvironment('STORE_SHOT')) {
