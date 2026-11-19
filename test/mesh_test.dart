@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lemonade_mobile/api/exceptions.dart';
 import 'package:lemonade_mobile/models/server_config.dart';
@@ -12,6 +13,7 @@ import 'package:lemonade_mobile/themes/theme_registry.dart';
 import 'package:lemonade_mobile/utils/server_identity.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_device_list.dart';
 import 'package:lemonade_mobile/widgets/nexus/mesh_panel.dart';
+import 'package:lemonade_mobile/widgets/nexus/nexus_ui.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
     show
         Invite,
@@ -20,7 +22,8 @@ import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
         MeshPeer,
         NetworkDevice,
         SdkException,
-        Tier1Progress;
+        Tier1Progress,
+        inviteFormatError;
 
 void main() {
   group('MeshAccount', () {
@@ -79,8 +82,56 @@ void main() {
     test('an unreachable network is still a connection problem', () {
       final e = MeshException.from(SdkException(LnError.connect,
           message: 'sn01.example:9100 unreachable (connection error)'));
-      expect(e.message, contains('internet connection'));
+      expect(e.message, meshUnreachableMessage);
       expect(meshTlsVerificationFailed('connection error'), isFalse);
+    });
+
+    test('a join with an invite names the cause of the refusal', () {
+      String joined(String reason) =>
+          MeshException.from(SdkException(LnError.auth, message: reason), invited: true).message;
+      expect(joined('link token group no longer exists'), meshInviteGroupGoneMessage);
+      expect(joined('join request failed (server unreachable)'), meshUnreachableMessage);
+      for (final reason in [
+        'the invite is no longer valid',
+        "the inviter does not hold 'svc:inference' on the invite target",
+        'add_child permission required on home',
+        'not allowed',
+      ]) {
+        expect(joined(reason), meshInviterMayNotAddMessage, reason: reason);
+      }
+      expect(joined('invalid or expired link token'), meshInviteInvalidMessage);
+      // Without an invite the same reasons are about this device's own invite.
+      expect(
+          MeshException.from(SdkException(LnError.auth, message: 'add_child permission required'))
+              .message,
+          meshInviteNotAllowedMessage);
+    });
+
+    test('keeps the reason the SDK gave', () {
+      final e = MeshException.from(
+          SdkException(LnError.auth, message: 'link token group no longer exists'));
+      expect(e.detail, 'SdkException(auth): link token group no longer exists');
+      expect('$e', e.message);
+    });
+  });
+
+  group('normalizeInviteInput', () {
+    const token = 'lnk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+    test('a code typed grouped or pasted with dashes is its eight digits', () {
+      expect(normalizeInviteInput('4709 6838'), '47096838');
+      expect(normalizeInviteInput('4709-6838'), '47096838');
+      expect(normalizeInviteInput(' 4709 – 6838\n'), '47096838');
+      expect(inviteFormatError(normalizeInviteInput('4709-6838')), isNull);
+    });
+
+    test('a full token passes through', () {
+      expect(normalizeInviteInput(' $token\n'), token);
+      expect(inviteFormatError(normalizeInviteInput(token)), isNull);
+    });
+
+    test('too few digits still fail the format check', () {
+      expect(inviteFormatError(normalizeInviteInput('4709-683')), contains('8 digits'));
     });
   });
 
@@ -102,6 +153,28 @@ void main() {
       expect(find.text('1234 5678'), findsOneWidget);
       expect(find.text(token), findsNothing);
       expect(find.text('Copy full token instead'), findsOneWidget);
+    });
+
+    testWidgets('copies the code grouped and the token on request', (tester) async {
+      final copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform,
+          (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+      await tester.pumpWidget(host(Invite.fromJson({
+        'link_token': token,
+        'code': '47096838',
+        'group_node_id': 'g',
+      })));
+      await tester.tap(find.byTooltip('Copy'));
+      await tester.tap(find.text('Copy full token instead'));
+      expect(copied, ['4709 6838', token]);
+      expect(normalizeInviteInput(copied.first), '47096838');
     });
 
     testWidgets('shows the token from a server without codes', (tester) async {
@@ -417,8 +490,50 @@ void main() {
               .message,
           contains('invite code is invalid'));
       expect(MeshException.from(SdkException(LnError.connect, message: 'no route')).message,
-          contains('internet connection'));
+          meshUnreachableMessage);
     });
+  });
+
+  group('device pills', () {
+    const devices = [
+      NetworkDevice(nodeId: 'me', deviceName: 'iPhone', isSelf: true, admin: true),
+      NetworkDevice(nodeId: 's', deviceName: 'Mac', isInference: true, member: true),
+      NetworkDevice(nodeId: 'j', deviceName: 'Laptop', isInference: true, groupRole: 'member'),
+      NetworkDevice(nodeId: 'o', deviceName: 'Tower', isInference: true),
+      NetworkDevice(nodeId: 'c', deviceName: 'Desk', isInference: true),
+    ];
+    const connections = {
+      's': MeshConnection.p2p,
+      'j': MeshConnection.relay,
+      'o': MeshConnection.offline,
+      'c': MeshConnection.connecting,
+    };
+
+    for (final themeId in [ThemeRegistry.nexusLightId, ThemeRegistry.nexusDarkId]) {
+      testWidgets('every pill reads at 4.5:1 in $themeId', (tester) async {
+        await tester.pumpWidget(MaterialApp(
+          theme: ThemeRegistry.byId(themeId).buildTheme(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MeshDeviceList(devices: devices, connection: (d) => connections[d.nodeId]),
+            ),
+          ),
+        ));
+        final pills = find.byType(NexusPill);
+        expect(pills, findsNWidgets(13));
+        for (final pill in pills.evaluate()) {
+          final finder = find.byWidget(pill.widget);
+          final box = tester.widget<Container>(
+              find.descendant(of: finder, matching: find.byType(Container)));
+          final text = tester.widget<Text>(find.descendant(of: finder, matching: find.byType(Text)));
+          final fill = (box.decoration as BoxDecoration).color!;
+          final contrast = nexusContrast(text.style!.color!, fill);
+          expect(contrast, greaterThanOrEqualTo(nexusPillContrast),
+              reason: '${text.data} in $themeId: ${contrast.toStringAsFixed(2)}');
+          expect(fill.a, 1.0, reason: '${text.data} fills its pill');
+        }
+      });
+    }
   });
 
   group('MeshInviteFlow', () {

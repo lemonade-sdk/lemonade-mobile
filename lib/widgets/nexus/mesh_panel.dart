@@ -281,8 +281,8 @@ class _MeshPanelState extends ConsumerState<MeshPanel> {
             ]),
           ),
           if (connection != null) ...[
-            NexusPill(connection.label,
-                color: meshConnectionColor(context, connection), outlined: true),
+            NexusPill.tinted(connection.label,
+                color: meshConnectionColor(context, connection)),
             const SizedBox(width: 8),
           ],
           if (selected) Icon(Icons.check_circle, color: t.accent, size: 18),
@@ -399,9 +399,10 @@ class MeshInviteCode extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.nexus;
-    // The 8-digit code when the server issued one, else the full token.
-    final code = invite.primary;
-    final display = formatInviteCode(code);
+    // The 8-digit code when the server issued one, else the full token. The
+    // code is shown, copied and shared grouped ("4709 6838"); a join accepts
+    // that form.
+    final display = formatInviteCode(invite.primary);
     final short = invite.hasCode;
     final expires = invite.hasCode ? invite.codeExpiresAt : invite.expiresAt;
     final minutes = expires == null
@@ -454,7 +455,7 @@ class MeshInviteCode extends StatelessWidget {
             tooltip: 'Copy',
             icon: Icon(Icons.copy, size: 18, color: t.accent2),
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: code));
+              Clipboard.setData(ClipboardData(text: display));
               ScaffoldMessenger.maybeOf(context)
                   ?.showSnackBar(const SnackBar(content: Text('Invite code copied')));
             },
@@ -462,7 +463,7 @@ class MeshInviteCode extends StatelessWidget {
           IconButton(
             tooltip: 'Share',
             icon: Icon(Icons.ios_share, size: 18, color: t.accent2),
-            onPressed: () => Share.share('Lemonade mesh invite code: $code'),
+            onPressed: () => Share.share('Lemonade mesh invite code: $display'),
           ),
         ]),
         // A Lemonade that predates invite codes takes only the full token.

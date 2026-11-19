@@ -107,10 +107,10 @@ class MeshDeviceList extends StatelessWidget {
             const SizedBox(height: 6),
             Wrap(spacing: 6, runSpacing: 6, children: [
               for (final tag in meshDeviceTags(d))
-                NexusPill(tag.label, color: _color(context, tag), outlined: true),
+                NexusPill.tinted(tag.label, color: _color(context, tag)),
               if (connection != null)
-                NexusPill(connection.label,
-                    color: meshConnectionColor(context, connection), outlined: true),
+                NexusPill.tinted(connection.label,
+                    color: meshConnectionColor(context, connection)),
             ]),
           ]),
         ),

@@ -306,6 +306,7 @@ class MeshService {
 
   Future<MeshSession> connect(MeshAccount account, {String? inviteCode}) async {
     final clock = Stopwatch()..start();
+    if (inviteCode != null) inviteCode = normalizeInviteInput(inviteCode);
     // The servers from the last connect, the one that answered first: DNS
     // discovery takes up to a second, so it refreshes the list in the
     // background instead. A device with no list yet discovers first.
@@ -388,7 +389,7 @@ class MeshService {
         lastError = e;
       }
     }
-    throw MeshException.from(lastError);
+    throw MeshException.from(lastError, invited: inviteCode != null);
   }
 
   /// A single-use invite into this device's group that grants [permissions]
@@ -572,45 +573,98 @@ bool meshTlsVerificationFailed(String detail) {
   return lower.contains('ssl server') || lower.contains('certificate verif');
 }
 
-/// A mesh failure with a message for the user.
+/// The invite a join was given is not one the network knows.
+const String meshInviteInvalidMessage =
+    'That invite code is invalid, expired or already used. Ask for a new one.';
+
+/// The join's invite names a group the network no longer has (the server's
+/// "link token group no longer exists").
+const String meshInviteGroupGoneMessage =
+    'The device that created this invitation is no longer in a network. '
+    'Create a new invitation on a device that is in the mesh.';
+
+/// The network refused to place the joining device under the inviter (the
+/// server's 403 at the join, such as "the invite is no longer valid").
+const String meshInviterMayNotAddMessage =
+    'The inviting device may not add devices. '
+    'Ask an administrator of the network for an invitation.';
+
+/// No server answered a connect or a join.
+const String meshUnreachableMessage =
+    'Could not reach the Nexus servers. Check the network and try again.';
+
+/// [invite] as typed or pasted, for [inviteFormatError] and the SDK: a code
+/// in its grouped form ("4709 6838") or with dashes ("4709-6838") becomes
+/// its eight digits; a full token passes through trimmed.
+String normalizeInviteInput(String invite) =>
+    normalizeInvite(invite.replaceAll(RegExp('[-\u2010-\u2015]'), ''));
+
+/// A mesh failure with a message for the user. [detail] keeps the reason
+/// the SDK or the network gave, for logs and support.
 class MeshException implements Exception {
   final String message;
-  const MeshException(this.message);
+  final String? detail;
+  const MeshException(this.message, {this.detail});
 
-  factory MeshException.from(Object? error) {
+  /// The user's message for [error]. [invited] marks a join with an invite:
+  /// the network's refusal is then about the inviter's standing, not about
+  /// an invite this device tried to mint.
+  factory MeshException.from(Object? error, {bool invited = false}) {
     if (error is MeshException) return error;
     if (error is SdkException) {
       final detail = error.message ?? '';
+      final raw = '$error';
       switch (error.error) {
         case LnError.auth:
           final lower = detail.toLowerCase();
+          // A join reports an unreachable server as a refusal ("join request
+          // failed (server unreachable)").
+          if (lower.contains('unreachable')) {
+            return MeshException(meshUnreachableMessage, detail: raw);
+          }
+          if (lower.contains('group no longer exists')) {
+            return MeshException(meshInviteGroupGoneMessage, detail: raw);
+          }
           // The network's refusal of an invite this device may not mint
           // ("add_child permission required on <group>", "the inviter needs
           // add_child on the invite target", "the inviter does not hold
           // '<name>' on the invite target") names the invite too, so it
-          // goes before the invalid-code case.
+          // goes before the invalid-code case. At a join the same reasons,
+          // "the invite is no longer valid" and any other forbidden
+          // placement are about the inviter.
+          final forbidden = lower.contains('add_child') ||
+              lower.contains('inviter') ||
+              lower.contains('no longer valid') ||
+              lower.contains('not allowed') ||
+              lower.contains('forbidden') ||
+              lower.contains('permission');
+          if (invited && forbidden) {
+            return MeshException(meshInviterMayNotAddMessage, detail: raw);
+          }
           if (lower.contains('add_child') || lower.contains('inviter')) {
-            return const MeshException(meshInviteNotAllowedMessage);
+            return MeshException(meshInviteNotAllowedMessage, detail: raw);
           }
           return MeshException(
               lower.contains('token') || lower.contains('invite') || lower.contains('link')
-                  ? 'That invite code is invalid, expired or already used. Ask for a new one.'
-                  : 'The network refused this device: $detail');
+                  ? meshInviteInvalidMessage
+                  : 'The network refused this device: $detail',
+              detail: raw);
         case LnError.connect:
           // The SDK reports a failed TLS verification as a transport failure
           // too ("... unreachable (SSL server verification failed)"): the
           // device reached the server and refused its certificate. Say so;
           // a connectivity message sends the user to check the wrong thing.
           if (meshTlsVerificationFailed(detail)) {
-            return const MeshException(meshTlsVerificationMessage);
+            return MeshException(meshTlsVerificationMessage, detail: raw);
           }
-          return const MeshException(
-              'Could not reach the Lemonade Nexus network. Check your internet connection.');
+          return MeshException(meshUnreachableMessage, detail: raw);
         case LnError.portInUse:
-          return const MeshException(
-              'Another app is using the mesh port (127.0.0.1:$kMeshPortNumber).');
+          return MeshException(
+              'Another app is using the mesh port (127.0.0.1:$kMeshPortNumber).',
+              detail: raw);
         default:
-          return MeshException(detail.isEmpty ? 'Mesh error (${error.error.name})' : detail);
+          return MeshException(detail.isEmpty ? 'Mesh error (${error.error.name})' : detail,
+              detail: raw);
       }
     }
     return MeshException('$error');
