@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../themes/nexus_tokens.dart';
@@ -146,27 +148,66 @@ class _NexusStatusDotState extends State<NexusStatusDot>
   }
 }
 
+/// WCAG contrast ratio between [a] and [b], 1 to 21.
+double nexusContrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  return (max(la, lb) + 0.05) / (min(la, lb) + 0.05);
+}
+
+/// The minimum contrast for the small text of a pill (WCAG AA).
+const double nexusPillContrast = 4.5;
+
+/// The wash a [NexusPill.tinted] fills with: [tone] at 15 percent over
+/// [surface].
+Color nexusToneWash(Color tone, Color surface) =>
+    Color.alphaBlend(tone.withValues(alpha: 0.15), surface);
+
+/// A shade of [tone] that reads on [background] at [nexusPillContrast]:
+/// darker on a light background, lighter on a dark one. The accent, warn
+/// and good tones of the light theme fall short of it as they are.
+Color nexusReadableTone(Color tone, Color background) {
+  final darken = background.computeLuminance() > 0.5;
+  var shade = HSLColor.fromColor(tone);
+  while (nexusContrast(shade.toColor(), background) < nexusPillContrast) {
+    final lightness = shade.lightness + (darken ? -0.02 : 0.02);
+    if (lightness < 0 || lightness > 1) break;
+    shade = shade.withLightness(lightness);
+  }
+  return shade.toColor();
+}
+
 /// A small labeled pill (badges, route types, statuses).
 class NexusPill extends StatelessWidget {
   final String label;
   final Color color;
   final Color? bg;
   final bool outlined;
+  final bool tinted;
   const NexusPill(
     this.label, {
     super.key,
     required this.color,
     this.bg,
     this.outlined = false,
-  });
+  }) : tinted = false;
+
+  /// A filled pill in the tone of [color] on a card of the canvas color: a
+  /// 15 percent wash with text of the same tone that reaches
+  /// [nexusPillContrast] in both themes (see [nexusReadableTone]).
+  const NexusPill.tinted(this.label, {super.key, required this.color})
+      : bg = null,
+        outlined = false,
+        tinted = true;
 
   @override
   Widget build(BuildContext context) {
     final t = context.nexus;
+    final wash = tinted ? nexusToneWash(color, t.bg) : null;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: bg ?? (outlined ? Colors.transparent : t.accentSoft),
+        color: wash ?? bg ?? (outlined ? Colors.transparent : t.accentSoft),
         borderRadius: BorderRadius.circular(6),
         border: outlined ? Border.all(color: color) : null,
       ),
@@ -175,7 +216,7 @@ class NexusPill extends StatelessWidget {
         style: TextStyle(
           fontSize: 9.5,
           fontWeight: FontWeight.w700,
-          color: color,
+          color: wash == null ? color : nexusReadableTone(color, wash),
           letterSpacing: 0.4,
         ),
       ),

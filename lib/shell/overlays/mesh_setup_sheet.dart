@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
-    show inviteFormatError, normalizeInvite;
+    show inviteFormatError;
 
 import '../../providers/app_mode_provider.dart';
 import '../../providers/mesh_provider.dart';
@@ -73,7 +73,7 @@ class _MeshSetupSheetState extends ConsumerState<MeshSetupSheet> {
   }
 
   Future<void> _join() async {
-    final code = normalizeInvite(_code.text);
+    final code = normalizeInviteInput(_code.text);
     final malformed = inviteFormatError(code);
     if (malformed != null) {
       setState(() => _error = malformed);

@@ -10,8 +10,7 @@ import 'package:lemonade_nexus_sdk/lemonade_nexus_sdk.dart'
         MeshEventKind,
         MeshPortStatus,
         NetworkDevice,
-        SessionMoveEvent,
-        normalizeInvite;
+        SessionMoveEvent;
 
 import '../models/server_config.dart';
 import '../services/background_time.dart';
@@ -299,7 +298,7 @@ class MeshNotifier extends StateNotifier<MeshState> with WidgetsBindingObserver 
   /// network of its own and the invite made it a member instead.
   Future<MeshSession> join(String inviteCode, String deviceName) => _setUp(
       MeshAccount.create(deviceName.trim()),
-      inviteCode: normalizeInvite(inviteCode));
+      inviteCode: normalizeInviteInput(inviteCode));
 
   Future<MeshSession> _setUp(MeshAccount account, {required String? inviteCode}) async {
     _active = true;
